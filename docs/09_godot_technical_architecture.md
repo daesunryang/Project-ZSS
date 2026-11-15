@@ -269,3 +269,36 @@ B3에서 `Wound.is_bleeding`과 `PlayerVitals.died_at_world_time`을 저장 상�
 - 공간 조회: 소음은 XZ 평면 해시 격자(기본 16m)의 한 칸에 들어간다. 조회는 듣는 쪽 칸에서 "지금 가장 큰 소음이 들릴 수 있는 거리"만큼의 이웃 칸만 훑고, 그 후보 목록을 (칸, 범위)별로 캐시한다. 같은 칸에 있는 다른 청취자는 소음이 추가·삭제되기 전까지 캐시를 다시 쓴다(무리 지은 좀비 N마리가 칸 훑기 1번을 공유, docs/02 §6.3). 점유 칸 수가 이웃 칸 수보다 적으면 점유 칸만 훑는다. `query_audible_brute_force`는 격자 없이 전부 검사하는 기준 구현이며 테스트가 두 결과가 같은지 비교한다.
 - 저장하지 않는다(`to_world_document()`는 빈 문서). 이유와 ID 형식은 docs/15 P2-23. 다른 시스템이 저장 문서에 `noise_id`를 넣으면 안 되고, 필요하면 위치·시간을 복사해 저장한다.
 - 아직 소음을 내는 호출자는 없다. 플레이어 이동·전투가 `emit`을 호출하는 것은 후속 티켓(C1/N1)이다.
+
+### 14.9 좀비 계약(P2-A2, system id `zombie`)
+
+`scripts/domain/zombie/`: `ZombieState`(좀비 한 마리의 저장 가능한 상태), `ZombiePerception`(노드 없는 시야·방향 규칙), `ZombieSettings`(`data/tuning/zombie_settings.tres`), `ZombieService`(ServerSystem). 네트워크 코드는 없다. 등록 순서는 `survival` → `noise` → `zombie`이며 좀비는 앞의 둘을 `world.get_system`으로 얻어 쓴다. 임시 가정은 docs/15 P2-24~P2-32.
+
+상태(`ZombieState.STATE_NAMES`, docs/02 §6.1): `idle`(대기/배회), `investigate`(소리 조사·피격 방향 확인), `chase`(시각 추적/추격), `attack`(사거리 안), `search`(대상 상실 후 수색), `dormant`(필드만), `dead`(시체, 일정 시간 뒤 제거). 흐름: idle → (소음) investigate → (도착/시간 초과) search → (시간 초과) idle, 어느 상태든 대상이 보이면 chase → 사거리 안이면 attack, 대상을 놓치면 search.
+
+주기: 이동 적분은 살아 있는 모든 좀비에 대해 매 서버 틱, AI 판단(감지·상태 전환·공격)은 좀비마다 `ai_period_sec`에 한 번 `BucketScheduler`로 분산하고 한 틱에 `max_ai_updates_per_tick`개까지만 처리한다(나머지는 대기열에서 다음 틱으로). 피격된 좀비는 대기열 맨 앞에 들어간다. 모든 시간은 월드 시간이라 시계가 멈추면 아무 일도 일어나지 않는다. yaw는 플레이어와 같은 규약(0 = −Z, 전방 = (−sin, 0, −cos), `Node3D.rotation.y`)이다.
+
+| API | 계약 |
+|---|---|
+| `spawn_zombie(world, position, yaw = 0.0) -> ActionResult` | `EntityIdGenerator`로 `zombie_<순번>` 발급, `EntityRegistry`에 kind `zombie`로 등록. 위치는 월드 경계로 clamp. 실패: `bad_zombie_position`(NaN/무한), `zombie_limit`(상한), `zombie_id_failed` |
+| `apply_damage_to_zombie(zombie_id, amount, source_id) -> ActionResult` | 근접 전투(C1)가 호출. 성공 이벤트 `{event_type: "zombie_damaged", zombie_id, source_id, damage, health_after, died, world_time}`. 체력 0이면 `dead`. 살아 있으면 다음 판단에서 `source_id`(접속 중인 생존 플레이어일 때)를 향해 돌아보고, 보이면 추격, 안 보이면 그 위치를 조사한다. 실패: `unknown_zombie`, `zombie_dead`, `bad_damage_amount`(NaN/무한/0 이하), `bad_damage_source`(빈 ID) |
+| `snapshot_rows() -> Array[Dictionary]` | 네트워크용 읽기 전용. 스폰 순서로 `{id: String, position: Vector3, yaw: float, state: String, health_fraction: float(0~1)}`. 시체는 제거 전까지 `state: "dead"`로 포함 |
+| `drain_events() -> Array[Dictionary]` | 네트워크용 읽기 전용. 지난 호출 이후 쌓인 이벤트를 오래된 순으로 돌려주고 비운다(최대 `max_pending_events`개 보관) |
+| `has_zombie`, `get_zombie(id) -> ZombieState`(읽기 전용), `zombie_ids()`, `zombie_count()`, `living_count()` | 조회 |
+
+이벤트(모두 `event_type`, `zombie_id`, `world_time` 포함, 위치는 `[x, y, z]`, JSON-safe):
+
+| event_type | 추가 필드 |
+|---|---|
+| `zombie_spawned` | `position`, `yaw` |
+| `zombie_detected` | `sense`(`sight`/`sound`/`damage`), `target_id`(시각·피격은 플레이어 ID, 소리는 소음의 `source_id`), `position` |
+| `zombie_state_changed` | `from`, `to`, `cause`(`sight`, `in_range`, `attacked`, `noise`, `target_lost`, `investigated`, `search_timeout`), `target_id` |
+| `zombie_attacked` | `target_id`, `wound_type`(`bite`/`scratch`), `body_part`, `damage`, `target_health_after`, `target_died`, `infection`(`player_infected`/`infection_exposure_resisted`/실패 사유) |
+| `zombie_damaged` | `source_id`, `damage`, `health_after`, `died` |
+| `zombie_died` | `source_id` |
+| `zombie_removed` | — |
+
+- 공격: 좀비는 플레이어 체력을 직접 바꾸지 않는다. 서버가 `DamageInput`(source = 좀비 ID, 부위·상처 종류·피해량은 설정과 좀비 RNG)을 만들어 `SurvivalService.apply_damage`에 넘기고, 이어서 `apply_infection_exposure`(물림 = BITE, 긁힘 = SCRATCH)를 호출한다. 대상은 접속 중이고 살아 있는 플레이어뿐이다.
+- 결정론: 좀비마다 RNG(seed = hash("<rng_seed>:<zombie_id>"))를 갖고 배회·수색 지점·공격 굴림에 쓴다. 같은 seed와 같은 입력이면 좀비 문서·이벤트·플레이어 피해가 같다(테스트로 확인).
+- 저장: world_state.json `systems.zombie` = `{schema_version: 1, rng_seed, rng_state, zombies: [ZombieState.to_dict()]}`(64비트 RNG 값은 문자열). 불러올 때 ID 형식·중복·tombstone·수치 범위를 검사하고 하나라도 틀리면 월드 복구를 실패시킨다. `seed_new_world`는 새 월드에만 개발용 좀비를 놓는다. 저장하지 않는 것은 docs/15 P2-31.
+- 테스트: `tests/unit/zombie_perception_test.gd`, `tests/unit/zombie_service_test.gd`(고정 seed 시나리오, 시야/소리 구분, 수색 복귀, 사망·오프라인 대상 제외, 저장→재생성→로드, 결정론, 월드 3시간 가속 soak, 잘못된 입력).

@@ -1,0 +1,41 @@
+[gd_resource type="Resource" script_class="ZombieSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/zombie/zombie_settings.gd" id="1_zombie"]
+
+[resource]
+script = ExtResource("1_zombie")
+max_active_zombies = 64
+dev_spawn_count = 12
+dev_spawn_center = Vector3(0, 0, 0)
+dev_spawn_min_radius_m = 40.0
+dev_spawn_max_radius_m = 90.0
+rng_seed = 0
+max_health = 100.0
+corpse_remove_delay_sec = 30.0
+sight_range_m = 25.0
+sight_half_angle_deg = 60.0
+light_sight_multiplier = 1.0
+hearing_multiplier = 1.0
+wander_speed_mps = 0.8
+investigate_speed_mps = 1.5
+chase_speed_mps = 3.2
+search_speed_mps = 1.2
+arrive_radius_m = 0.5
+chase_stop_distance_m = 1.0
+wander_radius_m = 8.0
+wander_pause_min_sec = 3.0
+wander_pause_max_sec = 10.0
+investigate_timeout_sec = 20.0
+search_duration_sec = 12.0
+search_radius_m = 6.0
+attack_range_m = 1.5
+attack_windup_sec = 0.5
+attack_cooldown_sec = 1.5
+bite_chance = 0.3
+bite_damage = 15.0
+scratch_damage = 8.0
+attack_body_parts = PackedStringArray("torso", "left_arm", "right_arm", "left_hand", "right_hand")
+ai_period_sec = 0.5
+ai_bucket_count = 10
+max_ai_updates_per_tick = 8
+max_pending_events = 256

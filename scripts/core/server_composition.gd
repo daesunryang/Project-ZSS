@@ -21,6 +21,9 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# is gone before they query it in the same tick.
 	if world.register_system(NoiseService.new(config.noise, world.clock, config.gameplay.world_half_extent_m)) != OK:
 		return null
+	# Phase 2-A: zombies (A2). After survival and noise, which they use.
+	if world.register_system(ZombieService.new(config.zombie, world.ids, world.registry, world.clock)) != OK:
+		return null
 	return world
 
 
