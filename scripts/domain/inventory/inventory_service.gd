@@ -15,6 +15,8 @@ extends RefCounted
 ##   drop_all_items  every item of one inventory -> world (P2-T2)
 ##   remove_item     a quantity leaves the game; at 0 the instance is deleted
 ##                   and its id is retired for good (P2-T2)
+##   transfer_item   a quantity moves from one inventory into another,
+##                   merging into the receiver's stacks (P2-T14)
 ## Every committed transaction is also announced through
 ## `transaction_committed`, synchronously and in commit order, once the state
 ## is final. InventoryNetModule replicates from it (docs/09 §14.17), so
@@ -33,6 +35,12 @@ const EVENT_ITEMS_DROPPED: String = "items_dropped"
 ## {inventory_id, item_instance_id, definition_id, removed_quantity,
 ##  remaining_quantity}. remaining_quantity 0 = the instance no longer exists.
 const EVENT_ITEM_REMOVED: String = "item_removed"
+## {from_inventory_id, to_inventory_id, item_instance_id (the giver's stack),
+##  definition_id, quantity (units moved), remaining_quantity (what the
+##  giver's stack still holds; 0 = that instance left the giver's inventory),
+##  received: Array of {item_instance_id, quantity} (the receiver's instances
+##  that grew or arrived, and by how many units; see transfer_item)}.
+const EVENT_ITEM_TRANSFERRED: String = "item_transferred"
 
 ## Failure reason codes (stable, sent to clients).
 const REASON_UNKNOWN_INVENTORY: String = "unknown_inventory"
@@ -48,6 +56,10 @@ const REASON_BAD_QUANTITY: String = "bad_quantity"
 ## Position not finite or outside the play area.
 const REASON_BAD_POSITION: String = "bad_position"
 const REASON_BAD_CELL: String = "bad_cell"
+## A transfer names the same inventory as giver and receiver.
+const REASON_SAME_INVENTORY: String = "same_inventory"
+## No new item id could be registered (never expected; nothing changed).
+const REASON_ID_UNAVAILABLE: String = "id_unavailable"
 
 const SNAPSHOT_ITEMS: String = "items"
 const SNAPSHOT_POSITIONS: String = "world_item_positions"
@@ -218,6 +230,124 @@ func remove_item(inventory_id: String, item_instance_id: String, quantity: int) 
 	})
 
 
+## Moves `quantity` (1..stack size) units of an item carried in
+## `from_inventory_id` into `to_inventory_id` (P2-T14: one player hands an
+## item over to another). All or nothing, and the units are conserved: what
+## leaves the one inventory is exactly what arrives in the other.
+##
+## Where the units go in the receiving inventory:
+##   1. into its stacks of the same definition with the same condition and
+##      quality, lowest slot number first, each up to the definition's
+##      max_stack;
+##   2. what is left over becomes ONE stack in its first free slot.
+## If something is left over and there is no free slot, the whole transfer is
+## refused (`inventory_full`): never a part of what was asked for.
+##
+## Item instance ids (docs/14 §1: unique, never reused):
+##   - nothing is left over (everything merged): no instance arrives. If the
+##     giver's stack is emptied, that instance is deleted and its id retired.
+##   - something is left over and the giver's stack is emptied: the giver's
+##     instance itself moves into the free slot and keeps its id.
+##   - something is left over and the giver keeps a rest: the left-over units
+##     become a NEW instance with a new id (two stacks never share an id).
+## The event's `received` lists every instance of the receiving inventory
+## that grew or arrived, in the order above, with the units it gained.
+func transfer_item(from_inventory_id: String, item_instance_id: String, to_inventory_id: String, quantity: int) -> ActionResult:
+	const OPERATION: String = "transfer_item"
+	if not _inventories.has(from_inventory_id):
+		return _reject(REASON_UNKNOWN_INVENTORY, from_inventory_id, item_instance_id, OPERATION)
+	var item: ItemInstance = _items.get(item_instance_id, null)
+	if item == null:
+		return _reject(REASON_UNKNOWN_ITEM, from_inventory_id, item_instance_id, OPERATION)
+	if not _is_carried_in(item, from_inventory_id):
+		return _reject(REASON_NOT_IN_INVENTORY, from_inventory_id, item_instance_id, OPERATION)
+	if quantity < 1 or quantity > item.quantity:
+		return _reject(REASON_BAD_QUANTITY, from_inventory_id, item_instance_id, OPERATION)
+	if not _inventories.has(to_inventory_id):
+		return _reject(REASON_UNKNOWN_INVENTORY, to_inventory_id, item_instance_id, OPERATION)
+	if to_inventory_id == from_inventory_id:
+		return _reject(REASON_SAME_INVENTORY, from_inventory_id, item_instance_id, OPERATION)
+
+	# Plan: which stacks of the receiver take how many units, and what is left.
+	var definition: ItemDefinition = _catalog.get_definition(item.definition_id)
+	var max_stack: int = definition.max_stack if definition != null else 0
+	var left: int = quantity
+	var fills: Array[Array] = []  # [ItemInstance, units]
+	# By slot number (items_in_inventory sorts slot ids as text: "slot_10"
+	# before "slot_2").
+	var stacks: Array[ItemInstance] = items_in_inventory(to_inventory_id)
+	stacks.sort_custom(func(a: ItemInstance, b: ItemInstance) -> bool: return slot_index_of(a.slot_id) < slot_index_of(b.slot_id))
+	for other: ItemInstance in stacks:
+		if left == 0:
+			break
+		if not _stacks_with(other, item) or other.quantity >= max_stack:
+			continue
+		var units: int = mini(max_stack - other.quantity, left)
+		fills.append([other, units])
+		left -= units
+	var free_slot: String = ""
+	if left > 0:
+		free_slot = _first_free_slot(to_inventory_id)
+		if free_slot.is_empty():
+			return _reject(REASON_INVENTORY_FULL, to_inventory_id, item_instance_id, OPERATION)
+	var empties_stack: bool = quantity == item.quantity
+	# The one thing that could still fail: a new id for a left-over part of a
+	# stack. Taken before anything changes.
+	var new_id: String = ""
+	if left > 0 and not empties_stack:
+		new_id = _ids.next_id(ENTITY_KIND_ITEM)
+		if new_id.is_empty() or _registry.register(new_id, ENTITY_KIND_ITEM) != OK:
+			GameLogger.error("inventory", "no id for a transferred stack", {"entity_id": item_instance_id, "inventory_id": to_inventory_id, "operation": OPERATION})
+			return _reject(REASON_ID_UNAVAILABLE, to_inventory_id, item_instance_id, OPERATION)
+
+	# Commit: every check passed, apply all changes together.
+	var received: Array = []
+	for fill: Array in fills:
+		var stack: ItemInstance = fill[0]
+		stack.quantity += int(fill[1])
+		received.append({"item_instance_id": stack.item_instance_id, "quantity": int(fill[1])})
+	var remaining: int = item.quantity - quantity
+	if not empties_stack:
+		item.quantity = remaining
+		if left > 0:
+			var arrived: ItemInstance = ItemInstance.new()
+			arrived.item_instance_id = new_id
+			arrived.definition_id = item.definition_id
+			arrived.quantity = left
+			arrived.condition = item.condition
+			arrived.quality = item.quality
+			arrived.location_type = ItemInstance.LOCATION_INVENTORY
+			arrived.location_id = to_inventory_id
+			arrived.slot_id = free_slot
+			_items[new_id] = arrived
+			received.append({"item_instance_id": new_id, "quantity": left})
+	elif left > 0:
+		item.quantity = left
+		item.location_id = to_inventory_id
+		item.slot_id = free_slot
+		received.append({"item_instance_id": item_instance_id, "quantity": left})
+	else:
+		_items.erase(item_instance_id)
+		if _registry.remove(item_instance_id) != OK:
+			GameLogger.error("inventory", "transferred item was not registered", {"entity_id": item_instance_id, "inventory_id": from_inventory_id, "operation": OPERATION})
+	GameLogger.info("inventory", "item transferred", {"entity_id": item_instance_id, "inventory_id": from_inventory_id, "to_inventory_id": to_inventory_id, "quantity": quantity, "remaining": remaining})
+	return _commit({
+		"event_type": EVENT_ITEM_TRANSFERRED,
+		"from_inventory_id": from_inventory_id,
+		"to_inventory_id": to_inventory_id,
+		"item_instance_id": item_instance_id,
+		"definition_id": item.definition_id,
+		"quantity": quantity,
+		"remaining_quantity": remaining,
+		"received": received,
+	})
+
+
+## Number of a slot id ("slot_7" -> 7).
+static func slot_index_of(slot_id: String) -> int:
+	return slot_id.trim_prefix(SLOT_PREFIX).to_int()
+
+
 func get_item(item_instance_id: String) -> ItemInstance:
 	return _items.get(item_instance_id, null)
 
@@ -370,6 +500,17 @@ func _first_free_slot(inventory_id: String) -> String:
 
 func _is_carried_in(item: ItemInstance, inventory_id: String) -> bool:
 	return item.location_type == ItemInstance.LOCATION_INVENTORY and item.location_id == inventory_id
+
+
+## True when the units of `incoming` may join the stack `stack`: the same
+## definition, condition and quality (units that differ stay apart, so no
+## unit's condition is averaged away).
+func _stacks_with(stack: ItemInstance, incoming: ItemInstance) -> bool:
+	return (
+		stack.definition_id == incoming.definition_id
+		and is_equal_approx(stack.condition, incoming.condition)
+		and is_equal_approx(stack.quality, incoming.quality)
+	)
 
 
 ## "" when an item may be put down at `position` in `cell_id`, else a reason.

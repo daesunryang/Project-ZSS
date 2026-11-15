@@ -80,6 +80,15 @@ func player_attack_block_reason(_player_id: String) -> String:
 	return ""
 
 
+## True when this system knows the player's current character to be dead
+## (P2-T14). Asked about a player that is acted UPON (the receiver of a
+## hand-over: ServerWorld.is_player_dead), where player_action_block_reason
+## would also refuse a player that merely sleeps. A system that knows nothing
+## of death answers false; SurvivalService answers for its dead characters.
+func player_is_dead(_player_id: String) -> bool:
+	return false
+
+
 ## How well this player can be seen (P2-T11, docs/09 §14.26): a factor on
 ## the distance at which a zombie's sight reaches it (1.0 = no effect, 0.0 =
 ## cannot be seen). ServerWorld multiplies the factors of all systems and

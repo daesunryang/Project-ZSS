@@ -901,7 +901,7 @@ func test_default_settings_and_composition() -> void:
 	assert_true(config.validate().size() > 0, "composition validation covers the inventory network settings")
 	config.inventory_net = null
 	assert_true(config.validate().size() > 0, "a missing settings object is reported")
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 8, "new RPCs are a protocol change: 4 for the drop RPCs, 5 since the consume RPCs (P2-T3), 6 since the rest RPCs (P2-T8), 7 since the character RPCs (P2-T9), 8 since P2-T10..T12")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 9, "new RPCs are a protocol change: 4 for the drop RPCs, 5 since the consume RPCs (P2-T3), 6 since the rest RPCs (P2-T8), 7 since the character RPCs (P2-T9), 8 since P2-T10..T12, 9 since the hand-over RPCs (P2-T14)")
 
 	var service: NetworkService = NetworkService.new()
 	assert_eq(ServerComposition.install_net_modules(service, CompositionConfig.from_defaults()), OK)
@@ -921,6 +921,10 @@ func test_default_settings_and_composition() -> void:
 		"_rpc_request_use_on": MultiplayerAPI.RPC_MODE_ANY_PEER,
 		"_rpc_use_on_result": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_treatment_notice": MultiplayerAPI.RPC_MODE_AUTHORITY,
+		# P2-T14 added the hand-over intent (hand_over_net_test.gd).
+		"_rpc_request_hand_over": MultiplayerAPI.RPC_MODE_ANY_PEER,
+		"_rpc_hand_over_result": MultiplayerAPI.RPC_MODE_AUTHORITY,
+		"_rpc_hand_over_notice": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_world_items_added": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_inventory_items_removed": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_inventory_item_changed": MultiplayerAPI.RPC_MODE_AUTHORITY,

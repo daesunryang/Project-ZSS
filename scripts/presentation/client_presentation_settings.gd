@@ -64,6 +64,16 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.1, 50.0) var treat_target_range_m: float = 2.5
 @export_range(1.0, 180.0) var treat_target_half_angle_deg: float = 60.0
 
+## Handing an item over (P2-T14, docs/15 P2-211): holding this key while
+## pressing a use key (food, drink, bandage, cure) asks the server to move
+## the first item of that kind into the inventory of the player the camera
+## looks at (the same candidate as for treat_other_modifier_key), instead of
+## using it. When both modifiers are held, handing over wins.
+@export var hand_over_modifier_key: Key = KEY_CTRL
+## Units one key press asks to hand over (never more than the mirrored stack
+## holds). The server decides whether that many can be handed over.
+@export_range(1, 10000) var hand_over_quantity: int = 1
+
 ## Name tag above a player's capsule (P2-T9, docs/15 P2-170): a billboard
 ## Label3D. Distance above the top of the capsule, world size of one font
 ## pixel, font size, and the colours of the local player's name, other
@@ -122,8 +132,12 @@ func validate() -> PackedStringArray:
 		errors.append("treat_target_range_m must be > 0")
 	if treat_target_half_angle_deg <= 0.0 or treat_target_half_angle_deg > 180.0:
 		errors.append("treat_target_half_angle_deg must be within (0, 180]")
-	if not _are_distinct([consume_key, drink_key, bandage_key, cure_key, rest_key, prone_key, treat_other_modifier_key]):
-		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key and the treat-other modifier must be different keys")
+	if hand_over_modifier_key == KEY_NONE:
+		errors.append("hand_over_modifier_key must not be KEY_NONE")
+	if hand_over_quantity < 1:
+		errors.append("hand_over_quantity must be >= 1")
+	if not _are_distinct([consume_key, drink_key, bandage_key, cure_key, rest_key, prone_key, treat_other_modifier_key, hand_over_modifier_key]):
+		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier and the hand-over modifier must be different keys")
 	return errors
 
 

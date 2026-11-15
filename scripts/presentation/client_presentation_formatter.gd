@@ -408,22 +408,27 @@ static func creation_hint(first_character: bool) -> String:
 
 # ------------------------------------------------------------ treating another player (P2-T12)
 
-## HUD line about whom a "use on another player" key would treat: the name
-## of the candidate and the key combinations, or that there is nobody.
-## Nothing for a dead character or without a mirror.
+## HUD line about whom a "use on another player" key would treat and a
+## hand-over key (P2-T14) would hand an item to: the name of the candidate
+## and the key combinations, or that there is nobody. Nothing for a dead
+## character or without a mirror.
 static func build_treat_target_lines(vitals: Dictionary, target_name: String, settings: ClientPresentationSettings) -> PackedStringArray:
 	if vitals.is_empty() or vitals.get("alive", true) != true:
 		return PackedStringArray()
 	if target_name.is_empty():
 		return PackedStringArray(["줄 대상: 없음 (가까이서 바라보기)"])
 	var modifier: String = key_label(settings.treat_other_modifier_key)
-	# Food and drink can be given too (P2-T13), with the same modifier.
-	return PackedStringArray(["줄 대상: %s | 음식 [%s+%s] 물 [%s+%s] 붕대 [%s+%s] 치료제 [%s+%s]" % [
+	# Food and drink can be given too (P2-T13), with the same modifier. The
+	# hand-over keys (P2-T14) are the same four keys with the other modifier:
+	# listed in short, so the line stays one line.
+	return PackedStringArray(["줄 대상: %s | 음식 [%s+%s] 물 [%s+%s] 붕대 [%s+%s] 치료제 [%s+%s] | 건네기 [%s+%s/%s/%s/%s]" % [
 		target_name,
 		modifier, key_label(settings.consume_key),
 		modifier, key_label(settings.drink_key),
 		modifier, key_label(settings.bandage_key),
 		modifier, key_label(settings.cure_key),
+		key_label(settings.hand_over_modifier_key),
+		key_label(settings.consume_key), key_label(settings.drink_key), key_label(settings.bandage_key), key_label(settings.cure_key),
 	]])
 
 
@@ -450,6 +455,51 @@ static func format_use_on_result(ok: bool, reason: String) -> String:
 		ItemConsumption.REASON_NOT_USABLE_ON_OTHERS:
 			return "남에게 사용 거부: 줄 수 없는 아이템입니다"
 	return "남에게 사용 거부: %s" % reason
+
+
+## Server answer to a hand-over request (P2-T14). What the giver can do
+## something about is told as a sentence; everything else keeps its code.
+## "The other player's belongings are full" is all the giver learns about
+## what the other player carries.
+static func format_hand_over_result(ok: bool, reason: String) -> String:
+	if ok:
+		return "건네기 승인"
+	match reason:
+		ServerWorld.REASON_TARGET_TOO_FAR:
+			return "건네기 거부: 대상이 너무 멉니다"
+		ServerWorld.REASON_TARGET_DEAD:
+			return "건네기 거부: 대상이 사망했습니다"
+		ServerWorld.REASON_TARGET_UNAVAILABLE:
+			return "건네기 거부: 그런 대상이 없습니다"
+		ServerWorld.REASON_TARGET_INVENTORY_FULL:
+			return "건네기 거부: 상대의 소지품이 가득 찼습니다"
+		ServerWorld.REASON_TARGET_IS_SELF:
+			return "건네기 거부: 자기 자신에게는 건넬 수 없습니다"
+		InventoryService.REASON_BAD_QUANTITY:
+			return "건네기 거부: 건넬 수량이 맞지 않습니다"
+		InventoryService.REASON_NOT_IN_INVENTORY:
+			return "건네기 거부: 가지고 있지 않은 아이템입니다"
+	return "건네기 거부: %s" % reason
+
+
+## Event log line for a hand-over notice (InventoryNetModule.hand_over_seen):
+## for the receiver who handed it what and how many, for a bystander only
+## who handed something to whom (never the item, whatever the notice
+## carries). `names` maps player ids to character names (ids are shown for
+## players without one). "" for anything else.
+static func format_hand_over_notice(notice: Dictionary, names: Dictionary, catalog: ItemCatalog) -> String:
+	var giver_id: String = str(notice.get("giver_id", ""))
+	var receiver_id: String = str(notice.get("receiver_id", ""))
+	var giver_name: String = str(names.get(giver_id, giver_id))
+	match str(notice.get("scope", "")):
+		InventoryNetModule.NOTICE_SCOPE_PUBLIC:
+			return "%s → %s 물건 건넴" % [giver_name, str(names.get(receiver_id, receiver_id))]
+		InventoryNetModule.NOTICE_SCOPE_TARGET:
+			var definition_id: String = str(notice.get("definition_id", ""))
+			var definition: ItemDefinition = catalog.get_definition(definition_id) if catalog != null else null
+			var item_name: String = definition.display_name if definition != null and not definition.display_name.is_empty() else definition_id
+			return "%s이(가) 나에게 %s x%d 건넴" % [giver_name, item_name, int(notice.get("quantity", 0))]
+	return ""
 
 
 ## Local notice: a use-on-another-player key was pressed but nobody is in

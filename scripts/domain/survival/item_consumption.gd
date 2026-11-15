@@ -85,10 +85,12 @@ const NOT_CURED: String = ""
 const EVENT_ITEM_USED_ON_PLAYER: String = "item_used_on_player"
 ## The target is no player a treatment can reach: unknown, not connected, or
 ## connected without a character. One reason for all three, so a requester
-## cannot probe which player ids exist.
-const REASON_TARGET_UNAVAILABLE: String = "target_unavailable"
-const REASON_TARGET_DEAD: String = "target_dead"
-const REASON_TARGET_TOO_FAR: String = "target_too_far"
+## cannot probe which player ids exist. (The three target reasons are the
+## world's: a hand-over, ServerWorld.try_hand_over_item, answers with the
+## same codes. P2-T14.)
+const REASON_TARGET_UNAVAILABLE: String = ServerWorld.REASON_TARGET_UNAVAILABLE
+const REASON_TARGET_DEAD: String = ServerWorld.REASON_TARGET_DEAD
+const REASON_TARGET_TOO_FAR: String = ServerWorld.REASON_TARGET_TOO_FAR
 ## The item has nothing that may be given to another player (food, drink).
 const REASON_NOT_USABLE_ON_OTHERS: String = "not_usable_on_others"
 ## Value of `target_id` that means the user itself.

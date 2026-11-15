@@ -1,14 +1,48 @@
 class_name ConsumeIntentPolicy
 extends RefCounted
-## Pure client-side choice of what a use key asks for (P2-T3, P2-T6, P2-T7).
+## Pure client-side choice of what a use key asks for (P2-T3, P2-T6, P2-T7;
+## with a modifier held: on another player, P2-T12, or handed over, P2-T14).
 ## It only picks an item id from the mirrored inventory; whether that item
-## may be used, and what it does, is decided by the server.
+## may be used or handed over, and what it does, is decided by the server.
 ##
 ## There is one key per kind of item (docs/15 P2-144), because one "first
 ## usable item" key cannot choose between food, water, a bandage and a cure.
 
 ## What a use key asks for. An item with several effects is of several kinds.
 enum Kind { FOOD, DRINK, BANDAGE, CURE }
+## What a use key press means, depending on the modifier keys held.
+enum UseMode { ON_SELF, ON_OTHER, HAND_OVER }
+
+
+## What pressing the key of `kind` asks for with these modifier keys held
+## (P2-T12, P2-T14): nothing held = use the item myself; the treat-other
+## modifier = use it on the other player; the hand-over modifier = hand the
+## item itself over. With both held, handing over wins: it uses nothing up.
+static func use_mode(kind: Kind, treat_other_held: bool, hand_over_held: bool) -> UseMode:
+	if hand_over_held:
+		return UseMode.HAND_OVER
+	if treat_other_held and is_usable_on_others(kind):
+		return UseMode.ON_OTHER
+	return UseMode.ON_SELF
+
+
+## How many units of the mirrored item `item_instance_id` a hand-over key
+## press asks for (P2-T14): `wanted` (the setting), but never more than the
+## mirror says the stack holds. 0 = nothing to ask for (the item is not in
+## the mirror, its row is malformed, or `wanted` is below 1). The server
+## checks the quantity against its own stack.
+static func hand_over_quantity(inventory: Array[Dictionary], item_instance_id: String, wanted: int) -> int:
+	if wanted < 1:
+		return 0
+	for entry: Dictionary in inventory:
+		var item_id: Variant = entry.get("item_instance_id", null)
+		if typeof(item_id) != TYPE_STRING or str(item_id) != item_instance_id:
+			continue
+		var quantity: Variant = entry.get("quantity", null)
+		if not ItemInstance.is_integer_value(quantity) or int(quantity) < 1:
+			return 0
+		return mini(wanted, int(quantity))
+	return 0
 
 
 ## True when `definition` is an item of `kind`: food lowers hunger, a drink

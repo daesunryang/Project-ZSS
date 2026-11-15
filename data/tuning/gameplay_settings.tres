@@ -9,5 +9,6 @@ world_half_extent_m = 250.0
 pickup_range_m = 2.5
 treat_range_m = 2.5
 allow_feeding_others = true
+hand_over_range_m = 2.5
 inventory_slot_capacity = 20
 player_spawn_position = Vector3(0, 0, 0)

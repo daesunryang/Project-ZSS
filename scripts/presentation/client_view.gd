@@ -213,6 +213,10 @@ func _bind_network() -> void:
 		_inventory_module.use_on_result.connect(_on_use_on_result)
 	if _inventory_module != null and not _inventory_module.treatment_seen.is_connected(_on_treatment_seen):
 		_inventory_module.treatment_seen.connect(_on_treatment_seen)
+	if _inventory_module != null and not _inventory_module.hand_over_result.is_connected(_on_hand_over_result):
+		_inventory_module.hand_over_result.connect(_on_hand_over_result)
+	if _inventory_module != null and not _inventory_module.hand_over_seen.is_connected(_on_hand_over_seen):
+		_inventory_module.hand_over_seen.connect(_on_hand_over_seen)
 	_character_module = _network.get_module(CharacterNetModule.MODULE_NAME) as CharacterNetModule
 	if _character_module != null:
 		_character_state = _character_module.client_state
@@ -528,8 +532,9 @@ func _request_melee_attack() -> void:
 
 
 ## A use key (food, drink, bandage, cure): asks the server to use the first item of
-## that kind in the mirrored inventory. Only the item id is sent; the server
-## decides whether and how it works.
+## that kind in the mirrored inventory (or, with a modifier held, to use it
+## on another player or to hand it over). Only ids and a quantity are sent;
+## the server decides whether and how it works.
 func _request_use(kind: ConsumeIntentPolicy.Kind) -> void:
 	var connected: bool = (
 		_inventory_module != null
@@ -544,17 +549,27 @@ func _request_use(kind: ConsumeIntentPolicy.Kind) -> void:
 	if item_id.is_empty():
 		_show_consume_text(ClientPresentationFormatter.nothing_to_use_text(kind))
 		return
-	# P2-T12, P2-T13: with the modifier held, a use key (treatment, food or
-	# drink) means "on the player I am looking at". Only the item and that
-	# player's id are sent.
-	if ConsumeIntentPolicy.is_usable_on_others(kind) and Input.is_action_pressed(ClientInputActions.TREAT_OTHER):
-		var target_id: String = _treat_target_id()
-		if target_id.is_empty():
-			_show_consume_text(ClientPresentationFormatter.no_treat_target_text())
-			return
-		_inventory_module.request_use_on(item_id, target_id)
+	# P2-T12, P2-T13: with the treat-other modifier held, a use key
+	# (treatment, food or drink) means "on the player I am looking at".
+	# P2-T14: with the hand-over modifier held it means "hand this item to
+	# that player". Only the item, that player's id and (for a hand-over) how
+	# many are sent.
+	var mode: ConsumeIntentPolicy.UseMode = ConsumeIntentPolicy.use_mode(kind, Input.is_action_pressed(ClientInputActions.TREAT_OTHER), Input.is_action_pressed(ClientInputActions.HAND_OVER))
+	if mode == ConsumeIntentPolicy.UseMode.ON_SELF:
+		_inventory_module.request_consume(item_id)
 		return
-	_inventory_module.request_consume(item_id)
+	var target_id: String = _treat_target_id()
+	if target_id.is_empty():
+		_show_consume_text(ClientPresentationFormatter.no_treat_target_text())
+		return
+	if mode == ConsumeIntentPolicy.UseMode.HAND_OVER:
+		var quantity: int = ConsumeIntentPolicy.hand_over_quantity(_state.inventory, item_id, _presentation.hand_over_quantity)
+		if quantity < 1:
+			_show_consume_text(ClientPresentationFormatter.nothing_to_use_text(kind))
+			return
+		_inventory_module.request_hand_over(item_id, target_id, quantity)
+		return
+	_inventory_module.request_use_on(item_id, target_id)
 
 
 ## The player a "use on another player" key would name now: the nearest
@@ -601,6 +616,22 @@ func _on_treatment_seen(notice: Dictionary) -> void:
 		var player_id: String = str(notice.get(key, ""))
 		names[player_id] = _player_label(player_id)
 	_append_event_line(ClientPresentationFormatter.format_treatment_notice(notice, names, _item_catalog))
+
+
+## The answer to a hand-over request (P2-T14) is shown where the use results
+## are shown.
+func _on_hand_over_result(_request_id: int, ok: bool, reason: String) -> void:
+	_show_consume_text(ClientPresentationFormatter.format_hand_over_result(ok, reason))
+
+
+## Somebody handed the local player an item, or one player handed something
+## to another (P2-T14): a line in the event log.
+func _on_hand_over_seen(notice: Dictionary) -> void:
+	var names: Dictionary = {}
+	for key: String in ["giver_id", "receiver_id"]:
+		var player_id: String = str(notice.get(key, ""))
+		names[player_id] = _player_label(player_id)
+	_append_event_line(ClientPresentationFormatter.format_hand_over_notice(notice, names, _item_catalog))
 
 
 ## Rest key (P2-T8): asks the server to lie down, or to get up when the

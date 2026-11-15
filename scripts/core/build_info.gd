@@ -52,7 +52,13 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    and its result (_rpc_request_use_on, _rpc_use_on_result) and treatment
 ##    notices to the target and to bystanders (_rpc_treatment_notice). The
 ##    consume intent is unchanged.
-const PROTOCOL_VERSION: int = 8
+## 9: P2-T14 (handing an item over to another player). InventoryNet gets the
+##    hand-over intent and its result (_rpc_request_hand_over,
+##    _rpc_hand_over_result) and hand-over notices to the receiver and to
+##    bystanders (_rpc_hand_over_notice). The receiver's new or grown stacks
+##    arrive through the existing owner-only _rpc_inventory_item_changed. No
+##    existing RPC or message format changed.
+const PROTOCOL_VERSION: int = 9
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

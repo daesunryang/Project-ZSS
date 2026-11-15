@@ -739,6 +739,13 @@ func player_action_block_reason(player_id: String) -> String:
 	return REASON_PLAYER_RESTING if _resting.has(player_id) else ""
 
 
+## True for a player whose current character is dead (P2-T14: nothing can be
+## handed to it). False for a player this system does not know.
+func player_is_dead(player_id: String) -> bool:
+	var vitals: PlayerVitals = _vitals.get(player_id, null)
+	return vitals != null and not vitals.is_alive()
+
+
 func on_player_online(_world: ServerWorld, player_id: String) -> void:
 	_online[player_id] = true
 	if not _vitals.has(player_id):

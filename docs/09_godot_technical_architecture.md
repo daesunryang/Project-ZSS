@@ -233,9 +233,11 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. 시스템 사이의 시그널 연결도 여기서 한다(P2-T5: `SurvivalService.player_died` → `ZombieService.on_player_died`, §14.20). `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
 | 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가), player v2→v3(`character_generation` 추가, 값은 1. P2-T4), player v3→v4(`character` 추가, 값은 기본 이름과 빈 외형. P2-T9, §14.24). `SaveService` 기본 마이그레이터 |
 
-채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 8(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24), P2-T10~T12 묶음에서 8: 기상 원인(§14.25), `PostureNet` 모듈(§14.26), 다른 플레이어 치료(§14.27)).
+채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 9(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24), P2-T10~T12 묶음에서 8: 기상 원인(§14.25), `PostureNet` 모듈(§14.26), 다른 플레이어 치료(§14.27), P2-T14에서 9: 건네기 의도와 건네기 알림(§14.28)).
 
 P2-T11에서 `ServerSystem`에 훅 넷이 추가됐다(모두 기본값은 "영향 없음"이고 `ServerWorld`의 같은 이름 함수가 모든 시스템의 값을 모은다, §14.26): `player_attack_block_reason(player_id)`(공격만 막는 사유. `ServerWorld.player_attack_block_reason`은 행동 전체를 막는 사유를 먼저 본다), `player_visibility_multiplier(player_id)`(좀비 시야 거리에 곱하는 가시성, 곱을 0~1로 제한), `player_footstep_loudness_multiplier(player_id)`·`player_footstep_stride_multiplier(player_id)`(발소리 세기·보폭 배율, 곱). 잘못된 값(NaN·무한·음수)은 오류 로그를 남기고 무시한다(1.0으로 취급: 고장 난 시스템이 누구도 숨기지 못한다). 조립에 시그널 연결 둘이 늘었다: `SurvivalService.rest_changed`·`player_died` → `PostureService.on_rest_changed`·`on_player_died`.
+
+P2-T14에서 `ServerSystem`에 훅 하나가 추가됐다(§14.28): `player_is_dead(player_id)`(기본 false. 그 플레이어의 현재 캐릭터가 죽었는지. `ServerWorld.is_player_dead`는 어느 한 시스템이라도 true면 true다). 행동을 **받는** 쪽의 생사를 묻는 훅이다: `player_action_block_reason`은 자는 플레이어도 막으므로 "죽었는가"만 따로 물을 수 없다. `SurvivalService`가 죽은 캐릭터에 대해 true를 돌려준다. `ServerWorld`에는 `try_hand_over_item`이 추가됐다.
 
 ### 14.6 생존 계약(B1, system id `survival`)
 
@@ -627,6 +629,7 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 - `item_not_in_inventory`: 아이템은 있지만 그 인벤토리에 들어 있지 않다(월드에 놓여 있거나 다른 인벤토리에 있다). `bad_quantity`: 1 미만이거나 스택 수량 초과. `bad_position`: 유한값이 아니거나 `|x|`, `|z|`가 월드 반폭을 넘는다(반폭은 생성자 5번째 인자 `world_half_extent_m`, 기본값 무제한. `ServerWorld`가 `GameplaySettings.world_half_extent_m`을 넘긴다). `bad_cell`: 빈 셀 ID.
 - 이벤트 형식(JSON-safe): `items_dropped` = `{event_type, inventory_id, item_instance_ids: Array[String](슬롯 순서), cell_id, position: [x, y, z]}`, `item_removed` = `{event_type, inventory_id, item_instance_id, definition_id, removed_quantity, remaining_quantity}`(`remaining_quantity` 0 = 인스턴스 삭제됨).
 - `signal transaction_committed(event: Dictionary)`: 확정된 트랜잭션마다(줍기 `item_picked_up` 포함) 상태 반영이 끝난 직후, 확정 순서대로, 동기적으로 한 번 나온다. 인자는 이벤트의 사본이다. 실패한 요청은 내지 않는다.
+- P2-T14에서 네 번째 트랜잭션 `transfer_item`(한 인벤토리에서 다른 인벤토리로, 이벤트 `item_transferred`)이 추가됐다. 계약과 복제는 §14.28.
 - 보조: `item_count()`(존재하는 인스턴스 수). 저장 형식은 바뀌지 않았다: 내려놓은 아이템의 좌표는 기존대로 world_state `inventory.world_item_positions`(docs/15 P1-7)에, 삭제된 ID는 world_state `tombstones`에, 다음 순번은 `next_entity_sequence`에 들어간다.
 
 `ServerWorld` 래퍼(위치·셀·인벤토리 ID는 서버 상태에서 채운다. 셀은 `DevWorldSeed.DEV_CELL_ID`, 위치는 `clamp_to_world(플레이어 위치)`):
@@ -1446,7 +1449,7 @@ row = {
 
 `ItemDefinition.is_treatment()`: 지혈 효과나 치료 효과가 있는 아이템(붕대, 치료제). `allow_feeding_others`가 꺼져 있을 때 남에게 쓸 수 있는 종류의 기준이다. 아이템 정의 데이터는 바뀌지 않았다.
 
-**음식·물을 남에게 주기(P2-T13, docs/00 ADR-019).** 사용자 결정(2026-11-15): "음식 물은 아이템 형식이라 남에게 줄 수 있게". 기본값을 켰을 뿐 서버 규칙·RPC·알림 형식은 P2-T12 그대로다(`PROTOCOL_VERSION` 8 유지). 주는 쪽의 한 단위가 줄고(`remove_player_item`) 받는 쪽의 허기·갈증이 `reduce_needs(target)`로 내려간다: 아이템이 받는 쪽 인벤토리로 옮겨 가지는 않는다. 검사 순서는 아래 표와 같고, 음식·물에는 대상 상태에 따른 거부(표의 12)가 없다: 자기가 먹을 때처럼 받는 쪽의 허기·갈증이 0이어도 수락되고 소비된다(§14.18, ADR-013). 그래서 음식·물로는 대상에 대해 알아낼 수 있는 것이 없다. 알림은 치료와 같다: 받는 쪽은 `{scope: "target", user_id, definition_id, ok: true, ...}`, 다른 접속자는 `{scope: "public", user_id, target_id, world_time}`(무엇을 줬는지 없음). 받는 쪽의 욕구 변화는 본인의 기존 생존 스냅샷으로만 간다. 테스트: `treat_other_test.gd::test_by_default_food_is_given_to_another_player_close_by`, `treat_other_net_test.gd::test_a_client_gives_food_and_water_to_another_player`.
+**음식·물을 남에게 주기(P2-T13, docs/00 ADR-019).** 사용자 결정(2026-11-15): "음식 물은 아이템 형식이라 남에게 줄 수 있게". 기본값을 켰을 뿐 서버 규칙·RPC·알림 형식은 P2-T12 그대로다(`PROTOCOL_VERSION` 8 유지). 주는 쪽의 한 단위가 줄고(`remove_player_item`) 받는 쪽의 허기·갈증이 `reduce_needs(target)`로 내려간다: 아이템이 받는 쪽 인벤토리로 옮겨 가지는 않는다(옮겨 가는 "건네기"는 P2-T14, §14.28). 검사 순서는 아래 표와 같고, 음식·물에는 대상 상태에 따른 거부(표의 12)가 없다: 자기가 먹을 때처럼 받는 쪽의 허기·갈증이 0이어도 수락되고 소비된다(§14.18, ADR-013). 그래서 음식·물로는 대상에 대해 알아낼 수 있는 것이 없다. 알림은 치료와 같다: 받는 쪽은 `{scope: "target", user_id, definition_id, ok: true, ...}`, 다른 접속자는 `{scope: "public", user_id, target_id, world_time}`(무엇을 줬는지 없음). 받는 쪽의 욕구 변화는 본인의 기존 생존 스냅샷으로만 간다. 테스트: `treat_other_test.gd::test_by_default_food_is_given_to_another_player_close_by`, `treat_other_net_test.gd::test_a_client_gives_food_and_water_to_another_player`.
 
 #### 서버 규칙(`ItemConsumption.try_use_on(world, user_id, item_instance_id, target_id) -> ActionResult`)
 
@@ -1527,3 +1530,116 @@ row = {
 클라이언트 표시(`scripts/presentation/`): `TreatTargetPolicy.pick_target(local_player_id, players, excluded_ids, facing_yaw, range_m, half_angle_rad)`가 미러의 위치에서 "카메라가 바라보는 방향의 가장 가까운 다른 플레이어"를 고른다(XZ 평면, 사거리 `treat_target_range_m` 2.5m, 반각 `treat_target_half_angle_deg` 60도, 죽은 플레이어 제외, 거리가 같으면 ID가 작은 쪽). 순수 함수이고 고른 ID를 보낼 뿐이다: 실제로 치료할 수 있는지는 서버가 정한다. 남에게 쓰기는 **보조 키(`treat_other_modifier_key`, 기본 Shift)를 누른 채 붕대 키(B)나 치료제 키(V)**다. 보조 키 없이 누르면 지금까지처럼 자기에게 쓴다. P2-T13부터 음식 키(F)·물 키(G)도 보조 키와 함께 누르면 남에게 준다(`ConsumeIntentPolicy.is_usable_on_others`가 네 종류 모두 true). 생존 HUD 끝에 "줄 대상: 이름 | 음식 [Shift+F] 물 [Shift+G] 붕대 [Shift+B] 치료제 [Shift+V]" 또는 "줄 대상: 없음 (가까이서 바라보기)"가 붙는다(매 물리 프레임 후보를 다시 고르고 바뀌면 HUD를 갱신한다). 결과는 사용 결과 자리에 문장으로 표시하고("남에게 사용 승인", "남에게 사용 거부: 상대에게 출혈이 없습니다" 등), 대상·제3자가 받는 알림은 이벤트 로그에 한 줄로 남긴다("영희이(가) 나에게 붕대 사용", "영희 → 민수 돌봄"). 화면 설명은 docs/11 §2.11.
 
 테스트: `tests/unit/treat_other_test.gd`(설정·아이템 종류·대상 상태 사유 분류, 붕대로 남의 가장 심한 출혈을 지혈하고 자기 상처는 그대로임·이벤트·한 트랜잭션, 치료제의 성공·`not_infected`·`too_late`, 지혈+치료 아이템, 대상 검증(없는 ID, 좀비 ID, 오프라인, 사망), 캐릭터 없는 접속자는 대상도 사용자도 아님, 사거리 경계(정확히 사거리는 승인, 0.01m 밖은 거부)와 설정, 자는·엎드린 대상과 깨우지 않음·엎드린 사용자·자는 사용자, 사용자와 아이템 검증(남의 것, 월드의 것, 없는 ID, 플레이어 ID, 효과 없는 아이템, 오프라인·사망 사용자), 음식 불가와 설정 시 허용, 자기 사용과의 호환, 검사 순서, 거부마다 인벤토리 스냅샷·두 사람의 생존 fragment 불변과 트랜잭션·이벤트 0개), `tests/integration/treat_other_net_test.gd`(서버 1 + 클라이언트 3, 실제 ENet: A가 B에게 붕대 → 서버와 B 미러의 출혈 상태 일치, A 인벤토리 감소, A는 결과만(알림·생존 이벤트 0개), B는 대상 알림과 본인 지혈 이벤트, C는 공개 알림만(키 목록 고정, 사적 단어 없음, 생존 이벤트 0개) / 출혈이 없을 때의 거부와 보존, 그때도 B·C가 같은 알림을 받음 / 비감염 B에게 치료제 → `not_infected`·보존, 감염된 B → 완치, 너무 늦은 단계 → `too_late`, C의 미러 불변 / 자기 사용 / 남의 아이템·없는 아이템·음식·없는 대상·먼 대상·죽은 대상·오프라인 대상·죽은 사용자 / 조작된 요청 11종과 인자를 더 붙인 호출·클라이언트가 보낸 서버 메시지 / join 전 요청·빈도 초과(소비 의도와 버킷 공유) / RPC 구성·요청 검증·알림 검증 규칙), `tests/unit/treat_target_test.gd`(대상 후보 선택: 가장 가까운 플레이어, 사거리, 바라보는 방향과 원뿔 경계, 제외 목록, 동률, 잘못된 미러 행과 인자 / 키 등록·설정 검증 / HUD 줄, 결과 문장, 알림 문구). 고친 기존 테스트: `tests/integration/inventory_net_test.gd`의 RPC 목록에 새 RPC 셋 추가.
+
+### 14.28 아이템 건네기(P2-T14, docs/00 ADR-020)
+
+사용자 결정(2026-11-15): "건네기도 추가". 들고 있는 아이템을 가까이 있는 다른 플레이어에게 건네면 그 아이템이 받는 쪽 인벤토리로 옮겨 가고, 받는 쪽은 그것을 보관했다가 나중에 쓴다. 먹여 주기(§14.27, ADR-019: 받는 쪽의 허기·갈증이 바로 내려가고 아이템은 없어진다)는 그대로이고, 건네기는 그것과 별개의 경로다: 건네기로는 누구의 허기·갈증·상처·감염도 바뀌지 않는다. 클라이언트는 아이템·대상 플레이어·수량만 지정하고 나머지는 모두 서버 상태에서 판정한다. 임시 가정은 docs/15 §14.5 P2-205~P2-212.
+
+구성: `InventoryService.transfer_item`(트랜잭션), `ServerWorld.try_hand_over_item`(서버 규칙)과 `is_player_dead`, `ServerSystem.player_is_dead`(새 훅, `SurvivalService`가 구현, §14.5), `GameplaySettings.hand_over_range_m`, `InventoryNetModule`(건네기 의도 RPC와 결과, 건네기 알림, `item_transferred` 복제), 클라이언트 건네기 보조 키·HUD·문구. `network_service.gd`는 수정하지 않았다. `ItemConsumption`은 대상 사유 상수 셋(`target_unavailable`, `target_dead`, `target_too_far`)이 `ServerWorld`의 같은 상수를 가리키게 했을 뿐 동작은 그대로다(같은 뜻의 사유는 같은 코드 하나를 쓴다).
+
+**프로토콜 변경 있음**: RPC 3개(`_rpc_request_hand_over`, `_rpc_hand_over_result`, `_rpc_hand_over_notice`)가 새로 생겨 `BuildInfo.PROTOCOL_VERSION`을 9로 올렸다. 기존 RPC와 메시지 형식, join 스냅샷 형식, 저장 스키마는 바뀌지 않았다.
+
+#### 데이터
+
+| 설정 | 기본값 | 뜻 |
+|---|---|---|
+| `GameplaySettings.hand_over_range_m` | 2.5 | 건네는 플레이어와 받는 플레이어 사이의 최대 거리(m). 서버가 가진 두 위치 사이의 3차원 거리이고 경계(정확히 2.5m)는 허용한다. 치료 사거리(`treat_range_m`)와 값은 같지만 별도 설정이다 |
+| `InventoryNetSettings.drop_intent_rate_per_sec` / `drop_intent_burst` | 4/s / 4 | 건네기 의도의 빈도 제한. **내려놓기 의도와 같은 버킷**을 쓴다(아래 "요청 검증") |
+| `ClientPresentationSettings.hand_over_modifier_key` | Ctrl | 건네기 보조 키(클라이언트 전용) |
+| `ClientPresentationSettings.hand_over_quantity` | 1 | 키를 한 번 누를 때 건네는 수량(클라이언트 전용. 서버는 1..묶음 수량이면 어떤 수량이든 받는다) |
+
+아이템 정의는 바뀌지 않았다. 건넬 수 있는 종류를 제한하는 데이터는 없다: 모든 아이템을 건넬 수 있다.
+
+#### 서버 트랜잭션(`InventoryService.transfer_item(from_inventory_id, item_instance_id, to_inventory_id, quantity) -> ActionResult`)
+
+§14.17의 트랜잭션과 같은 규칙이다: 검사를 전부 마친 뒤에만 반영하고, 실패하면 사유 코드만 있고 아무것도 바뀌지 않으며, 성공하면 `transaction_committed`가 한 번 나온다.
+
+- 실패 사유(검사 순서): `unknown_inventory`(주는 쪽) → `unknown_item` → `item_not_in_inventory` → `bad_quantity`(1 미만이거나 묶음 수량 초과) → `unknown_inventory`(받는 쪽) → `same_inventory`(주는 쪽과 받는 쪽이 같음) → `inventory_full`(받는 쪽에 전부 들어가지 않음) → `id_unavailable`(새 아이템 ID를 등록할 수 없음. 일어나지 않아야 하는 경우의 방어이고 오류 로그를 남긴다).
+- **받는 쪽에서 들어가는 자리**:
+  1. 받는 쪽이 가진 **같은 정의·같은 `condition`·같은 `quality`**의 묶음을 슬롯 번호가 작은 것부터 `max_stack`까지 채운다(`items_in_inventory`의 글자 순서가 아니라 숫자 순서: `slot_2`가 `slot_10`보다 먼저다).
+  2. 그러고도 남은 수량은 받는 쪽의 첫 빈 슬롯에 **한 묶음**으로 들어간다(건넨 수량 ≤ 원래 묶음 ≤ `max_stack`이라 빈 칸은 하나면 된다).
+  3. 남은 수량이 있는데 빈 슬롯이 없으면 **요청 전체를 거부**한다(`inventory_full`). 들어가는 만큼만 옮기는 일은 없다. 반대로 전부가 기존 묶음에 합쳐지면 빈 슬롯이 없어도 승인된다.
+- **보존**: 주는 쪽에서 빠진 수량과 받는 쪽에 늘어난 수량이 항상 같다. 정의별 총수량은 어떤 경우에도(일부 건네기, 합치기, 넘침, 거부) 변하지 않는다. `condition`·`quality`가 다른 묶음끼리는 합치지 않으므로 단위의 상태가 평균되어 사라지지도 않는다.
+- **아이템 인스턴스 ID**(docs/14 §1: 유일하고 재사용하지 않는다):
+
+| 경우 | 받는 쪽에 생기는 것 | 주는 쪽 인스턴스 |
+|---|---|---|
+| 건넨 수량이 전부 기존 묶음에 합쳐짐, 주는 쪽에 남는 수량 있음 | 새 인스턴스 없음(받는 쪽 묶음의 수량만 증가) | 수량만 줄어듦 |
+| 전부 합쳐짐, 주는 쪽 묶음이 0이 됨 | 새 인스턴스 없음 | 삭제되고 ID는 tombstone 처리(재사용 불가) |
+| 남은 수량이 빈 슬롯으로, 주는 쪽 묶음이 0이 됨(묶음 전체를 건넴) | **주는 쪽 인스턴스가 그 ID 그대로** 받는 쪽으로 옮겨 감(수량 = 남은 수량) | 받는 쪽 것이 됨 |
+| 남은 수량이 빈 슬롯으로, 주는 쪽에 남는 수량 있음(묶음의 일부를 건넴) | **새 ID의 새 인스턴스**(수량 = 남은 수량, `condition`·`quality`는 원래 묶음의 것) | 수량만 줄어듦 |
+
+  두 묶음이 같은 ID를 갖는 경우는 없다. 새 ID는 상태를 바꾸기 전에 발급·등록한다.
+- 성공 이벤트(JSON-safe) `item_transferred` = `{event_type, from_inventory_id, to_inventory_id, item_instance_id(주는 쪽 묶음), definition_id, quantity(옮긴 수량), remaining_quantity(주는 쪽 묶음에 남은 수량. 0 = 그 인스턴스가 주는 쪽 인벤토리를 떠남), received: [{item_instance_id, quantity}](받는 쪽에서 수량이 늘었거나 새로 들어온 인스턴스와 늘어난 수량. 위 1 → 2의 순서)}`.
+
+#### 서버 규칙(`ServerWorld.try_hand_over_item(player_id, item_instance_id, target_player_id, quantity) -> ActionResult`)
+
+줍기·내려놓기 래퍼(`try_pickup`, `try_drop_item`) 옆의 진입점이다. 아래 순서로 검사하고, 하나라도 걸리면 아무것도 바뀌지 않는다(아이템, 두 플레이어, 모든 시스템의 상태, ID 순번, tombstone, 트랜잭션·이벤트 모두).
+
+| 순서 | 사유 코드 | 조건 |
+|---|---|---|
+| 1 | `not_online` | 건네는 쪽이 월드에 없음(모르는 플레이어, 오프라인, 캐릭터 없는 접속자) |
+| 2 | `player_dead`, `player_resting` 등 | 건네는 쪽이 행동할 수 없음(`player_action_block_reason`: 죽은 캐릭터, 자는 플레이어는 먼저 일어나야 한다). 엎드린 채로는 건넬 수 있다 |
+| 3 | `unknown_item` / `item_not_in_inventory` | 그 아이템이 없음 / 건네는 쪽이 들고 있지 않음(남의 것, 월드의 것). 네트워크 계층은 둘을 `item_not_in_inventory` 하나로 알린다 |
+| 4 | `bad_quantity` | 수량이 1 미만이거나 그 묶음의 수량보다 많음 |
+| 5 | `target_is_self` | 대상이 건네는 쪽 자신 |
+| 6 | `target_unavailable` | 대상이 월드에 없음: 모르는 ID, 플레이어가 아닌 ID, 오프라인, 캐릭터 없는 접속자. **한 사유로 합쳤다**(§14.27과 같은 코드, 플레이어 ID가 존재하는지 떠볼 수 없게) |
+| 7 | `target_dead` | 대상이 죽음(`ServerWorld.is_player_dead`) |
+| 8 | `target_too_far` | 서버 위치 기준 거리 > `hand_over_range_m` |
+| 9 | `target_inventory_full` | 받는 쪽 인벤토리에 전부 들어가지 않음(트랜잭션의 `inventory_full`. 요청자 자신의 인벤토리가 찼다는 줍기의 `inventory_full`과 구분하려고 코드를 따로 뒀다) |
+
+순서의 뜻: 건네는 쪽이 그 아이템을 들고 있고 가진 만큼의 수량을 요청하기 전에는 대상에 대해 아무것도 보지 않는다(3·4가 5~9보다 앞). 소유 검사가 수량 검사보다 앞이라 남의 묶음에 몇 개가 있는지도 알 수 없다. 받는 쪽 인벤토리(9)는 가장 마지막, 곧 대상 바로 옆에서 건네려 한 경우에만 본다(8이 9보다 앞): 멀리 있는 플레이어의 인벤토리가 찼는지를 떠볼 수 없다. 접속 여부(6), 죽음(7), 거리(8)는 이미 공개된 사실이다.
+
+- **모든 아이템**: 음식·물·붕대·치료제만이 아니라 사용 효과가 없는 아이템과 무기도 건넬 수 있다. 정의의 종류는 보지 않는다.
+- **원자성**: 조건을 모두 검사한 뒤 `transfer_item` 한 번으로 확정한다. 트랜잭션이 아이템·수량 조건을 다시 검사하고 자리가 있는지를 정한다.
+- **대상의 동의는 없다**: 받는 쪽은 거부할 수 없다. 자는·엎드린 대상도 받고, 받아도 깨지 않으며 자세가 바뀌지 않는다.
+- **죽은 대상, 오프라인 대상, 캐릭터 없는 접속자**는 받을 수 없다. 죽은 캐릭터와 자는 플레이어, 캐릭터 없는 접속자는 건넬 수도 없다.
+- 성공 이벤트 `{event_type: "item_handed_over", player_id(건넨 쪽), target_id, item_instance_id, definition_id, quantity, remaining_quantity, received, world_time}`. 서버 로그와 반환값으로만 쓰이고 그대로 복제되지 않는다.
+- 생존 시스템이 없는 월드에서도 동작한다(그 월드에는 죽은 플레이어가 없다). `player_is_dead` 훅 덕분에 `ServerWorld`는 생존 시스템을 직접 알지 않는다.
+
+#### 네트워크 메시지(`InventoryNetModule`에 추가, §14.17)
+
+| 방향 | RPC | 채널/모드 | 받는 쪽 검증 |
+|---|---|---|---|
+| C→S | `_rpc_request_hand_over(request_id: int, item_instance_id: String, target_player_id: String, quantity: int)` | 0 reliable | 아래 "요청 검증" |
+| S→요청자 | `_rpc_hand_over_result(request_id: int, ok: bool, reason: String)` | 0 reliable | 서버 발신만 수용, 타입, `request_id` ≥ 0, `reason` 길이 ≤ 64, `ok`일 때만 `reason`이 빈 문자열 |
+| S→받는 쪽·제3자 | `_rpc_hand_over_notice(notice: Dictionary)` | 0 reliable | 서버 발신만 수용, `InventoryNetModule.is_valid_hand_over_notice`: scope별 정확한 키, 서로 다른 두 플레이어 ID, 받는 쪽이 맞는지(대상 알림은 받는 플레이어만, 공개 알림은 건넨 쪽도 받는 쪽도 아닌 플레이어만), 대상 알림의 `definition_id`(snake_case, ≤ 64자)와 `quantity`(int ≥ 1) |
+
+요청: 클라이언트는 의도만 보낸다(요청 번호, 들고 있는 아이템의 ID, 대상 플레이어 ID, 수량). 위치·거리·소유자·받는 쪽 슬롯을 싣는 인자는 없고, 건네는 쪽은 보낸 peer의 플레이어다. 인자를 더 붙인 호출은 엔진이 거부한다(테스트로 고정).
+
+요청 검증(순서대로, 먼저 걸린 것 하나. 거부되면 서버 상태는 바뀌지 않고 `rejected_intent_count(reason)`이 1 오른다):
+
+| 순서 | 사유 코드 | 조건 | 요청자에게 결과 전송 |
+|---|---|---|---|
+| 1 | `not_joined` | join 핸드셰이크를 마치지 않은 peer | 보내지 않음 |
+| 2 | `bad_type` | `request_id`·`quantity`가 int가 아님, 아이템 ID나 대상 ID가 String이 아님 | `request_id`가 0 이상 int일 때만 |
+| 3 | `bad_sequence` | `request_id` < 0 | 보내지 않음 |
+| 4 | `bad_item_id` | 아이템 ID가 비었거나 64자 초과 | 보냄 |
+| 5 | `bad_target_id` | 대상 ID가 비었거나 64자 초과(§14.27과 달리 빈 문자열은 허용하지 않는다: "자기 자신"이라는 뜻이 없다) | 보냄 |
+| 6 | `bad_quantity` | `quantity` < 1 | 보냄 |
+| 7 | `rate_limited` | peer별 토큰 버킷. **내려놓기 의도와 같은 버킷**(`drop_intent_rate_per_sec`/`drop_intent_burst`)을 쓴다: 둘 다 아이템을 인벤토리에서 내보내고 승인되면 바로 저장하므로, 한 peer가 일으킬 수 있는 저장 횟수를 한 허용량으로 묶는다. 소비·남에게 쓰기 버킷과는 별개다. 형식이 틀린 요청은 토큰을 쓰지 않는다 | 보냄 |
+| 8 | 서버 규칙의 사유(위 표) | `unknown_item`은 `item_not_in_inventory`로 바꿔 알린다(§14.17 `public_reason`). 묶음 수량을 넘는 수량도 여기서 `bad_quantity`다 | 보냄 |
+
+- 1~7은 `reject_intent`(횟수 + 경고 로그), 8은 정상 플레이에서 생길 수 있어 `count_rejection`(횟수만)이다.
+
+**복제와 정보 공개**(ADR-009, ADR-020). 누가 무엇을 받는가:
+
+| 받는 쪽 | 받는 것 | 그것으로 알게 되는 것 |
+|---|---|---|
+| 건넨 쪽(요청자) | 자기 인벤토리 변화: 묶음이 남으면 `_rpc_inventory_item_changed`(줄어든 묶음), 묶음이 떠났으면 `_rpc_inventory_items_removed`(그 ID). 이어서 결과 `(ok, reason)` | 건네졌는지. 받는 쪽 인벤토리의 내용은 받지 않는다(받는 쪽 묶음의 ID·수량·슬롯 모두). 단 `target_inventory_full`은 "상대가 이것을 이만큼 받을 자리가 없다"를, 승인은 "자리가 있었다"를 알려 준다(아래) |
+| 받는 쪽 | 자기 인벤토리 변화: 수량이 늘었거나 새로 들어온 묶음마다 `_rpc_inventory_item_changed`(기존 소유자 전용 메시지를 그대로 쓴다. 미러는 같은 ID면 교체, 없으면 추가). 이어서 대상 알림 `{scope: "target", giver_id, receiver_id, definition_id, quantity, world_time}` | 누가 무엇을 몇 개 건넸는지(`quantity`는 건넨 수량이고 어느 묶음에 어떻게 나뉘었는지는 인벤토리 메시지에 있다) |
+| 제3자(다른 접속자 전부) | 공개 알림 `{scope: "public", giver_id, receiver_id, world_time}` | "A가 B에게 무언가를 건넸다"는 사실뿐. 어떤 아이템인지, 몇 개인지, 두 사람의 인벤토리는 받지 않는다 |
+
+- 인벤토리 메시지는 §14.17과 같이 트랜잭션이 확정되는 그 자리에서 나가고(건넨 쪽 것 먼저, 받는 쪽 것 다음), 그 뒤에 저장, 알림, 결과 순이다. 같은 채널이라 건넨 쪽은 결과보다 자기 인벤토리 변화를 먼저 받는다.
+- 다른 플레이어의 인벤토리는 여전히 어떤 메시지로도 가지 않는다(§14.17). 각 소유자에게는 "지금 그 인벤토리에 있는" 인스턴스만 보낸다.
+- 알림은 **확정된 건네기에만** 보낸다. 거부된 요청은 요청자 말고는 누구에게도 알리지 않는다(받는 쪽도 "누가 건네려다 실패했다"를 받지 않는다). 건넨 쪽은 알림을 받지 않는다(결과만). 알림에 거리·시야 제한은 없다(치료 알림과 같다).
+- 치료 알림(`_rpc_treatment_notice`)을 재사용하지 않고 형제 RPC를 둔 이유: 제3자에게 "돌봤다"와 "건넸다"는 눈으로 구분되는 서로 다른 사실이고, 받는 쪽 알림의 필드가 다르며(`quantity`가 있고 `ok`·`reason`이 없다), 기존 알림의 형식과 엄격한 검증(정확한 키 목록)을 건드리지 않기 위해서다. 클라이언트 검증의 엄격함은 `is_valid_treatment_notice`와 같다.
+- **남는 정보 경로**(사용자 확인 필요, docs/15 P2-210): 건네는 쪽은 결과로 받는 쪽 인벤토리에 대해 한 가지를 알게 된다: 그 아이템을 그 수량만큼 받을 자리가 있는지. 바로 옆(사거리 안)에서만 물을 수 있고, 승인되면 실제로 아이템이 넘어간다.
+
+저장: 줍기·내려놓기와 같은 "주요 트랜잭션"이다(§14.17, docs/10 §5). 승인되면 결과를 보내기 전에 월드 전체를 저장한다. 저장은 항상 월드 전체를 한 번에 쓰므로 두 인벤토리 중 한쪽만 반영된 저장은 없다. 거부된 요청은 저장하지 않는다. 저장 스키마는 바뀌지 않았다: 옮겨 간 인스턴스는 `location_id`·`slot_id`만 다르고, 합쳐져 없어진 ID는 world_state `tombstones`에, 새 ID의 다음 순번은 `next_entity_sequence`에 들어간다.
+
+클라이언트 표면(`InventoryNetModule`): `request_hand_over(item_instance_id, target_player_id, quantity) -> int`(요청 번호, 1부터. join 전이면 `NO_REQUEST`. 클라이언트에서 미리 판단하지 않는다), `signal hand_over_result(request_id, ok, reason)`, `signal hand_over_seen(notice)`(검증을 통과한 건네기 알림), `send_raw_hand_over_request(request_id, item_instance_id, target_player_id, quantity)`(테스트 전용), 순수 함수 `validate_hand_over_request`·`is_valid_hand_over_notice`. 받는 쪽 인벤토리 미러는 기존 `inventory_item_changed` 시그널로 바뀐다. 미러에는 권한이 없다.
+
+클라이언트 표시(`scripts/presentation/`): **건네기 보조 키(`hand_over_modifier_key`, 기본 Ctrl)를 누른 채 사용 키(음식 F, 물 G, 붕대 B, 치료제 V)**를 누르면, 미러 인벤토리에서 그 종류의 첫 아이템을 `hand_over_quantity`개(기본 1. 미러의 묶음 수량보다 많이는 요청하지 않는다: `ConsumeIntentPolicy.hand_over_quantity`) "남에게 쓰기"와 같은 대상 후보(`TreatTargetPolicy`, §14.27)에게 건네 달라는 의도를 보낸다. 보조 키 둘의 뜻은 순수 함수 `ConsumeIntentPolicy.use_mode(kind, treat_other_held, hand_over_held)`가 정한다: 아무것도 누르지 않으면 자기 사용, Shift면 남에게 쓰기, Ctrl이면 건네기, **둘 다 누르면 건네기**(아무것도 소비하지 않는 쪽). 네 종류 어디에도 속하지 않는 아이템(개발용 `dev_test_item`, `dev_melee_pipe`)은 서버 규칙으로는 건넬 수 있지만 **클라이언트 입력이 아직 없다**(docs/15 P2-211). HUD의 대상 줄 끝에 건네기 키가 붙는다: "줄 대상: 이름 | 음식 [Shift+F] 물 [Shift+G] 붕대 [Shift+B] 치료제 [Shift+V] | 건네기 [Ctrl+F/G/B/V]". 결과는 사용 결과 자리에 문장으로 표시하고("건네기 승인", "건네기 거부: 상대의 소지품이 가득 찼습니다" 등), 받는 쪽·제3자가 받는 알림은 이벤트 로그에 한 줄로 남긴다("영희이(가) 나에게 Development Ration x2 건넴": 아이템 이름은 정의의 표시 이름이다. "영희 → 민수 물건 건넴"). 화면 설명은 docs/11 §2.12.
+
+테스트: `tests/unit/hand_over_test.gd`(트랜잭션: 묶음 전체가 ID 그대로 옮겨 감, 일부는 새 ID의 새 인스턴스, 같은 정의 묶음에 합치기와 합쳐져 없어진 ID의 tombstone, `max_stack` 넘침이 빈 슬롯으로 가는 두 경우, 묶음을 슬롯 번호 순으로 채움, 자리가 없으면 전체 거부와 불변, `condition`·`quality`가 다른 묶음은 합치지 않음, 실패 사유마다 불변, 고정 seed로 300회 주고받으며 정의별 총수량 보존·슬롯·묶음 크기 불변식 / 규칙: 설정과 사유 코드, 일부 건네기와 그 뒤 받은 쪽이 먹기, 사용 효과가 없는 아이템·무기·치료제 건네기(건네받은 파이프가 받은 쪽의 근접 무기가 됨), 건네는 쪽과 아이템 검증(남의 것, 월드의 것, 없는 ID, 플레이어 ID, 수량 0·음수·초과·아주 큰 값, 모르는·오프라인·자는·죽은 건네는 쪽, 엎드린 건네는 쪽), 대상 검증(자기 자신, 없는 ID, 빈 ID, 좀비 ID, 인벤토리 ID, 오프라인, 사거리 경계와 설정, 사망), 캐릭터 없는 접속자, 자는·엎드린 대상과 깨우지 않음, 받는 쪽이 가득 찬 경우와 자리를 비운 뒤, 검사 순서, 거부마다 저장 문서 전체(`to_documents()`)가 그대로이고 트랜잭션·생존 이벤트 0개, 저장 → 재생성 → 로드 뒤 두 인벤토리·ID·tombstone과 이어서 건네기), `tests/integration/hand_over_net_test.gd`(서버 1 + 클라이언트 3, 실제 ENet: A가 B에게 음식 2개 → 서버와 세 미러의 인벤토리 일치, A는 자기 묶음 변화와 결과만, B는 자기 새 묶음과 대상 알림(키 목록 고정), C는 공개 알림만(키 목록 고정, 아이템·수량 단어 없음)이고 인벤토리·소유자 전용 메시지 0개, 치료 알림·생존 이벤트 0개, B가 받은 것을 먹음, 마지막 한 개가 B의 묶음에 합쳐지고 A는 묶음 삭제를 받음 / 묶음 전체·단일 아이템·넘침과 자는 받는 쪽 / 거부 11종과 불변, 알림·인벤토리 메시지 0개, 죽은 건네는 쪽 / 형식이 틀린 요청 17종과 인자를 더 붙인 호출, 형식은 맞지만 거짓인 요청(남의 아이템을 자기나 제3자에게, 다른 종류의 ID, 아주 큰 수량), 클라이언트가 보낸 서버 메시지 / join 전 요청, 빈도 초과와 내려놓기 버킷 공유·소비 버킷과의 분리 / 건네기 직후 저장, 거부는 저장하지 않음, 서버 재시작 → 재접속 뒤 두 미러 / RPC 구성·요청 검증·알림 검증 규칙), `tests/unit/hand_over_presentation_test.gd`(건네기 보조 키의 기본값·액션 등록·설정 검증(다른 모든 키와 달라야 함), 보조 키 조합의 뜻, 요청 수량, HUD 대상 줄, 결과 문장, 알림 문구). 고친 기존 테스트: 프로토콜 버전을 단언하는 통합 테스트 여섯(8 → 9), `tests/integration/inventory_net_test.gd`의 RPC 목록에 새 RPC 셋 추가, `tests/unit/treat_target_test.gd`의 HUD 대상 줄 기대값(건네기 키가 붙음. 설정을 바꿔 보는 경우의 보조 키는 Ctrl 대신 Alt).

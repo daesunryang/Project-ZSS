@@ -116,12 +116,14 @@ func test_keys_settings_and_which_kinds_can_be_used_on_others() -> void:
 
 func test_hud_target_line_result_texts_and_notices() -> void:
 	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
-	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "민수", settings), PackedStringArray(["줄 대상: 민수 | 음식 [Shift+F] 물 [Shift+G] 붕대 [Shift+B] 치료제 [Shift+V]"]))
+	# P2-T14: the line ends with the hand-over keys (hand_over_presentation_test.gd).
+	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "민수", settings), PackedStringArray(["줄 대상: 민수 | 음식 [Shift+F] 물 [Shift+G] 붕대 [Shift+B] 치료제 [Shift+V] | 건네기 [Ctrl+F/G/B/V]"]))
 	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "", settings), PackedStringArray(["줄 대상: 없음 (가까이서 바라보기)"]))
 	settings.bandage_key = KEY_N
 	settings.consume_key = KEY_T
-	settings.treat_other_modifier_key = KEY_CTRL
-	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "player_000002", settings)[0], "줄 대상: player_000002 | 음식 [Ctrl+T] 물 [Ctrl+G] 붕대 [Ctrl+N] 치료제 [Ctrl+V]", "the keys come from the settings")
+	# (Alt, not Ctrl: Ctrl is the hand-over modifier since P2-T14.)
+	settings.treat_other_modifier_key = KEY_ALT
+	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "player_000002", settings)[0], "줄 대상: player_000002 | 음식 [Alt+T] 물 [Alt+G] 붕대 [Alt+N] 치료제 [Alt+V] | 건네기 [Ctrl+T/G/N/V]", "the keys come from the settings")
 	assert_true(ClientPresentationFormatter.build_treat_target_lines({"alive": false}, "민수", settings).is_empty(), "a dead character treats nobody")
 	assert_true(ClientPresentationFormatter.build_treat_target_lines({}, "민수", settings).is_empty(), "no owner mirror, no line")
 	# The server's answer. What it tells about the other player is told as a
