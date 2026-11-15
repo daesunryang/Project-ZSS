@@ -24,6 +24,10 @@ func before_each() -> void:
 	_settings.wander_pause_min_sec = NEVER
 	_settings.wander_pause_max_sec = NEVER
 	_survival_settings = SurvivalSettings.new()
+	# Isolate zombie behaviour from B3 time rules: no natural healing and no
+	# respawn inside a test run (both are covered by survival_recovery_test).
+	_survival_settings.health_recovery_per_world_sec = 0.0
+	_survival_settings.respawn_delay_world_sec = NEVER
 	_noise_settings = NoiseSettings.new()
 	_clock_settings = WorldClockSettings.new()
 	_root = "user://test_saves/zombie_%d" % Time.get_ticks_usec()
