@@ -86,6 +86,12 @@ const REASON_ZOMBIE_DEAD: String = "zombie_dead"
 const REASON_BAD_AMOUNT: String = "bad_damage_amount"
 const REASON_BAD_SOURCE: String = "bad_damage_source"
 
+## World time is a sum of tick lengths. A deadline computed as "an earlier
+## now + duration" can therefore be a few ulps later than the clock of the
+## tick it is meant for; an attack whose deadline is this close counts as
+## ready (otherwise it waits one whole AI period longer).
+const TIME_EPSILON_SEC: float = 0.000001
+
 ## Diagnostics (tests / profiling).
 var last_ai_update_count: int = 0
 var total_ai_update_count: int = 0
@@ -396,7 +402,7 @@ func _on_target_seen(context: _Context, zombie: ZombieState, target_id: String) 
 		zombie.attack_ready_at = maxf(zombie.attack_ready_at, context.now + _settings.attack_windup_sec)
 		_set_state(context, zombie, ZombieState.State.ATTACK, CAUSE_IN_RANGE)
 	_face(zombie, target_position)
-	if context.now >= zombie.attack_ready_at:
+	if context.now + TIME_EPSILON_SEC >= zombie.attack_ready_at:
 		_attack(context, zombie, target_id)
 
 

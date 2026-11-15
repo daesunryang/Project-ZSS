@@ -215,6 +215,7 @@ Godot 바이너리 경로는 환경 변수 `GODOT`로 지정한다(기본값은 
 - `tests/run_tests.gd`: `tests/{unit,integration,scenarios}/**/*_test.gd`의 `test_*` 메서드를 실행. 단언이 없는 테스트는 실패 처리.
 - 네트워크 테스트: `tests/framework/net_test_cluster.gd`가 한 프로세스 안에서 서버 1 + 클라이언트 N을 각자 `SceneMultiplayer` 서브트리로 띄워 실제 ENet(localhost)으로 통신한다. `tools/smoke_test.sh`는 별도로 서버 1 + 클라이언트 2 **프로세스** 접속을 검사한다.
 - Phase 1 수용 시나리오: `tests/scenarios/phase1_acceptance_test.gd`.
+- Phase 2 수용 시나리오(P2-Z): `tests/scenarios/phase2_acceptance_test.gd`. 서버 1 + 클라이언트 2(실제 ENet)가 기본 조립 그대로(이동·공격 의도 RPC, 좀비 AI, 발소리, 생존 규칙, NetModule 3개) 같은 좀비와 교전한다. 서버 쪽 직접 호출은 좀비 배치에만 쓴다. 수용 항목과 단언의 대응은 docs/12 §6, 조정한 설정값과 검증하지 못한 항목은 docs/15 §6.13.
 - GDScript 런타임 오류는 함수만 중단되고 예외가 없으므로, `tools/run_tests.sh`가 출력에서 `SCRIPT ERROR`/`ERROR:`/`[ERROR]`/`[FATAL]`을 발견하면 실패 처리한다.
 
 ### 14.5 Phase 2 확장 지점(P2-0)
@@ -280,7 +281,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 
 상태(`ZombieState.STATE_NAMES`, docs/02 §6.1): `idle`(대기/배회), `investigate`(소리 조사·피격 방향 확인), `chase`(시각 추적/추격), `attack`(사거리 안), `search`(대상 상실 후 수색), `dormant`(필드만), `dead`(시체, 일정 시간 뒤 제거). 흐름: idle → (소음) investigate → (도착/시간 초과) search → (시간 초과) idle, 어느 상태든 대상이 보이면 chase → 사거리 안이면 attack, 대상을 놓치면 search.
 
-주기: 이동 적분은 살아 있는 모든 좀비에 대해 매 서버 틱, AI 판단(감지·상태 전환·공격)은 좀비마다 `ai_period_sec`에 한 번 `BucketScheduler`로 분산하고 한 틱에 `max_ai_updates_per_tick`개까지만 처리한다(나머지는 대기열에서 다음 틱으로). 피격된 좀비는 대기열 맨 앞에 들어간다. 모든 시간은 월드 시간이라 시계가 멈추면 아무 일도 일어나지 않는다. yaw는 플레이어와 같은 규약(0 = −Z, 전방 = (−sin, 0, −cos), `Node3D.rotation.y`)이다.
+주기: 이동 적분은 살아 있는 모든 좀비에 대해 매 서버 틱, AI 판단(감지·상태 전환·공격)은 좀비마다 `ai_period_sec`에 한 번 `BucketScheduler`로 분산하고 한 틱에 `max_ai_updates_per_tick`개까지만 처리한다(나머지는 대기열에서 다음 틱으로). 피격된 좀비는 대기열 맨 앞에 들어간다. 모든 시간은 월드 시간이라 시계가 멈추면 아무 일도 일어나지 않는다. 월드 시각은 틱 길이를 더해 만든 값이므로 공격 가능 시각(선딜·쿨다운)은 `ZombieService.TIME_EPSILON_SEC`(1e-6초)만큼의 허용 오차로 비교한다: 쿨다운이 판단 주기의 정수배면 실제 공격 간격이 쿨다운과 같다(P2-Z에서 고친 결함, docs/15 §6.13). yaw는 플레이어와 같은 규약(0 = −Z, 전방 = (−sin, 0, −cos), `Node3D.rotation.y`)이다.
 
 | API | 계약 |
 |---|---|

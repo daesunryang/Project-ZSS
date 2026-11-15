@@ -253,6 +253,48 @@ func test_scratch_attacks_use_scratch_exposure_and_respect_cooldown() -> void:
 	assert_false(_survival(world).get_vitals(alice.player_id).infection.is_infected())
 
 
+## Regression (found by the Phase 2 acceptance scenario, P2-Z). World time is
+## a sum of tick lengths, so "the time of the last hit + cooldown" can be a
+## few ulps above the clock at the decision 1.5 s later. Compared without a
+## tolerance, that decision counted as too early and the hit waited for the
+## next one: several of the 1.5 s intervals of this run were 2.0 s. The
+## wind-up goes through the same comparison.
+func test_attack_cooldown_is_not_stretched_by_float_accumulation() -> void:
+	const SERVER_TICK: float = 1.0 / 60.0
+	const RUN_SEC: float = 20.0
+	const INTERVAL_TOLERANCE_SEC: float = 0.000001
+	_settings.bite_chance = 0.0
+	_settings.scratch_damage = 1.0
+	_survival_settings.infection_chance_scratch = 0.0
+	# The cooldown is a whole number of AI periods, so no rounding is expected.
+	assert_eq(_settings.attack_cooldown_sec, 3.0 * _settings.ai_period_sec, "default tuning: cooldown = 3 AI periods")
+	var world: ServerWorld = _world()
+	world.join("alice")
+	var zombie_id: String = _spawn(world, Vector3(0, 0, 1.2), 0.0)
+	var service: ZombieService = _zombies(world)
+	var in_range_at: float = -1.0
+	var hit_times: PackedFloat64Array = []
+	for tick: int in range(roundi(RUN_SEC / SERVER_TICK)):
+		world.step_systems(SERVER_TICK)
+		for event: Dictionary in service.drain_events():
+			if event["zombie_id"] != zombie_id:
+				continue
+			if event["event_type"] == ZombieService.EVENT_STATE_CHANGED and event["to"] == "attack":
+				in_range_at = event["world_time"]
+			elif event["event_type"] == ZombieService.EVENT_ATTACKED:
+				hit_times.append(event["world_time"])
+	assert_true(in_range_at >= 0.0 and hit_times.size() >= 10, "the zombie kept attacking (%d hits)" % hit_times.size())
+	if in_range_at < 0.0 or hit_times.is_empty():
+		return
+	assert_true(absf(hit_times[0] - in_range_at - _settings.attack_windup_sec) <= INTERVAL_TOLERANCE_SEC, "first hit %.6f s after getting in range" % (hit_times[0] - in_range_at))
+	var stretched: PackedStringArray = []
+	for index: int in range(1, hit_times.size()):
+		var interval: float = hit_times[index] - hit_times[index - 1]
+		if absf(interval - _settings.attack_cooldown_sec) > INTERVAL_TOLERANCE_SEC:
+			stretched.append("#%d %.6f" % [index, interval])
+	assert_eq(stretched, PackedStringArray(), "every interval equals the %.1f s cooldown" % _settings.attack_cooldown_sec)
+
+
 func test_sight_needs_range_view_cone_and_light() -> void:
 	var world: ServerWorld = _world()
 	world.join("alice")  # at the origin
