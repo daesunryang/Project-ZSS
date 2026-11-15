@@ -37,6 +37,12 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 
 ## Adds every feature NetModule to `service` (server and client alike, so
 ## RPC node paths match). Must run before start_server/start_client.
-static func install_net_modules(_service: NetworkService, _config: CompositionConfig) -> Error:
+static func install_net_modules(service: NetworkService, config: CompositionConfig) -> Error:
 	# --- network modules ---
+	# Phase 2-N1a: zombie replication (ch2 snapshots, ch0 events, join fragment).
+	var zombie_net: ZombieNetModule = ZombieNetModule.new(config.zombie_net)
+	var error: Error = service.register_module(zombie_net)
+	if error != OK:
+		zombie_net.free()
+		return error
 	return OK

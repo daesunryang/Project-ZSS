@@ -385,3 +385,50 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 - 저장하지 않는다(`to_world_document()`·`to_player_fragment()` 모두 빈 문서). 상태가 "보폭 하나보다 짧은 걸은 거리"뿐이고, 재시작 뒤에는 모두 오프라인이라 어차피 0에서 시작한다(docs/15 P2-50).
 - 진단: `last_footstep_count`(이번 틱), `total_footstep_count`.
 - 테스트: `tests/unit/player_noise_test.gd`(순수 규칙, 이동 거리에 비례한 발소리 수와 위치, 긴 틱, 정지·저속·사망·리스폰·오프라인·순간이동·시계 정지 무소음, 소음 만료, 저장 없음, 등 뒤를 걷는 플레이어를 좀비가 소리로 조사하는 통합 시나리오와 발소리를 끈 대조 시나리오).
+### 14.12 좀비 네트워크 복제(P2-N1a, NetModule `ZombieNet`)
+
+서버의 좀비 상태와 좀비 이벤트를 접속한 모든 클라이언트가 같은 내용으로 관찰하게 한다. 서버 → 클라이언트 전용이며 이 모듈에는 클라이언트 → 서버 RPC가 없다. `network_service.gd`는 고치지 않았고 §14.5의 공개 헬퍼만 쓴다. 임시 가정은 docs/15 P2-80~P2-87.
+
+| 구성 요소 | 파일 | 역할 |
+|---|---|---|
+| `ZombieNetModule` | `scripts/services/multiplayer/zombie_net_module.gd` | NetModule(노드 이름 `ZombieNet`, 모든 peer 동일). 서버: 스냅샷·이벤트 전송, join 조각. 클라이언트: 수신해 미러에 적용. `ServerComposition.install_net_modules`에서만 조립 |
+| `ZombieNetProtocol` | `scripts/services/multiplayer/zombie_net_protocol.gd` | wire 형식. 서버 인코딩(보낼 필드 화이트리스트)과 클라이언트 검증을 같은 표로 처리하는 정적 함수 |
+| `ClientZombieState` | `scripts/services/multiplayer/client_zombie_state.gd` | 클라이언트 미러(권한 없음, 서버로 돌려보내지 않음). `module.client_state` |
+| `ZombieNetSettings` | `scripts/services/multiplayer/zombie_net_settings.gd`, `data/tuning/zombie_net_settings.tres` | 스냅샷 주기, 메시지 분할 크기, 미러 한도. `CompositionConfig.zombie_net`(서버·클라이언트 공통) |
+
+메시지:
+
+| 방향 | RPC / 조각 | 채널/모드 | 내용 |
+|---|---|---|---|
+| S→C | join 조각 `snapshot["modules"]["ZombieNet"]` = `{tick: int, event_sequence: int, rows: Array}` | 0 reliable(`_rpc_join_accepted` 안) | 지금 있는 모든 좀비(시체 포함)의 행. `event_sequence`는 이 행들에 이미 반영된 마지막 이벤트 순번. 좀비 시스템이 없는 월드는 `{}` |
+| S→C | `_rpc_zombie_snapshot(tick: int, rows: Array)` | 2 unreliable_ordered | 모든 좀비의 행을 `snapshot_rate_hz`(기본 10Hz)마다 전송. `snapshot_rows_per_message`(기본 12)행씩 나눠 같은 tick으로 보낸다. 좀비가 없으면 보내지 않는다 |
+| S→C | `_rpc_zombie_events(tick: int, first_sequence: int, events: Array)` | 0 reliable | 매 서버 틱 `ZombieService.drain_events()`를 비워 발생 순서대로 전송. `events[i]`의 순번은 `first_sequence + i`. `events_per_message`(기본 32)개씩 나눈다 |
+
+- 행: `[zombie_id: String, position: Vector3, yaw: float, state: int, health_fraction: float]`. `state`는 `ZombieState.STATE_NAMES`의 번호(0 idle, 1 investigate, 2 chase, 3 attack, 4 search, 5 dormant, 6 dead), `health_fraction`은 0~1. 순서는 서버 스폰 순서.
+- 이벤트: §14.9의 좀비 이벤트 Dictionary 그대로(`event_type`, `zombie_id`, `world_time` + 종류별 필드). 서버는 `ZombieNetProtocol.EVENT_FIELDS`에 적힌 필드만 복사해 보내므로 좀비 서비스에 필드가 늘어도 표에 올리기 전에는 전송되지 않는다. 정수는 실수로 바꿔 보낸다.
+- 정보 공개(docs/15 P2-9, P2-85): `zombie_attacked`의 `infection`(감염 판정 결과)과 `target_health_after`(정확한 체력)는 `target_id` 플레이어에게 보내는 사본에만 들어 있다. 다른 클라이언트는 그 두 필드가 없는 같은 이벤트(대상, `wound_type`, `body_part`, `damage`, `target_died`)를 같은 순번으로 받는다.
+- tick: 이 모듈의 서버 physics 틱 번호. 한 틱 안에서 이벤트를 먼저 보내고 스냅샷을 나중에 만들므로 tick T 스냅샷은 tick T 이하 이벤트를 모두 반영한다.
+- 순번: 서버 시작 후 1부터 증가(저장하지 않음). join 조각을 만들 때 좀비 서비스에 남아 있던 이벤트도 먼저 비워 순번을 매기고 다음 틱에 보내며, 새로 접속한 클라이언트는 `event_sequence` 이하 순번을 건너뛴다. 그래서 join 조각과 이후 이벤트 사이에 빠지거나 두 번 적용되는 이벤트가 없다.
+- 이 모듈이 `drain_events()`의 유일한 소비자다. 서버 쪽 다른 코드가 좀비 이벤트를 받아야 하면 `ZombieNetModule.server_events_drained(events: Array[Dictionary])` 시그널(서버 전용, 걸러지지 않은 원본 이벤트)을 쓴다.
+
+클라이언트 미러 `ClientZombieState`(`(network.get_module(ZombieNetModule.MODULE_NAME) as ZombieNetModule).client_state`):
+
+| API | 계약 |
+|---|---|
+| `zombies: Dictionary[String, Dictionary]`, `get_zombie(id) -> Dictionary`, `has_zombie(id)`, `zombie_ids() -> PackedStringArray`, `zombie_count()` | `zombie_id → {position: Vector3, yaw: float, state: String(STATE_NAMES 이름), health_fraction: float}`. 서버 스폰 순서. 모르는 ID는 `{}`. 읽기 전용 |
+| 시그널 `changed`, `zombie_added(zombie_id)`, `zombie_removed(zombie_id)`, `event_received(event)` | `changed`는 미러 값이 실제로 바뀐 메시지마다 한 번. `event_received`는 검증을 통과한 이벤트마다 서버 순서대로, 미러를 고친 뒤에 발생 |
+| `recent_events() -> Array[Dictionary]`, `events_after(sequence) -> Array[Dictionary]` | 최근 이벤트(기본 256개)를 오래된 순으로. 각 이벤트에 `sequence`가 붙는다. 폴링하는 쪽은 처리한 마지막 순번을 기억했다가 `events_after`로 나머지를 받는다 |
+| `last_snapshot_tick`, `last_event_sequence`, `rejected_payload_count`, `stale_snapshot_count`, `event_gap_count` | 진단값 |
+| `apply_join(fragment)`, `apply_snapshot(tick, rows)`, `apply_events(tick, first_sequence, events)` → `""` 또는 사유 코드 | 모듈이 호출한다. 표시 계층은 호출하지 않는다 |
+
+미러 규칙:
+
+- 좀비의 생성·제거는 reliable 경로(join 조각, `zombie_spawned`, `zombie_removed`)로만 일어난다. 스냅샷은 이미 있는 좀비만 고치므로 늦게 온 스냅샷이 제거된 좀비를 되살리지 못한다.
+- 위치·방향·체력 비율은 가장 새 스냅샷을 따른다(tick이 더 오래된 스냅샷은 버림, 같은 tick은 분할 메시지라 허용). `zombie_died`는 상태를 `dead`, 체력 비율을 0으로 바로 바꾼다. `zombie_damaged`는 미러를 고치지 않고 체력 비율은 다음 스냅샷에서 갱신된다.
+- 상태는 `zombie_state_changed`/`zombie_died` 이벤트로 즉시, 그 밖에는 스냅샷으로 갱신된다. 채널 0과 2는 서로 순서가 보장되지 않으므로, 어떤 좀비에 마지막으로 적용한 이벤트의 tick보다 오래된 스냅샷은 그 좀비의 위치·방향만 고치고 상태·체력 비율은 되돌리지 못한다.
+- 검증: 클라이언트는 서버가 보낸 RPC만 받는다(`is_from_server()`, 아니면 무시하고 경고 로그). 받은 값은 타입, 길이(ID·문자열 64자, 메시지당 행 64개·이벤트 64개, 미러 1024마리), 유한값, 범위(|yaw| ≤ 2π, 체력 비율 0~1, 상태 번호)를 검사한다. 스냅샷은 한 행이라도 틀리면 메시지 전체를, 이벤트는 틀린 이벤트만 버린다(순번은 소모). 버린 페이로드는 경고 로그와 `rejected_payload_count`에 남고 미러는 바뀌지 않는다.
+- 보간·예측은 없다. 움직이는 좀비의 미러는 `속도 × (스냅샷 주기 + 전달 지연)`만큼 뒤처질 수 있다(테스트 허용 오차: 추격 속도 × 스냅샷 2주기 = 0.64m, 멈춘 좀비는 서버 값과 같음. docs/15 P2-84).
+
+프로토콜: RPC 2개와 join 조각이 추가됐지만 `BuildInfo.PROTOCOL_VERSION`은 이 티켓에서 올리지 않았다. 같은 묶음의 다른 N1 티켓과 함께 조정자가 한 번에 올린다.
+
+테스트: `tests/integration/zombie_net_test.gd`(서버 1 + 클라이언트 1~2, 실제 localhost ENet: 추격·공격 중 미러 수렴과 이벤트 순서, 늦은 접속, 개발용 좀비 12마리 join, 비공개 필드, 사망·제거, 오래된/위조/잘못된 페이로드, RPC 채널 설정), `tests/integration/zombie_net_state_test.gd`(네트워크 없이 미러·wire 형식: join 조각, tick 폐기, 이벤트 적용, 순번, 잘못된 페이로드, 한도, 메시지 크기).

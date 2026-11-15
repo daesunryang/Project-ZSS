@@ -144,7 +144,7 @@ Phase 2는 단일 조정자(Opus)가 티켓을 쪼개고 병합한다. 설계 �
 | P2-A2 | 좀비 모델·AI(감지/추격/공격/수색)·저장 | `scripts/domain/zombie/` | Fable | 완료 |
 | P2-A3 | 플레이어 이동 소음(발소리) | `scripts/domain/player_noise/` | Fable | 완료 |
 | P2-C1 | 근접 무기 공격 판정·피해(서버 권한) | `scripts/domain/combat/` | Fable | 완료 |
-| P2-N1 | 네트워크: 좀비 복제(ch2), 전투 RPC, 생존 상태 본인 복제(B5), 이동 배율 연결 | `network_service.gd` 외 | Fable | 대기 |
+| P2-N1a | 네트워크: 좀비 복제(NetModule `ZombieNet`: ch2 위치 스냅샷, ch0 이벤트, join 조각, 클라이언트 미러 `ClientZombieState`, 감염 결과 본인 한정) | `scripts/services/multiplayer/zombie_net_*.gd`, `client_zombie_state.gd` | Fable | 완료 |
 | P2-N2 | 클라이언트 좀비·상태 표시(임시 캡슐/HUD) | `scripts/presentation/` | Codex | 대기(N1 후) |
 | P2-Z | Phase 2 수용 시나리오(두 클라이언트, 같은 좀비, 같은 결과) | `tests/scenarios/` | 조정자 | 대기 |
 
