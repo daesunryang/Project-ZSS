@@ -14,6 +14,9 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	var world: ServerWorld = ServerWorld.new(world_id, config.gameplay, config.catalog)
 	world.clock = config.clock.create_clock()
 	# --- systems (registration order = step order = save order) ---
+	# Phase 2-B: survival (B1). Registered first so later systems can use it.
+	if world.register_system(SurvivalService.new(config.survival, world.ids, world.clock)) != OK:
+		return null
 	return world
 
 

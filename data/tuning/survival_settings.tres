@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="SurvivalSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/survival/survival_settings.gd" id="1_survival"]
+
+[resource]
+script = ExtResource("1_survival")
+max_health = 100.0
+max_stamina = 100.0
+need_max = 100.0
+stamina_regen_per_world_sec = 5.0
+wound_severity_reference_damage = 50.0
+max_wounds_per_player = 64
+handling_penalty_per_severity = 0.5
+min_handling_multiplier = 0.25
+movement_penalty_per_severity = 0.5
+min_movement_multiplier = 0.25
+infection_chance_bite = 0.95
+infection_chance_scratch = 0.15
+infection_chance_blood = 0.05
+rng_seed = 0
