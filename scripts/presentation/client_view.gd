@@ -176,6 +176,8 @@ func _bind_network() -> void:
 		_survival_state = _survival_module.client_state
 		if not _survival_state.changed.is_connected(_on_survival_state_changed):
 			_survival_state.changed.connect(_on_survival_state_changed)
+		if not _survival_state.event_received.is_connected(_on_survival_event):
+			_survival_state.event_received.connect(_on_survival_event)
 		if not _survival_module.rest_result.is_connected(_on_rest_result):
 			_survival_module.rest_result.connect(_on_rest_result)
 	_combat_module = _network.get_module(CombatNetModule.MODULE_NAME) as CombatNetModule
@@ -253,6 +255,14 @@ func _on_consume_result(_request_id: int, ok: bool, reason: String) -> void:
 ## The answer to a rest request is shown where the use results are shown.
 func _on_rest_result(_request_id: int, ok: bool, reason: String) -> void:
 	_show_consume_text(ClientPresentationFormatter.format_rest_result(ok, reason))
+
+
+## A survival event that deserves a notice (P2-T10: why the local player
+## woke) is shown where the use results are shown.
+func _on_survival_event(event: Dictionary) -> void:
+	var notice: String = ClientPresentationFormatter.format_survival_notice(event)
+	if not notice.is_empty():
+		_show_consume_text(notice)
 
 
 func _show_consume_text(text: String) -> void:

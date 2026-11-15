@@ -395,24 +395,36 @@ func test_a_hit_wakes_a_resting_player() -> void:
 
 func test_death_and_leaving_end_a_rest() -> void:
 	_settings.respawn_delay_sec = 1.0
+	# P2-T10: a hit no longer kills a sleeper and time-based damage wakes it
+	# first, so the only death lying down is turning at the end of the
+	# terminal stage with the infection wake stage switched off.
+	_settings.rest_wake_infection_stage = InfectionState.Stage.NONE
+	# Only the turning itself is reported: the terminal stage costs no health.
+	_settings.infection_terminal_health_loss_per_world_sec = 0.0
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
 	var alice: PlayerState = world.join("alice")
 	var bob: PlayerState = world.join("bob")
+	var infection: InfectionState = survival.get_vitals(alice.player_id).infection
+	infection.stage = InfectionState.Stage.TERMINAL
+	infection.stage_elapsed_world_sec = _settings.infection_stage_duration_world_sec(InfectionState.Stage.TERMINAL, infection.exposure) - 1.0
 	assert_true(survival.start_rest(alice.player_id).ok)
 	assert_true(survival.start_rest(bob.player_id).ok)
 	survival.drain_events()
 
 	# Death: the rest ends before the death is reported.
-	assert_true(survival.apply_damage(alice.player_id, DamageInput.create("zombie_000001", BodyPart.Part.TORSO, Wound.Type.BRUISE, LETHAL_DAMAGE)).ok)
+	world.step_systems(1.5)
+	assert_false(survival.is_alive(alice.player_id), "alice turned in her sleep")
 	assert_false(survival.is_resting(alice.player_id))
 	var types: Array = []
 	var ended: Array[Dictionary] = []
 	for event: Dictionary in survival.drain_events():
+		if str(event.get("player_id", "")) != alice.player_id:
+			continue
 		types.append(str(event.get("event_type", "")))
 		if str(event.get("event_type", "")) == SurvivalService.EVENT_PLAYER_REST_ENDED:
 			ended.append(event)
-	assert_eq(types, [SurvivalService.EVENT_PLAYER_WOUNDED, SurvivalService.EVENT_PLAYER_REST_ENDED, SurvivalService.EVENT_PLAYER_DIED])
+	assert_eq(types, [SurvivalService.EVENT_PLAYER_INFECTION_STAGE_CHANGED, SurvivalService.EVENT_PLAYER_REST_ENDED, SurvivalService.EVENT_PLAYER_DIED])
 	assert_eq(ended[0].get("cause", ""), SurvivalService.REST_END_DIED)
 	# The next character starts standing.
 	world.step_systems(2.0)
@@ -430,8 +442,10 @@ func test_death_and_leaving_end_a_rest() -> void:
 	assert_true(world.player_movement_multiplier(bob.player_id) > 0.0)
 
 
-func test_a_resting_player_can_die_of_time_based_damage_without_waking() -> void:
-	# Only a hit wakes. Bleeding keeps running while the player rests.
+func test_time_based_damage_runs_during_rest_and_wakes_before_it_kills() -> void:
+	# Bleeding keeps running while the player rests. Until P2-T10 it could
+	# kill a sleeper; now the sleeper wakes at the configured health and the
+	# death, if it comes, comes awake (details: sleep_tuning_test.gd).
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
 	var alice: PlayerState = world.join("alice")
@@ -441,10 +455,14 @@ func test_a_resting_player_can_die_of_time_based_damage_without_waking() -> void
 	var health: float = vitals.health
 	world.step_systems(600.0)
 	assert_true(vitals.health < health, "bleeding continues during rest")
-	assert_true(survival.is_resting(alice.player_id), "time-based damage does not wake")
+	assert_true(survival.is_resting(alice.player_id), "time-based damage above the wake threshold does not wake")
+	survival.drain_events()
 	world.step_systems(100.0 * SECONDS_PER_HOUR)
 	assert_false(survival.is_alive(alice.player_id), "the player bled out")
 	assert_false(survival.is_resting(alice.player_id), "a dead character does not rest")
+	var ended: Array[Dictionary] = _events_of(survival.drain_events(), SurvivalService.EVENT_PLAYER_REST_ENDED)
+	assert_eq(ended.size(), 1)
+	assert_eq(ended[0].get("cause", ""), SurvivalService.REST_END_LOW_HEALTH, "the sleeper was woken first: it did not die lying down")
 
 
 # ------------------------------------------------------------ saving

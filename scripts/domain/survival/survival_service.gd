@@ -7,7 +7,8 @@ extends ServerSystem
 ## returned PlayerVitals; all changes go through these methods.
 ##   is_alive(player_id) -> bool
 ##   try_spend_stamina(player_id, amount) -> bool
-##   handling_multiplier(player_id) -> float        (arms/hands wounds)
+##   handling_multiplier(player_id) -> float        (arms/hands wounds x fatigue)
+##   rest_danger(player_id) -> String               (what wakes / keeps from lying down)
 ##   movement_speed_multiplier(player_id) -> float  (legs/feet wounds)
 ##   apply_damage(player_id, DamageInput) -> ActionResult
 ##   stop_bleeding(player_id, wound_id) -> ActionResult
@@ -57,9 +58,26 @@ extends ServerSystem
 ## hunger and thirst keep rising (SurvivalSettings.rest_*), it cannot move
 ## (player_movement_multiplier 0) and it cannot attack or handle items
 ## (player_action_block_reason "player_resting"). A hit (apply_damage) wakes
-## it; death ends the rest; leaving ends it silently. Time-based damage
-## (bleeding, ...) does not wake. Resting is session state: it is not saved,
-## and nobody rests after a restart.
+## it; death ends the rest; leaving ends it silently. Resting is session
+## state: it is not saved, and nobody rests after a restart.
+##
+## Sleep tuning (P2-T10, docs/00 ADR-016, docs/09 §14.25):
+##   - Nobody dies lying down. A sleeper wakes by itself at the instant it is
+##     in danger (rest_danger): health at or below
+##     SurvivalSettings.rest_wake_health(), thirst or hunger in the DANGER
+##     category, the infection at the configured stage. The cause of
+##     "player_rest_ended" is then the danger ("low_health", "thirst",
+##     "hunger", "infection"). The instant is a boundary of the interval
+##     integration, so the result does not depend on tick size. Time-based
+##     damage above the health limit does not wake.
+##   - A player in such a danger cannot lie down ("cannot_rest_<danger>"), so
+##     lying down and waking never alternate tick by tick.
+##   - A hit taken asleep hurts and wakes but leaves at least
+##     SurvivalSettings.rest_hit_min_health; hits after waking kill as usual.
+##   - The only death lying down that is left is turning at the end of the
+##     terminal stage when SurvivalSettings.rest_wake_infection_stage is 0.
+##   - Fatigue lowers work ability: handling_multiplier() is the wound factor
+##     times the factor of the FATIGUE category.
 ##
 ## Two time axes (docs/00 ADR-006, docs/09 §14.16):
 ##   calendar time (world_delta, WorldClock.world_time_sec): needs (also the
@@ -111,7 +129,17 @@ const EVENT_PLAYER_REST_ENDED: String = "player_rest_ended"
 const REST_END_REQUESTED: String = "requested"
 const REST_END_DAMAGED: String = "damaged"
 const REST_END_DIED: String = "died"
-const REST_END_CAUSES: PackedStringArray = [REST_END_REQUESTED, REST_END_DAMAGED, REST_END_DIED]
+## Automatic waking (P2-T10): the sleeper is in danger. The same words are
+## the danger a lie-down request is refused for (rest_refusal_reason).
+const REST_END_LOW_HEALTH: String = "low_health"
+const REST_END_THIRST: String = "thirst"
+const REST_END_HUNGER: String = "hunger"
+const REST_END_INFECTION: String = "infection"
+const REST_END_CAUSES: PackedStringArray = [REST_END_REQUESTED, REST_END_DAMAGED, REST_END_DIED, REST_END_LOW_HEALTH, REST_END_THIRST, REST_END_HUNGER, REST_END_INFECTION]
+## The dangers that wake a sleeper, in the order they are checked.
+const REST_DANGERS: PackedStringArray = [REST_END_LOW_HEALTH, REST_END_THIRST, REST_END_HUNGER, REST_END_INFECTION]
+## Value of "no danger" (rest_danger).
+const NO_DANGER: String = ""
 
 const REASON_UNKNOWN_PLAYER: String = "unknown_player"
 ## A need amount that is not finite, negative, or both amounts are 0.
@@ -130,6 +158,10 @@ const REASON_TOO_LATE: String = "too_late"
 const REASON_PLAYER_RESTING: String = "player_resting"
 const REASON_ALREADY_RESTING: String = "already_resting"
 const REASON_NOT_RESTING: String = "not_resting"
+## A player in danger cannot lie down (P2-T10): this prefix + the danger
+## ("cannot_rest_low_health", "cannot_rest_thirst", "cannot_rest_hunger",
+## "cannot_rest_infection").
+const REASON_CANNOT_REST_PREFIX: String = "cannot_rest_"
 const REASON_NOT_ONLINE: String = ServerWorld.REASON_NOT_ONLINE
 ## Why a player cannot create its next character yet (P2-T9): the current
 ## one is alive / the delay after its death has not passed.
@@ -185,6 +217,8 @@ var _step_action_per_world_sec: float = 0.0
 ## Whether the player being integrated rests (set by _advance_player before
 ## every living portion; selects the need rates, _need_rate).
 var _step_resting: bool = false
+## Why the sleeper being integrated wakes (set by _rest_wake_offset).
+var _rest_wake_cause: String = NO_DANGER
 ## Calendar instant of the character the integrator is starting right now
 ## (the exact respawn boundary inside a tick), for on_character_started().
 var _new_character_world_time: float = NO_PENDING_TIME
@@ -250,9 +284,18 @@ func try_spend_stamina(player_id: String, amount: float) -> bool:
 	return true
 
 
-## Weapon handling factor from arm/hand wounds (1.0 = unhurt, 0 if dead).
+## Work ability: how well the player handles a weapon or a tool (1.0 =
+## unhurt and rested, 0 if dead, never below the configured floor). The
+## product of the arm/hand wound factor and the fatigue factor (P2-T10:
+## SurvivalSettings.fatigue_*_handling_multiplier, from the FATIGUE category
+## alone). Melee damage uses it (CombatService); crafting, building and any
+## other work added later must scale with this same value.
 func handling_multiplier(player_id: String) -> float:
-	return _wound_multiplier(player_id, true, _settings.handling_penalty_per_severity, _settings.min_handling_multiplier)
+	var wound_factor: float = _wound_multiplier(player_id, true, _settings.handling_penalty_per_severity, _settings.min_handling_multiplier)
+	if wound_factor <= DEAD_MULTIPLIER:
+		return wound_factor
+	var fatigue_factor: float = _settings.fatigue_handling_multiplier(need_category(player_id, NeedKind.Kind.FATIGUE))
+	return clampf(wound_factor * fatigue_factor, _settings.min_handling_multiplier, FULL_MULTIPLIER)
 
 
 ## Movement speed factor from leg/foot wounds and the worst need category
@@ -282,7 +325,10 @@ func worst_need_category(player_id: String) -> NeedKind.Category:
 
 
 ## Applies server-computed damage: records a wound, reduces health and marks
-## death at 0. Success event:
+## death at 0. A hit on a sleeping player never takes its health below
+## SurvivalSettings.rest_hit_min_health (it does not die of that hit) and
+## wakes it (P2-T10); `damage` in the event stays the amount dealt. Success
+## event:
 ##   {event_type: "player_wounded", player_id, source_id, damage, health_after,
 ##    died: bool, world_time, wound: Wound.to_dict()}
 ## Failure reasons: DamageInput.REASON_*, unknown_player, player_dead.
@@ -304,7 +350,11 @@ func apply_damage(player_id: String, damage: DamageInput) -> ActionResult:
 	wound.created_at_world_time = _clock.world_time_sec
 	if vitals.injuries.size() < _settings.max_wounds_per_player:
 		vitals.injuries.append(wound)
-	vitals.health = maxf(vitals.health - damage.amount, 0.0)
+	# A hit taken asleep hurts and wakes but does not kill (P2-T10): it leaves
+	# the configured floor (never more than the sleeper had). The waking is
+	# below; any later hit, also in this tick, follows the usual rule.
+	var health_floor: float = minf(_settings.rest_hit_min_health, vitals.health) if _resting.has(player_id) else 0.0
+	vitals.health = maxf(vitals.health - damage.amount, health_floor)
 	var died: bool = not vitals.is_alive()
 	var event: Dictionary = {
 		"event_type": EVENT_PLAYER_WOUNDED,
@@ -554,17 +604,32 @@ func is_resting(player_id: String) -> bool:
 	return _resting.has(player_id)
 
 
+## The danger that wakes this player when it sleeps and keeps it from lying
+## down (P2-T10): one of REST_DANGERS, or NO_DANGER ("") when there is none
+## (also for unknown and dead players).
+func rest_danger(player_id: String) -> String:
+	var vitals: PlayerVitals = _vitals.get(player_id, null)
+	if vitals == null or not vitals.is_alive():
+		return NO_DANGER
+	return _rest_danger_of(vitals)
+
+
 ## The player lies down (P2-T8; see the header for what resting does).
 ## Success event (also queued and logged):
 ##   {event_type: "player_rest_started", player_id, world_time}
 ## Failure reasons: unknown_player, player_dead, not_online,
-## already_resting; a refused call changes nothing.
+## already_resting, cannot_rest_<danger> (P2-T10: the player is in a danger
+## that would wake it at once, rest_danger); a refused call changes nothing.
 func start_rest(player_id: String) -> ActionResult:
 	var reason: String = _check_living(player_id)
 	if reason.is_empty() and not _online.has(player_id):
 		reason = REASON_NOT_ONLINE
 	if reason.is_empty() and _resting.has(player_id):
 		reason = REASON_ALREADY_RESTING
+	if reason.is_empty():
+		var danger: String = _rest_danger_of(_vitals[player_id])
+		if danger != NO_DANGER:
+			reason = REASON_CANNOT_REST_PREFIX + danger
 	if not reason.is_empty():
 		return ActionResult.failure(reason)
 	_resting[player_id] = true
@@ -582,8 +647,8 @@ func start_rest(player_id: String) -> ActionResult:
 ##   {event_type: "player_rest_ended", player_id, cause: "requested",
 ##    world_time}
 ## Failure reasons: unknown_player, not_resting; a refused call changes
-## nothing. (The same event with cause "damaged" / "died" is queued when a
-## hit wakes the player or the player dies.)
+## nothing. (The same event with another cause of REST_END_CAUSES is queued
+## when a hit or a danger wakes the player, or the player dies.)
 func stop_rest(player_id: String) -> ActionResult:
 	if not _vitals.has(player_id):
 		return ActionResult.failure(REASON_UNKNOWN_PLAYER)
@@ -770,6 +835,16 @@ func _advance_player(world: ServerWorld, player_id: String, vitals: PlayerVitals
 		var infection_boundary: float = _infection_time_to_boundary(vitals)
 		var crosses_infection_boundary: bool = infection_boundary >= 0.0 and infection_boundary <= remaining
 		var segment: float = infection_boundary if crosses_infection_boundary else remaining
+		if _step_resting:
+			# A sleeper in danger wakes at the instant the danger begins (P2-T10):
+			# that instant is a boundary of the interval, so the rest of the tick
+			# is integrated awake and a big tick gives the result of small ones.
+			var wake_offset: float = _rest_wake_offset(vitals, maxf(segment, 0.0))
+			if wake_offset >= 0.0:
+				_advance_living(player_id, vitals, wake_offset, cursor)
+				cursor += wake_offset
+				_wake_in_danger(player_id, vitals, _rest_wake_cause, cursor)
+				continue
 		if segment <= 0.0:
 			_advance_infection_stage(player_id, vitals, cursor)
 			if vitals.infection.stage == InfectionState.Stage.ZOMBIFIED:
@@ -991,6 +1066,79 @@ func _advance_infection_stage(player_id: String, vitals: PlayerVitals, world_tim
 	}
 	_push_event(event)
 	GameLogger.info("survival", "player infection stage changed", event)
+	# The configured stage wakes a sleeper (P2-T10). Turning itself is a death
+	# and ends the rest there (_mark_dead).
+	if _resting.has(player_id) and vitals.infection.stage != InfectionState.Stage.ZOMBIFIED and _infection_wakes(vitals):
+		_end_rest(player_id, REST_END_INFECTION, world_time)
+
+
+## The danger `vitals` is in now, as rest_danger() reports it: checked in the
+## order of REST_DANGERS.
+func _rest_danger_of(vitals: PlayerVitals) -> String:
+	if vitals.health <= _settings.rest_wake_health():
+		return REST_END_LOW_HEALTH
+	if _settings.rest_wake_on_need_danger:
+		if vitals.thirst >= _settings.need_danger_threshold:
+			return REST_END_THIRST
+		if vitals.hunger >= _settings.need_danger_threshold:
+			return REST_END_HUNGER
+	return REST_END_INFECTION if _infection_wakes(vitals) else NO_DANGER
+
+
+func _infection_wakes(vitals: PlayerVitals) -> bool:
+	return _settings.rest_wake_infection_stage != InfectionState.Stage.NONE and vitals.infection.stage >= _settings.rest_wake_infection_stage
+
+
+## Calendar seconds from now until the resting player being integrated is in
+## a danger that wakes it, when that happens within `elapsed`: 0 when it is
+## in danger already, -1 when it sleeps on. Sets `_rest_wake_cause`. The
+## infection stage is not looked ahead here: a stage change is a boundary of
+## its own (_advance_infection_stage). Health is searched by bisection like a
+## death (_survival_death_offset): after the natural recovery window, which
+## can only raise it, the health of a sleeper never rises again.
+func _rest_wake_offset(vitals: PlayerVitals, elapsed: float) -> float:
+	_rest_wake_cause = _rest_danger_of(vitals)
+	if _rest_wake_cause != NO_DANGER:
+		return 0.0
+	var offset: float = -1.0
+	var wake_health: float = _settings.rest_wake_health()
+	if _health_after_elapsed(vitals, elapsed) <= wake_health:
+		var low: float = 0.0
+		var high: float = elapsed
+		for _iteration: int in DEATH_SEARCH_ITERATIONS:
+			var middle: float = (low + high) * 0.5
+			if _health_after_elapsed(vitals, middle) > wake_health:
+				low = middle
+			else:
+				high = middle
+		offset = high
+		_rest_wake_cause = REST_END_LOW_HEALTH
+	if _settings.rest_wake_on_need_danger:
+		for kind: NeedKind.Kind in [NeedKind.Kind.THIRST, NeedKind.Kind.HUNGER]:
+			var rate: float = _need_rate(kind)
+			if rate <= 0.0:
+				continue
+			var crossing: float = (_settings.need_danger_threshold - _need_value(vitals, kind)) / rate
+			if crossing <= elapsed and (offset < 0.0 or crossing < offset):
+				offset = crossing
+				_rest_wake_cause = REST_END_THIRST if kind == NeedKind.Kind.THIRST else REST_END_HUNGER
+	return offset
+
+
+## Wakes the sleeper at the instant `cause` began. The integration up to that
+## instant can end a rounding error short of the limit: the value is put on
+## it, so the danger is there for everything that asks afterwards (the next
+## lie-down request is refused, not accepted and woken again).
+func _wake_in_danger(player_id: String, vitals: PlayerVitals, cause: String, world_time: float) -> void:
+	match cause:
+		REST_END_LOW_HEALTH:
+			vitals.health = minf(vitals.health, _settings.rest_wake_health())
+		REST_END_THIRST, REST_END_HUNGER:
+			var kind: NeedKind.Kind = NeedKind.Kind.THIRST if cause == REST_END_THIRST else NeedKind.Kind.HUNGER
+			var before: NeedKind.Category = need_category(player_id, kind)
+			vitals.set(NeedKind.kind_name(kind), maxf(_need_value(vitals, kind), _settings.need_danger_threshold))
+			_report_need_category_change(player_id, vitals, kind, before)
+	_end_rest(player_id, cause, world_time)
 
 
 ## Adds one tick's time-based damage to the player's unreported total and

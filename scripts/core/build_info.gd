@@ -39,7 +39,12 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    SurvivalNet join fragment without "self", and other peers get
 ##    _rpc_player_joined for it only when its first character exists. Where
 ##    creation is required a dead character no longer respawns by itself.
-const PROTOCOL_VERSION: int = 7
+## 8: P2-T10..T12, bumped once for the three tickets. P2-T10 (sleep tuning):
+##    the owner event "player_rest_ended" may carry the causes "low_health",
+##    "thirst", "hunger" and "infection" (a client of protocol 7 drops such an
+##    event), and the rest result may say "cannot_rest_<danger>". No RPC or
+##    message format changed in P2-T10.
+const PROTOCOL_VERSION: int = 8
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

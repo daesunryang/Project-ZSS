@@ -418,6 +418,48 @@ func test_rest_hud_line_result_text_and_lying_capsule() -> void:
 	assert_contains(ClientPresentationFormatter.format_attack_result(false, SurvivalService.REASON_PLAYER_RESTING), SurvivalService.REASON_PLAYER_RESTING)
 
 
+# ------------------------------------------------------------ P2-T10: sleep tuning
+
+func test_fatigue_work_line_refusal_and_wake_texts() -> void:
+	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
+	# The owner sees that fatigue lowers its work ability (the category the
+	# server sent; no number).
+	var tired: Dictionary = {"alive": true, "resting": false, "needs": {"hunger": "danger", "thirst": "danger", "fatigue": "caution"}}
+	assert_eq(ClientPresentationFormatter.build_rest_lines(tired, settings), PackedStringArray(["눕기 [R]", "피로로 작업 능력 저하 (주의)"]))
+	tired["needs"]["fatigue"] = "danger"
+	assert_eq(ClientPresentationFormatter.build_rest_lines(tired, settings), PackedStringArray(["눕기 [R]", "피로로 작업 능력 크게 저하 (위험)"]))
+	tired["resting"] = true
+	assert_eq(ClientPresentationFormatter.build_rest_lines(tired, settings).size(), 2, "also shown while resting")
+	tired["needs"]["fatigue"] = "good"
+	assert_eq(ClientPresentationFormatter.build_rest_lines(tired, settings).size(), 1, "hunger and thirst are not fatigue")
+	tired["needs"]["fatigue"] = "danger"
+	tired["alive"] = false
+	assert_true(ClientPresentationFormatter.build_rest_lines(tired, settings).is_empty(), "a dead character has no such line")
+	assert_eq(ClientPresentationFormatter.fatigue_work_text("good"), "")
+	assert_eq(ClientPresentationFormatter.fatigue_work_text(""), "")
+	# A refused lie-down says which danger is in the way.
+	for danger: String in SurvivalService.REST_DANGERS:
+		var text: String = ClientPresentationFormatter.format_rest_result(false, SurvivalService.REASON_CANNOT_REST_PREFIX + danger)
+		assert_contains(text, "누울 수 없습니다", danger)
+		assert_not_contains(text, SurvivalService.REASON_CANNOT_REST_PREFIX, "a sentence, not the code: " + danger)
+	# Why the owner woke (the owner event carries the cause).
+	var seen: Dictionary[String, bool] = {}
+	for cause: String in [SurvivalService.REST_END_DAMAGED, SurvivalService.REST_END_LOW_HEALTH, SurvivalService.REST_END_THIRST, SurvivalService.REST_END_HUNGER, SurvivalService.REST_END_INFECTION]:
+		var text: String = ClientPresentationFormatter.format_rest_ended(cause)
+		assert_contains(text, "깼습니다", cause)
+		assert_false(seen.has(text), "every cause has its own sentence: " + cause)
+		seen[text] = true
+	assert_eq(ClientPresentationFormatter.format_rest_ended(SurvivalService.REST_END_REQUESTED), "", "getting up by request needs no notice")
+	assert_eq(ClientPresentationFormatter.format_rest_ended(SurvivalService.REST_END_DIED), "", "the death message covers it")
+	assert_eq(ClientPresentationFormatter.format_rest_ended("unknown_cause"), "")
+	# Only the owner event of a waking is turned into a notice.
+	var owner_event: Dictionary = {"scope": ClientSurvivalState.SCOPE_OWNER, "event_type": SurvivalService.EVENT_PLAYER_REST_ENDED, "player_id": "player_000001", "cause": SurvivalService.REST_END_THIRST, "world_time": 1.0}
+	assert_eq(ClientPresentationFormatter.format_survival_notice(owner_event), ClientPresentationFormatter.format_rest_ended(SurvivalService.REST_END_THIRST))
+	var public_event: Dictionary = {"scope": ClientSurvivalState.SCOPE_PUBLIC, "event_type": SurvivalService.EVENT_PLAYER_REST_ENDED, "player_id": "player_000002", "world_time": 1.0}
+	assert_eq(ClientPresentationFormatter.format_survival_notice(public_event), "", "another player's waking has no cause and no notice")
+	assert_eq(ClientPresentationFormatter.format_survival_notice({"scope": ClientSurvivalState.SCOPE_OWNER, "event_type": SurvivalService.EVENT_PLAYER_REST_STARTED, "player_id": "player_000001", "world_time": 1.0}), "")
+
+
 # ------------------------------------------------------------ P2-T4: permanent death
 
 func test_survival_hud_shows_which_character_and_the_permanent_death_notice() -> void:

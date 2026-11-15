@@ -378,11 +378,17 @@ func test_a_resting_player_cannot_attack_or_handle_items_and_death_ends_the_rest
 	assert_true(_survival().is_resting(alice_id), "refused requests do not wake her")
 	assert_eq(_cluster.server.rejected_intent_count(SurvivalService.REASON_PLAYER_RESTING), 2)
 
-	# Death while resting: the rest ends, then the death. Everybody agrees.
+	# A sleeper is killed: the rest ends, then the death. Everybody agrees.
+	# P2-T10: the hit taken asleep wakes her and leaves her alive; the next
+	# one, on an awake player, kills.
 	await _settle()
 	var a_events: Array[Dictionary] = _survival_events_of(a)
 	var b_events: Array[Dictionary] = _survival_events_of(b)
+	assert_true(_survival().apply_damage(alice_id, DamageInput.create("test", BodyPart.Part.TORSO, Wound.Type.BRUISE, LETHAL_DAMAGE)).ok, "test setup: hit sleeping alice")
+	assert_true(_survival().is_alive(alice_id), "server: the hit taken asleep did not kill")
+	assert_false(_survival().is_resting(alice_id), "server: the hit woke her")
 	assert_true(_survival().apply_damage(alice_id, DamageInput.create("test", BodyPart.Part.TORSO, Wound.Type.BRUISE, LETHAL_DAMAGE)).ok, "test setup: kill alice")
+	assert_false(_survival().is_alive(alice_id), "server: the second hit killed")
 	assert_false(_survival().is_resting(alice_id), "server: a dead character does not rest")
 	assert_true(await _wait(func() -> bool: return not _mirror(b).is_alive(alice_id) and not _mirror(a).is_alive(alice_id)), "both clients saw the death")
 	await _assert_mirrors_match([a, b], "alice dead")
@@ -654,7 +660,7 @@ func test_default_settings_protocol_and_request_validation() -> void:
 	var broken: SurvivalNetSettings = SurvivalNetSettings.new()
 	broken.rest_intent_rate_per_sec = 0.0
 	assert_eq(broken.validate().size(), 1, "; ".join(broken.validate()))
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 7, "the rest RPCs and the new survival snapshot format were a protocol change (6); 7 since the character RPCs (P2-T9)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 8, "the rest RPCs and the new survival snapshot format were a protocol change (6); 7 since the character RPCs (P2-T9), 8 since the new wake causes (P2-T10)")
 	assert_eq(SurvivalNetModule.SCHEMA_VERSION, 3, "the owner snapshot and the status rows carry `resting`")
 	assert_eq(SurvivalNetModule.SCHEMA_VERSION, ClientSurvivalState.SCHEMA_VERSION, "server and client agree on the format")
 	assert_eq(SurvivalNetModule.validate_rest_request(1, true), "")

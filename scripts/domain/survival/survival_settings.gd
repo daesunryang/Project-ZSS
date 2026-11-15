@@ -21,13 +21,29 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(0.01, 100000.0) var hunger_hours_to_max: float = 48.0
 @export_range(0.01, 100000.0) var thirst_hours_to_max: float = 24.0
 @export_range(0.01, 100000.0) var fatigue_hours_to_max: float = 18.0
-## Rest (P2-T8, docs/15 P2-150, PROVISIONAL). World hours of lying down that
-## bring fatigue from need_max to 0 (calendar time; 8 world hours = 20 real
-## minutes at the default time scale 24). Fatigue does not rise while resting.
-@export_range(0.01, 100000.0) var rest_fatigue_hours_from_max: float = 8.0
+## Rest (P2-T8; shortened by P2-T10, docs/15 P2-180, PROVISIONAL). World
+## hours of lying down that bring fatigue from need_max to 0 (calendar time;
+## 3.2 world hours = 8 real minutes at the default time scale 24). Fatigue
+## does not rise while resting.
+@export_range(0.01, 100000.0) var rest_fatigue_hours_from_max: float = 3.2
 ## Factor on the hunger and thirst growth while resting (1.0 = as when
 ## awake, 0 = they do not rise during rest).
 @export_range(0.0, 100.0) var rest_hunger_thirst_rate_multiplier: float = 1.0
+## Sleep tuning (P2-T10, docs/00 ADR-016, docs/09 §14.25; PROVISIONAL,
+## docs/15 P2-180..P2-186). A resting player wakes by itself when it is in
+## danger, so it does not die lying down; with the same condition it cannot
+## lie down in the first place.
+## Wakes when hunger or thirst reaches the DANGER category.
+@export var rest_wake_on_need_danger: bool = true
+## Wakes when health falls to this fraction of max_health or lower.
+@export_range(0.001, 0.999) var rest_wake_health_fraction: float = 0.3
+## Wakes when the infection reaches this stage (0 = the infection never
+## wakes: a sleeper can then turn at the end of the terminal stage).
+@export_enum("Never:0", "Latent:1", "Early:2", "Progressing:3", "Severe:4", "Terminal:5") var rest_wake_infection_stage: int = InfectionState.Stage.TERMINAL
+## A hit taken while asleep never leaves less health than this (health
+## points): the hit hurts and wakes, it does not kill. Hits after waking
+## follow the usual rules.
+@export_range(0.001, 10000.0) var rest_hit_min_health: float = 1.0
 ## Category boundaries: value >= caution -> CAUTION, >= danger -> DANGER.
 @export_range(0.0, 10000.0) var need_caution_threshold: float = 40.0
 @export_range(0.0, 10000.0) var need_danger_threshold: float = 75.0
@@ -37,6 +53,11 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(0.0, 1.0) var danger_stamina_regen_multiplier: float = 0.4
 @export_range(0.0, 1.0) var caution_movement_multiplier: float = 0.9
 @export_range(0.0, 1.0) var danger_movement_multiplier: float = 0.6
+## Work ability (P2-T10): factor on the handling multiplier from the FATIGUE
+## category alone (hunger and thirst do not count). 1.0 = no penalty.
+## PROVISIONAL (docs/15 P2-181).
+@export_range(0.0, 1.0) var fatigue_caution_handling_multiplier: float = 0.85
+@export_range(0.0, 1.0) var fatigue_danger_handling_multiplier: float = 0.6
 ## Stamina regained per real second (action time) while alive.
 @export_range(0.0, 1000.0) var stamina_regen_per_sec: float = 5.0
 ## Damage amount that produces a severity-1.0 wound (severity = amount / this).
@@ -121,6 +142,18 @@ func validate() -> PackedStringArray:
 		errors.append("rest_fatigue_hours_from_max must be finite and > 0")
 	if not is_finite(rest_hunger_thirst_rate_multiplier) or rest_hunger_thirst_rate_multiplier < 0.0:
 		errors.append("rest_hunger_thirst_rate_multiplier must be finite and >= 0")
+	if not is_finite(rest_wake_health_fraction) or rest_wake_health_fraction <= 0.0 or rest_wake_health_fraction >= 1.0:
+		errors.append("rest_wake_health_fraction must be within (0, 1)")
+	if rest_wake_infection_stage < InfectionState.Stage.NONE or rest_wake_infection_stage > InfectionState.Stage.TERMINAL:
+		errors.append("rest_wake_infection_stage must be none (never) through terminal")
+	if not is_finite(rest_hit_min_health) or rest_hit_min_health <= 0.0 or rest_hit_min_health > max_health:
+		errors.append("rest_hit_min_health must be within (0, max_health]")
+	for handling: float in [fatigue_caution_handling_multiplier, fatigue_danger_handling_multiplier]:
+		if not is_finite(handling) or handling < 0.0 or handling > 1.0:
+			errors.append("fatigue handling multipliers must be within [0, 1]")
+			break
+	if fatigue_danger_handling_multiplier > fatigue_caution_handling_multiplier:
+		errors.append("the danger fatigue handling multiplier must not be milder than the caution one")
 	if need_caution_threshold < 0.0 or need_caution_threshold >= need_danger_threshold or need_danger_threshold > need_max:
 		errors.append("need thresholds must satisfy 0 <= caution < danger <= need_max")
 	for multiplier: float in [caution_stamina_regen_multiplier, danger_stamina_regen_multiplier, caution_movement_multiplier, danger_movement_multiplier]:
@@ -224,6 +257,22 @@ func stamina_regen_multiplier(category: NeedKind.Category) -> float:
 			return caution_stamina_regen_multiplier
 		_:
 			return 1.0
+
+
+## Handling (work ability) factor for a fatigue category (P2-T10).
+func fatigue_handling_multiplier(category: NeedKind.Category) -> float:
+	match category:
+		NeedKind.Category.DANGER:
+			return fatigue_danger_handling_multiplier
+		NeedKind.Category.CAUTION:
+			return fatigue_caution_handling_multiplier
+		_:
+			return 1.0
+
+
+## Health at or below which a resting player wakes and nobody can lie down.
+func rest_wake_health() -> float:
+	return max_health * rest_wake_health_fraction
 
 
 ## Movement speed factor for a worst-need category.

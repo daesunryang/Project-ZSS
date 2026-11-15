@@ -87,21 +87,83 @@ static func build_treatment_lines(vitals: Dictionary, inventory: Array[Dictionar
 	return lines
 
 
-## HUD line about resting (P2-T8) for a living owner: that it is resting and
-## the key to get up, or the key to lie down. `vitals["resting"]` is what the
-## server told the owner. Nothing for a dead character or without a mirror.
+## HUD lines about resting (P2-T8) for a living owner: that it is resting and
+## the key to get up, or the key to lie down; then, when the fatigue category
+## is caution or danger, that fatigue lowers its work ability (P2-T10).
+## `vitals["resting"]` and `vitals["needs"]` are what the server told the
+## owner. Nothing for a dead character or without a mirror.
 static func build_rest_lines(vitals: Dictionary, settings: ClientPresentationSettings) -> PackedStringArray:
 	if vitals.is_empty() or vitals.get("alive", true) != true:
 		return PackedStringArray()
 	var key: String = key_label(settings.rest_key)
+	var lines: PackedStringArray = []
 	if vitals.get("resting", false) == true:
-		return PackedStringArray(["휴식 중 (피로 회복) | 일어나기 [%s]" % key])
-	return PackedStringArray(["눕기 [%s]" % key])
+		lines.append("휴식 중 (피로 회복) | 일어나기 [%s]" % key)
+	else:
+		lines.append("눕기 [%s]" % key)
+	# P2-T10: fatigue lowers work ability (melee damage and later work).
+	var needs: Variant = vitals.get("needs", {})
+	var work_text: String = fatigue_work_text(str((needs as Dictionary).get("fatigue", ""))) if typeof(needs) == TYPE_DICTIONARY else ""
+	if not work_text.is_empty():
+		lines.append(work_text)
+	return lines
 
 
-## Server answer to a rest request (lie down / get up).
+## HUD text for the work-ability penalty of a fatigue category (P2-T10), ""
+## when there is none. The category is what the server sent; the factor
+## itself is a server setting and is not shown.
+static func fatigue_work_text(category: String) -> String:
+	match category:
+		"caution":
+			return "피로로 작업 능력 저하 (주의)"
+		"danger":
+			return "피로로 작업 능력 크게 저하 (위험)"
+	return ""
+
+
+## Notice for the owner when its rest ended for `cause` (P2-T10), "" when no
+## notice is needed (it asked to get up, it died, unknown cause).
+static func format_rest_ended(cause: String) -> String:
+	match cause:
+		SurvivalService.REST_END_DAMAGED:
+			return "공격을 받아 잠에서 깼습니다"
+		SurvivalService.REST_END_LOW_HEALTH:
+			return "체력이 위험해 잠에서 깼습니다"
+		SurvivalService.REST_END_THIRST:
+			return "갈증이 심해 잠에서 깼습니다"
+		SurvivalService.REST_END_HUNGER:
+			return "허기가 심해 잠에서 깼습니다"
+		SurvivalService.REST_END_INFECTION:
+			return "감염이 악화되어 잠에서 깼습니다"
+	return ""
+
+
+## Notice for a mirrored survival event, "" for the events that need none.
+## Only the owner's own waking is announced.
+static func format_survival_notice(event: Dictionary) -> String:
+	if str(event.get("scope", "")) != ClientSurvivalState.SCOPE_OWNER:
+		return ""
+	if str(event.get("event_type", "")) != SurvivalService.EVENT_PLAYER_REST_ENDED:
+		return ""
+	return format_rest_ended(str(event.get("cause", "")))
+
+
+## Server answer to a rest request (lie down / get up). A lie-down refused
+## because the player is in danger (P2-T10) is told as a sentence.
 static func format_rest_result(ok: bool, reason: String) -> String:
-	return "휴식 요청 승인" if ok else "휴식 요청 거부: %s" % reason
+	if ok:
+		return "휴식 요청 승인"
+	if reason.begins_with(SurvivalService.REASON_CANNOT_REST_PREFIX):
+		match reason.trim_prefix(SurvivalService.REASON_CANNOT_REST_PREFIX):
+			SurvivalService.REST_END_LOW_HEALTH:
+				return "지금은 누울 수 없습니다: 체력이 너무 낮습니다"
+			SurvivalService.REST_END_THIRST:
+				return "지금은 누울 수 없습니다: 갈증이 위험합니다"
+			SurvivalService.REST_END_HUNGER:
+				return "지금은 누울 수 없습니다: 허기가 위험합니다"
+			SurvivalService.REST_END_INFECTION:
+				return "지금은 누울 수 없습니다: 감염이 너무 진행됐습니다"
+	return "휴식 요청 거부: %s" % reason
 
 
 ## True when a player's capsule lies on the ground: dead, or resting.
