@@ -6,8 +6,9 @@ extends RefCounted
 ## injuries, infection, per-player RNG. Not yet: body_temperature, stress,
 ## hygiene (later phases).
 
-const SCHEMA_VERSION: int = 2
+const SCHEMA_VERSION: int = 3
 const LEGACY_SCHEMA_VERSION: int = 1
+const B3_SCHEMA_VERSION: int = 2
 const NOT_DEAD_TIME: float = -1.0
 
 var health: float = 0.0
@@ -60,7 +61,7 @@ func to_dict() -> Dictionary:
 ## Returns [vitals, errors]. `vitals` is null when errors is non-empty.
 static func from_dict(data: Dictionary, settings: SurvivalSettings) -> Array:
 	var errors: PackedStringArray = []
-	if not ItemInstance.is_integer_value(data.get("schema_version", null)) or int(data["schema_version"]) not in [LEGACY_SCHEMA_VERSION, SCHEMA_VERSION]:
+	if not ItemInstance.is_integer_value(data.get("schema_version", null)) or int(data["schema_version"]) not in [LEGACY_SCHEMA_VERSION, B3_SCHEMA_VERSION, SCHEMA_VERSION]:
 		errors.append("survival: unsupported schema_version")
 		return [null, errors]
 	var schema_version: int = int(data["schema_version"])
@@ -99,7 +100,7 @@ static func from_dict(data: Dictionary, settings: SurvivalSettings) -> Array:
 		errors.append("survival: died_at_world_time out of range")
 	else:
 		vitals.died_at_world_time = float(died_at)
-		if health_valid and schema_version >= SCHEMA_VERSION and ((vitals.health > 0.0 and vitals.died_at_world_time != NOT_DEAD_TIME) or (vitals.health <= 0.0 and vitals.died_at_world_time == NOT_DEAD_TIME)):
+		if health_valid and schema_version >= B3_SCHEMA_VERSION and ((vitals.health > 0.0 and vitals.died_at_world_time != NOT_DEAD_TIME) or (vitals.health <= 0.0 and vitals.died_at_world_time == NOT_DEAD_TIME)):
 			errors.append("survival: health/death timestamp mismatch")
 	var seed_text: String = str(data.get("rng_seed", ""))
 	var state_text: String = str(data.get("rng_state", ""))

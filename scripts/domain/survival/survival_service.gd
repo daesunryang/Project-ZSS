@@ -12,13 +12,15 @@ extends ServerSystem
 ##   apply_damage(player_id, DamageInput) -> ActionResult
 ##   stop_bleeding(player_id, wound_id) -> ActionResult
 ##   apply_infection_exposure(player_id, InfectionState.Exposure, source_id) -> ActionResult
+##   apply_infection_treatment(player_id, source_id) -> ActionResult
+##   infection_stage(player_id) -> InfectionState.Stage
 ##
 ##   need_category(player_id, NeedKind.Kind) -> NeedKind.Category
 ##   worst_need_category(player_id) -> NeedKind.Category
 ##
-## B3 adds persistent bleeding, conditional natural recovery, need-max health
-## damage, and delayed development respawn. Time rules run only for online
-## players and consume world_delta, never real_delta.
+## B3 adds bleeding/recovery/death/respawn. B4 adds configured infection
+## stages, effects and treatment. Time rules run only for online players and
+## consume world_delta, never real_delta.
 
 const SYSTEM_ID: String = "survival"
 const ENTITY_KIND_WOUND: String = "wound"
@@ -30,6 +32,8 @@ const EVENT_PLAYER_DIED: String = "player_died"
 const EVENT_PLAYER_RESPAWNED: String = "player_respawned"
 const EVENT_PLAYER_INFECTED: String = "player_infected"
 const EVENT_INFECTION_RESISTED: String = "infection_exposure_resisted"
+const EVENT_PLAYER_INFECTION_STAGE_CHANGED: String = "player_infection_stage_changed"
+const EVENT_PLAYER_INFECTION_CURED: String = "player_infection_cured"
 
 const REASON_UNKNOWN_PLAYER: String = "unknown_player"
 const REASON_PLAYER_DEAD: String = "player_dead"
@@ -37,12 +41,15 @@ const REASON_ALREADY_INFECTED: String = "already_infected"
 const REASON_BAD_EXPOSURE: String = "bad_exposure"
 const REASON_UNKNOWN_WOUND: String = "unknown_wound"
 const REASON_NOT_BLEEDING: String = "not_bleeding"
+const REASON_NOT_INFECTED: String = "not_infected"
+const REASON_TOO_LATE: String = "too_late"
 
 const CAUSE_COMBAT: String = "combat"
 const CAUSE_BLEEDING: String = "bleeding"
 const CAUSE_STARVATION: String = "starvation"
 const CAUSE_DEHYDRATION: String = "dehydration"
 const CAUSE_STARVATION_DEHYDRATION: String = "starvation_dehydration"
+const CAUSE_INFECTION: String = "infection"
 const DEATH_SEARCH_ITERATIONS: int = 48
 
 const FULL_MULTIPLIER: float = 1.0
@@ -79,6 +86,12 @@ func get_vitals(player_id: String) -> PlayerVitals:
 func is_alive(player_id: String) -> bool:
 	var vitals: PlayerVitals = _vitals.get(player_id, null)
 	return vitals != null and vitals.is_alive()
+
+
+## Current server-authoritative infection stage; NONE for an unknown player.
+func infection_stage(player_id: String) -> InfectionState.Stage:
+	var vitals: PlayerVitals = _vitals.get(player_id, null)
+	return InfectionState.Stage.NONE if vitals == null else vitals.infection.stage
 
 
 ## Spends stamina if the player is alive and has enough. Invalid amounts
@@ -224,7 +237,32 @@ func apply_infection_exposure(player_id: String, exposure: InfectionState.Exposu
 		vitals.infection.source_id = source_id
 		vitals.infection.infected_at_world_time = _clock.world_time_sec
 		vitals.infection.stage_entered_at_world_time = _clock.world_time_sec
+		vitals.infection.stage_elapsed_world_sec = 0.0
 		GameLogger.info("survival", "player infected", {"player_id": player_id, "source_id": source_id, "exposure": event["exposure"]})
+	return ActionResult.success(event)
+
+
+## Clears infection through the configured maximum treatable stage. Item,
+## quality and medical-skill checks are intentionally left to a later ticket.
+func apply_infection_treatment(player_id: String, source_id: String) -> ActionResult:
+	var reason: String = _check_living(player_id)
+	if not reason.is_empty():
+		return ActionResult.failure(reason)
+	var vitals: PlayerVitals = _vitals[player_id]
+	if not vitals.infection.is_infected():
+		return ActionResult.failure(REASON_NOT_INFECTED)
+	if vitals.infection.stage > _settings.infection_treatment_max_stage:
+		return ActionResult.failure(REASON_TOO_LATE)
+	var previous: InfectionState.Stage = vitals.infection.stage
+	vitals.infection = InfectionState.new()
+	var event: Dictionary = {
+		"event_type": EVENT_PLAYER_INFECTION_CURED,
+		"player_id": player_id,
+		"source_id": source_id,
+		"from": InfectionState.stage_name(previous),
+		"world_time": _clock.world_time_sec,
+	}
+	GameLogger.info("survival", "player infection cured", event)
 	return ActionResult.success(event)
 
 
@@ -297,9 +335,23 @@ func _advance_player(world: ServerWorld, player_id: String, vitals: PlayerVitals
 			cursor = maxf(cursor, respawn_at)
 			continue
 		var remaining: float = end_time - cursor
-		var death_offset: float = _survival_death_offset(vitals, remaining)
+		var infection_boundary: float = _infection_time_to_boundary(vitals)
+		var crosses_infection_boundary: bool = infection_boundary >= 0.0 and infection_boundary <= remaining
+		var segment: float = infection_boundary if crosses_infection_boundary else remaining
+		if segment <= 0.0:
+			_advance_infection_stage(player_id, vitals, cursor)
+			if vitals.infection.stage == InfectionState.Stage.ZOMBIFIED:
+				_mark_dead(player_id, vitals, cursor, CAUSE_INFECTION)
+			continue
+		var death_offset: float = _survival_death_offset(vitals, segment)
 		if death_offset < 0.0:
-			_advance_living(player_id, vitals, remaining, cursor)
+			_advance_living(player_id, vitals, segment, cursor)
+			cursor += segment
+			if crosses_infection_boundary:
+				_advance_infection_stage(player_id, vitals, cursor)
+				if vitals.infection.stage == InfectionState.Stage.ZOMBIFIED:
+					_mark_dead(player_id, vitals, cursor, CAUSE_INFECTION)
+				continue
 			return
 		var cause: String = _survival_damage_cause(vitals, death_offset)
 		_advance_living(player_id, vitals, death_offset, cursor)
@@ -317,7 +369,8 @@ func _advance_living(player_id: String, vitals: PlayerVitals, elapsed: float, st
 	var bleeding_damage: float = _bleeding_rate(vitals) * elapsed
 	var starvation_damage: float = _settings.starvation_health_loss_per_world_sec * _need_time_at_max(vitals, NeedKind.Kind.HUNGER, elapsed)
 	var dehydration_damage: float = _settings.dehydration_health_loss_per_world_sec * _need_time_at_max(vitals, NeedKind.Kind.THIRST, elapsed)
-	var total_damage: float = bleeding_damage + starvation_damage + dehydration_damage
+	var infection_damage: float = _settings.infection_health_loss_per_world_sec(vitals.infection.stage) * elapsed
+	var total_damage: float = bleeding_damage + starvation_damage + dehydration_damage + infection_damage
 	if recovery > 0.0:
 		vitals.health = minf(vitals.health + recovery, _settings.max_health)
 	if recovery_duration > 0.0 and _settings.wound_recovery_per_world_sec > 0.0:
@@ -327,7 +380,7 @@ func _advance_living(player_id: String, vitals: PlayerVitals, elapsed: float, st
 		GameLogger.info("survival", "player survival damage", {
 			"event_type": EVENT_PLAYER_SURVIVAL_DAMAGE,
 			"player_id": player_id,
-			"cause": _survival_damage_cause(vitals, elapsed, bleeding_damage, starvation_damage, dehydration_damage),
+			"cause": _survival_damage_cause(vitals, elapsed, bleeding_damage, starvation_damage, dehydration_damage, infection_damage),
 			"damage": total_damage,
 			"health_after": vitals.health,
 			"world_time": start_time + elapsed,
@@ -336,6 +389,8 @@ func _advance_living(player_id: String, vitals: PlayerVitals, elapsed: float, st
 	if stamina_recovery > 0.0:
 		vitals.stamina = minf(vitals.stamina + stamina_recovery, _settings.max_stamina)
 	_advance_needs(player_id, vitals, elapsed)
+	if vitals.infection.is_infected() and vitals.infection.stage != InfectionState.Stage.ZOMBIFIED:
+		vitals.infection.stage_elapsed_world_sec += elapsed
 
 
 ## -1 when survival damage cannot kill during elapsed; otherwise the first
@@ -363,12 +418,14 @@ func _health_after_elapsed(vitals: PlayerVitals, elapsed: float) -> float:
 	var damage: float = _bleeding_rate(vitals) * elapsed
 	damage += _settings.starvation_health_loss_per_world_sec * _need_time_at_max(vitals, NeedKind.Kind.HUNGER, elapsed)
 	damage += _settings.dehydration_health_loss_per_world_sec * _need_time_at_max(vitals, NeedKind.Kind.THIRST, elapsed)
+	damage += _settings.infection_health_loss_per_world_sec(vitals.infection.stage) * elapsed
 	return recovered - damage
 
 
-## Duration for which all needs remain GOOD. Bleeding makes it zero.
+## Duration for which all needs remain GOOD. Bleeding or an active infection
+## health-loss effect makes it zero.
 func _natural_recovery_duration(vitals: PlayerVitals, elapsed: float) -> float:
-	if _has_bleeding(vitals):
+	if _has_bleeding(vitals) or _settings.infection_health_loss_per_world_sec(vitals.infection.stage) > 0.0:
 		return 0.0
 	var duration: float = elapsed
 	for kind_index: int in NeedKind.KIND_NAMES.size():
@@ -439,7 +496,7 @@ func _stamina_recovery(vitals: PlayerVitals, elapsed: float) -> float:
 		var segment_end: float = boundaries[index + 1]
 		var category: NeedKind.Category = _worst_need_category_at(vitals, (segment_start + segment_end) * 0.5)
 		recovered += _settings.stamina_regen_per_world_sec * _settings.stamina_regen_multiplier(category) * (segment_end - segment_start)
-	return recovered
+	return recovered * _settings.infection_stamina_regen_multiplier(vitals.infection.stage)
 
 
 func _worst_need_category_at(vitals: PlayerVitals, elapsed: float) -> NeedKind.Category:
@@ -452,10 +509,11 @@ func _worst_need_category_at(vitals: PlayerVitals, elapsed: float) -> NeedKind.C
 	return worst
 
 
-func _survival_damage_cause(vitals: PlayerVitals, elapsed: float, bleeding_damage: float = -1.0, starvation_damage: float = -1.0, dehydration_damage: float = -1.0) -> String:
+func _survival_damage_cause(vitals: PlayerVitals, elapsed: float, bleeding_damage: float = -1.0, starvation_damage: float = -1.0, dehydration_damage: float = -1.0, infection_damage: float = -1.0) -> String:
 	var has_bleeding: bool = bleeding_damage > 0.0 if bleeding_damage >= 0.0 else _bleeding_rate(vitals) * elapsed > 0.0
 	var has_starvation: bool = starvation_damage > 0.0 if starvation_damage >= 0.0 else _settings.starvation_health_loss_per_world_sec * _need_time_at_max(vitals, NeedKind.Kind.HUNGER, elapsed) > 0.0
 	var has_dehydration: bool = dehydration_damage > 0.0 if dehydration_damage >= 0.0 else _settings.dehydration_health_loss_per_world_sec * _need_time_at_max(vitals, NeedKind.Kind.THIRST, elapsed) > 0.0
+	var has_infection: bool = infection_damage > 0.0 if infection_damage >= 0.0 else _settings.infection_health_loss_per_world_sec(vitals.infection.stage) * elapsed > 0.0
 	var need_cause: String = ""
 	if has_starvation and has_dehydration:
 		need_cause = CAUSE_STARVATION_DEHYDRATION
@@ -463,11 +521,37 @@ func _survival_damage_cause(vitals: PlayerVitals, elapsed: float, bleeding_damag
 		need_cause = CAUSE_STARVATION
 	elif has_dehydration:
 		need_cause = CAUSE_DEHYDRATION
-	if has_bleeding and not need_cause.is_empty():
-		return "%s_%s" % [CAUSE_BLEEDING, need_cause]
+	var cause: String = need_cause
 	if has_bleeding:
-		return CAUSE_BLEEDING
-	return need_cause
+		cause = CAUSE_BLEEDING if cause.is_empty() else "%s_%s" % [CAUSE_BLEEDING, cause]
+	if has_infection:
+		cause = CAUSE_INFECTION if cause.is_empty() else "%s_%s" % [cause, CAUSE_INFECTION]
+	return cause
+
+
+func _infection_time_to_boundary(vitals: PlayerVitals) -> float:
+	var stage: InfectionState.Stage = vitals.infection.stage
+	if stage < InfectionState.Stage.LATENT or stage > InfectionState.Stage.TERMINAL:
+		return -1.0
+	var duration: float = _settings.infection_stage_duration_world_sec(stage, vitals.infection.exposure)
+	return maxf(duration - vitals.infection.stage_elapsed_world_sec, 0.0)
+
+
+func _advance_infection_stage(player_id: String, vitals: PlayerVitals, world_time: float) -> void:
+	var previous: InfectionState.Stage = vitals.infection.stage
+	if previous < InfectionState.Stage.LATENT or previous >= InfectionState.Stage.ZOMBIFIED:
+		return
+	vitals.infection.stage = (int(previous) + 1) as InfectionState.Stage
+	vitals.infection.stage_entered_at_world_time = world_time
+	vitals.infection.stage_elapsed_world_sec = 0.0
+	var event: Dictionary = {
+		"event_type": EVENT_PLAYER_INFECTION_STAGE_CHANGED,
+		"player_id": player_id,
+		"from": InfectionState.stage_name(previous),
+		"to": InfectionState.stage_name(vitals.infection.stage),
+		"world_time": world_time,
+	}
+	GameLogger.info("survival", "player infection stage changed", event)
 
 
 func _mark_dead(player_id: String, vitals: PlayerVitals, world_time: float, cause: String) -> void:

@@ -61,6 +61,30 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(0.0, 1.0) var infection_chance_bite: float = 0.95
 @export_range(0.0, 1.0) var infection_chance_scratch: float = 0.15
 @export_range(0.0, 1.0) var infection_chance_blood: float = 0.05
+## Base duration of each progressing stage in world hours (docs/15 P2-7).
+@export_range(0.000001, 100000.0) var infection_latent_hours: float = 2.0
+@export_range(0.000001, 100000.0) var infection_early_hours: float = 6.0
+@export_range(0.000001, 100000.0) var infection_progressing_hours: float = 12.0
+@export_range(0.000001, 100000.0) var infection_severe_hours: float = 12.0
+@export_range(0.000001, 100000.0) var infection_terminal_hours: float = 6.0
+## Exposure-specific duration factor (1.0 = base duration).
+@export_range(0.000001, 1000.0) var infection_bite_time_multiplier: float = 1.0
+@export_range(0.000001, 1000.0) var infection_scratch_time_multiplier: float = 1.0
+@export_range(0.000001, 1000.0) var infection_blood_time_multiplier: float = 1.0
+## Stage effects. Stamina factors multiply need penalties; health loss adds to
+## bleeding/starvation/dehydration damage (docs/15 P2-19, PROVISIONAL).
+@export_range(0.0, 1.0) var infection_latent_stamina_regen_multiplier: float = 1.0
+@export_range(0.0, 1.0) var infection_early_stamina_regen_multiplier: float = 1.0
+@export_range(0.0, 1.0) var infection_progressing_stamina_regen_multiplier: float = 0.8
+@export_range(0.0, 1.0) var infection_severe_stamina_regen_multiplier: float = 0.5
+@export_range(0.0, 1.0) var infection_terminal_stamina_regen_multiplier: float = 0.2
+@export_range(0.0, 1000.0) var infection_latent_health_loss_per_world_sec: float = 0.0
+@export_range(0.0, 1000.0) var infection_early_health_loss_per_world_sec: float = 0.0
+@export_range(0.0, 1000.0) var infection_progressing_health_loss_per_world_sec: float = 0.0001
+@export_range(0.0, 1000.0) var infection_severe_health_loss_per_world_sec: float = 0.0005
+@export_range(0.0, 1000.0) var infection_terminal_health_loss_per_world_sec: float = 0.002
+## Treatment succeeds through this stage (inclusive).
+@export_enum("Latent:1", "Early:2", "Progressing:3", "Severe:4", "Terminal:5") var infection_treatment_max_stage: int = InfectionState.Stage.EARLY
 ## Base seed for per-player infection RNG (seed = hash("<base>:<player_id>")).
 @export var rng_seed: int = 0
 
@@ -89,6 +113,28 @@ func validate() -> PackedStringArray:
 		if chance < 0.0 or chance > 1.0:
 			errors.append("infection chances must be within [0, 1]")
 			break
+	var infection_durations: Array[float] = [
+		infection_latent_hours, infection_early_hours, infection_progressing_hours,
+		infection_severe_hours, infection_terminal_hours,
+	]
+	for duration: float in infection_durations:
+		if duration <= 0.0 or not is_finite(duration):
+			errors.append("infection stage durations must be finite and > 0")
+			break
+	for time_multiplier: float in [infection_bite_time_multiplier, infection_scratch_time_multiplier, infection_blood_time_multiplier]:
+		if time_multiplier <= 0.0 or not is_finite(time_multiplier):
+			errors.append("infection time multipliers must be finite and > 0")
+			break
+	for stamina_multiplier: float in [infection_latent_stamina_regen_multiplier, infection_early_stamina_regen_multiplier, infection_progressing_stamina_regen_multiplier, infection_severe_stamina_regen_multiplier, infection_terminal_stamina_regen_multiplier]:
+		if stamina_multiplier < 0.0 or stamina_multiplier > 1.0 or not is_finite(stamina_multiplier):
+			errors.append("infection stamina multipliers must be finite and within [0, 1]")
+			break
+	for health_loss: float in [infection_latent_health_loss_per_world_sec, infection_early_health_loss_per_world_sec, infection_progressing_health_loss_per_world_sec, infection_severe_health_loss_per_world_sec, infection_terminal_health_loss_per_world_sec]:
+		if health_loss < 0.0 or not is_finite(health_loss):
+			errors.append("infection health loss rates must be finite and >= 0")
+			break
+	if infection_treatment_max_stage < InfectionState.Stage.LATENT or infection_treatment_max_stage > InfectionState.Stage.TERMINAL:
+		errors.append("infection treatment max stage must be latent through terminal")
 	if min_handling_multiplier < 0.0 or min_handling_multiplier > 1.0 or min_movement_multiplier < 0.0 or min_movement_multiplier > 1.0:
 		errors.append("minimum multipliers must be within [0, 1]")
 	if bleeding_min_severity < 0.0 or bleeding_min_severity > Wound.MAX_SEVERITY:
@@ -163,6 +209,69 @@ func infection_chance(exposure: InfectionState.Exposure) -> float:
 			return infection_chance_scratch
 		_:
 			return infection_chance_blood
+
+
+## Configured active world seconds in a stage for an exposure route.
+func infection_stage_duration_world_sec(stage: InfectionState.Stage, exposure: InfectionState.Exposure) -> float:
+	var hours: float = 0.0
+	match stage:
+		InfectionState.Stage.LATENT:
+			hours = infection_latent_hours
+		InfectionState.Stage.EARLY:
+			hours = infection_early_hours
+		InfectionState.Stage.PROGRESSING:
+			hours = infection_progressing_hours
+		InfectionState.Stage.SEVERE:
+			hours = infection_severe_hours
+		InfectionState.Stage.TERMINAL:
+			hours = infection_terminal_hours
+		_:
+			return 0.0
+	return hours * SECONDS_PER_HOUR * infection_exposure_time_multiplier(exposure)
+
+
+func infection_exposure_time_multiplier(exposure: InfectionState.Exposure) -> float:
+	match exposure:
+		InfectionState.Exposure.BITE:
+			return infection_bite_time_multiplier
+		InfectionState.Exposure.SCRATCH:
+			return infection_scratch_time_multiplier
+		_:
+			return infection_blood_time_multiplier
+
+
+func infection_stamina_regen_multiplier(stage: InfectionState.Stage) -> float:
+	match stage:
+		InfectionState.Stage.LATENT:
+			return infection_latent_stamina_regen_multiplier
+		InfectionState.Stage.EARLY:
+			return infection_early_stamina_regen_multiplier
+		InfectionState.Stage.PROGRESSING:
+			return infection_progressing_stamina_regen_multiplier
+		InfectionState.Stage.SEVERE:
+			return infection_severe_stamina_regen_multiplier
+		InfectionState.Stage.TERMINAL:
+			return infection_terminal_stamina_regen_multiplier
+		InfectionState.Stage.ZOMBIFIED:
+			return 0.0
+		_:
+			return 1.0
+
+
+func infection_health_loss_per_world_sec(stage: InfectionState.Stage) -> float:
+	match stage:
+		InfectionState.Stage.LATENT:
+			return infection_latent_health_loss_per_world_sec
+		InfectionState.Stage.EARLY:
+			return infection_early_health_loss_per_world_sec
+		InfectionState.Stage.PROGRESSING:
+			return infection_progressing_health_loss_per_world_sec
+		InfectionState.Stage.SEVERE:
+			return infection_severe_health_loss_per_world_sec
+		InfectionState.Stage.TERMINAL:
+			return infection_terminal_health_loss_per_world_sec
+		_:
+			return 0.0
 
 
 ## Bleeding rate factor for one Wound.Type.
