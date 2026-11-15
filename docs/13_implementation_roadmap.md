@@ -126,3 +126,24 @@
 ## 13. Claude Code 실행 규칙
 
 각 티켓은 한 번의 작업에서 한 개의 핵심 완료 목표를 갖는다. 변경 파일, 위험, 테스트를 먼저 계획한다. 문서와 충돌하면 구현보다 문서 불일치 보고를 우선한다.
+
+## 14. Phase 2 티켓 현황 (2026-11-15 갱신)
+
+Phase 2는 단일 조정자(Opus)가 티켓을 쪼개고 병합한다. 설계 난도가 높은 작업(AI, 전투·네트워크 동기화)은 Fable 에이전트, 독립적인 생존 로직은 Codex, 검토·병합·검증은 조정자가 맡는다. 모든 티켓은 `tools/check.sh` 통과 후 main 에 병합한다. 상세 가정은 `docs/15` §6.
+
+| 티켓 | 핵심 목표 | 소유 영역 | 담당 | 상태 |
+|---|---|---|---|---|
+| P1-4 | 자유 회전 3인칭 카메라·입력 | `scripts/presentation/` | Codex | 완료 |
+| P2-0 | ServerSystem/NetModule seam, WorldClock | `scripts/core`, `services` | (이전 세션) | 완료 |
+| P2-B1 | 생존 계약(체력·상처·피해·감염 노출) | `scripts/domain/survival/` | (이전 세션) | 완료 |
+| P2-B2 | 허기·갈증·피로 증가, 범주, 페널티 | `scripts/domain/survival/` | 조정자 | 완료 |
+| P2-B3 | 출혈·회복·굶주림 피해·사망/리스폰 | `scripts/domain/survival/` | Codex | 진행 |
+| P2-B4 | 감염 단계 진행(설정값) | `scripts/domain/survival/` | Codex | 대기(B3 후) |
+| P2-A1 | 소음 시스템(이벤트, 감쇠, 공간 격자) | `scripts/domain/noise/` | Fable | 진행 |
+| P2-A2 | 좀비 모델·AI(감지/추격/공격/수색)·저장 | `scripts/domain/zombie/` | Fable | 대기(A1 후) |
+| P2-C1 | 근접 무기 공격 판정·피해(서버 권한) | `scripts/domain/combat/` | Fable | 대기(A2 후) |
+| P2-N1 | 네트워크: 좀비 복제(ch2), 전투 RPC, 생존 상태 본인 복제(B5), 이동 배율 연결 | `network_service.gd` 외 | Fable | 대기 |
+| P2-N2 | 클라이언트 좀비·상태 표시(임시 캡슐/HUD) | `scripts/presentation/` | Codex | 대기(N1 후) |
+| P2-Z | Phase 2 수용 시나리오(두 클라이언트, 같은 좀비, 같은 결과) | `tests/scenarios/` | 조정자 | 대기 |
+
+병렬 규칙: 같은 파일을 두 담당이 동시에 고치지 않는다. 공유 조립 파일(`composition_config.gd`, `server_composition.gd`, 문서)은 조정자가 병합 때 정리한다.
