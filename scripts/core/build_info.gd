@@ -75,7 +75,14 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    snapshot has an empty "TradeNet" fragment. No existing RPC or message
 ##    format changed; both sides of a completed trade get their inventory
 ##    change through the existing owner-only InventoryNet messages.
-const PROTOCOL_VERSION: int = 11
+## 12: P3-4a (grid structures, docs/00 ADR-024, docs/09 §15.4). New module
+##    StructureNet: three intents (_rpc_request_place, _rpc_request_demolish,
+##    _rpc_request_door) with one result (_rpc_structure_result), and
+##    structures to everybody (_rpc_structure_rows for added or changed
+##    structures, _rpc_structures_removed). The join snapshot has a
+##    "StructureNet" fragment with every structure the server has in memory.
+##    No existing RPC or message format changed.
+const PROTOCOL_VERSION: int = 12
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

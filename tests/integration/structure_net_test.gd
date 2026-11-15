@@ -513,6 +513,12 @@ func test_a_late_joiner_gets_the_structures_in_its_join_data() -> void:
 	assert_false(_mirror(b).has_structure(str(gone[2])), "and without what was demolished")
 	assert_true(await _eventually(func() -> bool: return _matches_server(a)))
 	assert_eq(_client_view(a), _client_view(b))
+	# The join snapshot carries this module's fragment next to the others: the
+	# trade module (P2-T16) is installed on every peer and took its own part.
+	for service: NetworkService in [_cluster.server, a, b]:
+		assert_not_null(service.get_module(TradeNetModule.MODULE_NAME), "the trade module is installed")
+		assert_not_null(service.get_module(StructureNetModule.MODULE_NAME), "the structure module is installed")
+	assert_eq((b.get_module(TradeNetModule.MODULE_NAME) as TradeNetModule).client_state.rejected_payload_count, 0, "the trade part of the join snapshot was accepted")
 	# From then on it follows changes like everybody else.
 	assert_eq(await _door(b, str(door[2]), false), [true, "", str(door[2])])
 	assert_true(await _eventually(func() -> bool: return _matches_server(a) and _matches_server(b)))
@@ -671,6 +677,7 @@ func test_default_settings_rpc_table_and_request_validation() -> void:
 	broken.removals_per_message = 0
 	broken.max_mirror_structures = 0
 	assert_eq(broken.validate().size(), 5, "; ".join(broken.validate()))
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 12, "the structure RPCs are a protocol change (P3-4a)")
 	# Every message is on the reliable ordered channel (docs/09 §15.4).
 	var module: StructureNetModule = StructureNetModule.new(settings, StructureCatalog.load_directory())
 	assert_eq(str(module.name), StructureNetModule.MODULE_NAME)

@@ -683,7 +683,7 @@ func test_units_put_down_and_merged_pickups_survive_a_save_and_server_restart() 
 # ------------------------------------------------------------ rules (no network)
 
 func test_rpc_table_and_drop_request_validation() -> void:
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 11, "the drop quantity and the withdrawn hand-over RPCs were a protocol change (10, P2-T15); 11 since the trade RPCs (P2-T16)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 12, "the drop quantity and the withdrawn hand-over RPCs were a protocol change (10, P2-T15); 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a)")
 	const ITEM: String = "item_000001"
 	assert_eq(InventoryService.WHOLE_STACK, 0)
 	assert_eq(InventoryNetModule.validate_drop_request(1, ITEM, 1), "")

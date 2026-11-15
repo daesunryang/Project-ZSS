@@ -233,7 +233,7 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. 시스템 사이의 시그널 연결도 여기서 한다(P2-T5: `SurvivalService.player_died` → `ZombieService.on_player_died`, §14.20). `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
 | 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가), player v2→v3(`character_generation` 추가, 값은 1. P2-T4), player v3→v4(`character` 추가, 값은 기본 이름과 빈 외형. P2-T9, §14.24). `SaveService` 기본 마이그레이터 |
 
-채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 9(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24), P2-T10~T12 묶음에서 8: 기상 원인(§14.25), `PostureNet` 모듈(§14.26), 다른 플레이어 치료(§14.27), P2-T14에서 9: 건네기 의도와 건네기 알림(§14.28)).
+채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 12(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24), P2-T10~T12 묶음에서 8: 기상 원인(§14.25), `PostureNet` 모듈(§14.26), 다른 플레이어 치료(§14.27), P2-T14에서 9: 건네기 의도와 건네기 알림(§14.28), P2-T15에서 10: 건네기 RPC 삭제와 내려놓기 수량(§14.29), P2-T16에서 11: `TradeNet` 모듈(§14.30), P3-4a에서 12: `StructureNet` 모듈(§15.4)). 버전별 메시지 목록은 `scripts/core/build_info.gd`의 주석에 있다.
 
 P2-T11에서 `ServerSystem`에 훅 넷이 추가됐다(모두 기본값은 "영향 없음"이고 `ServerWorld`의 같은 이름 함수가 모든 시스템의 값을 모은다, §14.26): `player_attack_block_reason(player_id)`(공격만 막는 사유. `ServerWorld.player_attack_block_reason`은 행동 전체를 막는 사유를 먼저 본다), `player_visibility_multiplier(player_id)`(좀비 시야 거리에 곱하는 가시성, 곱을 0~1로 제한), `player_footstep_loudness_multiplier(player_id)`·`player_footstep_stride_multiplier(player_id)`(발소리 세기·보폭 배율, 곱). 잘못된 값(NaN·무한·음수)은 오류 로그를 남기고 무시한다(1.0으로 취급: 고장 난 시스템이 누구도 숨기지 못한다). 조립에 시그널 연결 둘이 늘었다: `SurvivalService.rest_changed`·`player_died` → `PostureService.on_rest_changed`·`on_player_died`.
 
@@ -1979,7 +1979,7 @@ Phase 3(docs/13 §5, §15) 티켓의 계약을 티켓마다 한 절씩 적는다
 
 ### 15.4 격자 구조물: 바닥·벽·문(P3-4a, docs/00 ADR-024, system id `building`, 모듈 `StructureNet`)
 
-서버·네트워크·클라이언트 미러까지다. 구조물을 화면에 그리는 것과 건축 모드 입력은 P3-4b, 청사진·자재·작업 진행은 P3-5, 길찾기와 시야 차단은 P3-6이다. **새 RPC가 여섯 개 생겼으므로 `PROTOCOL_VERSION`을 올려야 한다**(이 티켓에서는 올리지 않았다: 병합할 때 올린다).
+서버·네트워크·클라이언트 미러까지다. 구조물을 화면에 그리는 것과 건축 모드 입력은 P3-4b, 청사진·자재·작업 진행은 P3-5, 길찾기와 시야 차단은 P3-6이다. **프로토콜 변경 있음**: RPC 여섯 개와 접속 스냅샷의 `modules.StructureNet` 조각이 새로 생겨 `BuildInfo.PROTOCOL_VERSION`을 12로 올렸다(11은 P2-T16의 거래, §14.30). 기존 RPC와 메시지 형식은 그대로다.
 
 **정의와 설정**
 

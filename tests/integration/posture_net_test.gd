@@ -521,7 +521,7 @@ func test_default_settings_rpc_table_and_request_validation() -> void:
 	broken.max_player_id_length = 0
 	assert_eq(broken.validate().size(), 2, "; ".join(broken.validate()))
 	assert_eq(CompositionConfig.from_defaults().validate().size(), 0)
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 11, "the posture RPCs are part of protocol 8 (P2-T10..T12); 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15), 11 since the trade RPCs (P2-T16)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 12, "the posture RPCs are part of protocol 8 (P2-T10..T12); 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15), 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a)")
 	assert_eq(PostureNetModule.SCHEMA_VERSION, ClientPostureState.SCHEMA_VERSION, "server and client agree on the format")
 	assert_eq(PostureNetModule.validate_posture_request(1, "prone"), "")
 	assert_eq(PostureNetModule.validate_posture_request(0, "standing"), "")
