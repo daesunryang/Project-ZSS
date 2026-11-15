@@ -104,6 +104,13 @@ extends ServerSystem
 ## not registered in a world.
 signal player_died(world: ServerWorld, player_id: String, cause: String, infection_stage: InfectionState.Stage)
 
+## A player lay down (true) or its rest ended with an event (false): it got
+## up, was woken or died (P2-T11). Server-side hook for other systems,
+## connected by ServerComposition (the posture system). Emitted synchronously
+## after the rest event was queued. Not emitted when a rest ends silently
+## (the player left, a new character started).
+signal rest_changed(player_id: String, resting: bool)
+
 const SYSTEM_ID: String = "survival"
 const ENTITY_KIND_WOUND: String = "wound"
 
@@ -640,6 +647,7 @@ func start_rest(player_id: String) -> ActionResult:
 	}
 	_push_event(event)
 	GameLogger.info("survival", "player rest started", event)
+	rest_changed.emit(player_id, true)
 	return ActionResult.success(event)
 
 
@@ -1293,6 +1301,7 @@ func _end_rest(player_id: String, cause: String, world_time: float) -> Dictionar
 	}
 	_push_event(event)
 	GameLogger.info("survival", "player rest ended", event)
+	rest_changed.emit(player_id, false)
 	return event
 
 

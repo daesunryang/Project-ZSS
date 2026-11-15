@@ -22,6 +22,15 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	var survival: SurvivalService = SurvivalService.new(config.survival, world.ids, world.clock)
 	if world.register_system(survival) != OK:
 		return null
+	# P2-T11: posture (standing / prone / asleep), movement and visibility.
+	# After survival, whose rest it reads; before the footsteps and the
+	# zombies, so both see this tick's posture and movement. Survival only
+	# announces rests and deaths; it does not know this system.
+	var posture: PostureService = PostureService.new(config.posture, world.clock)
+	if world.register_system(posture) != OK:
+		return null
+	survival.rest_changed.connect(posture.on_rest_changed)
+	survival.player_died.connect(posture.on_player_died)
 	# Phase 2-A: noise (A1). Before its listeners (zombies) so expired noise
 	# is gone before they query it in the same tick.
 	if world.register_system(NoiseService.new(config.noise, world.clock, config.gameplay.world_half_extent_m)) != OK:
@@ -81,4 +90,10 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	if character_net_error != OK:
 		character_net.free()
 		return character_net_error
+	# P2-T11: wanted-posture intent + replication of postures.
+	var posture_net: PostureNetModule = PostureNetModule.new(config.posture_net)
+	var posture_net_error: Error = service.register_module(posture_net)
+	if posture_net_error != OK:
+		posture_net.free()
+		return posture_net_error
 	return OK

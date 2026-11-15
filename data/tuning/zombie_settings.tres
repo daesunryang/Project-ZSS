@@ -16,6 +16,7 @@ corpse_remove_delay_sec = 30.0
 sight_range_m = 25.0
 sight_half_angle_deg = 60.0
 light_sight_multiplier = 1.0
+tracked_target_min_visibility = 1.0
 hearing_multiplier = 1.0
 wander_speed_mps = 0.8
 investigate_speed_mps = 1.5

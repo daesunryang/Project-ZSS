@@ -179,13 +179,67 @@ static func player_tilt_rad(alive: bool, resting: bool, settings: ClientPresenta
 	return settings.rest_tilt_rad if resting else 0.0
 
 
+## True when a player's capsule is drawn prone (P2-T11): alive, not asleep
+## (`resting` is what the survival mirror says) and the posture mirror says
+## prone.
+static func player_is_prone(alive: bool, resting: bool, posture: PlayerPosture.Kind) -> bool:
+	return alive and not resting and posture == PlayerPosture.Kind.PRONE
+
+
+## Tilt of a player's capsule about its X axis: upright (0), prone (leaning
+## forward, negative), lying asleep on its back, or lying dead. Death wins
+## over sleep, sleep over prone.
+static func player_pose_tilt_rad(alive: bool, resting: bool, prone: bool, settings: ClientPresentationSettings) -> float:
+	if not alive:
+		return settings.dead_tilt_rad
+	if resting:
+		return settings.rest_tilt_rad
+	return -settings.prone_tilt_rad if prone else 0.0
+
+
+## Height of the centre of a capsule tilted by `tilt_rad` whose lowest point
+## touches the ground: half the height when upright, the radius when flat.
+static func player_body_center_height(radius: float, height: float, tilt_rad: float) -> float:
+	return radius + maxf(height * 0.5 - radius, 0.0) * absf(cos(tilt_rad))
+
+
+## HUD line about the owner's posture (P2-T11): standing, prone ("hidden")
+## or asleep, and the prone key. `vitals["posture"]` is a PlayerPosture name
+## the server told. Nothing for a dead character or without a mirror.
+static func build_posture_lines(vitals: Dictionary, settings: ClientPresentationSettings) -> PackedStringArray:
+	if vitals.is_empty() or vitals.get("alive", true) != true:
+		return PackedStringArray()
+	var key: String = key_label(settings.prone_key)
+	match str(vitals.get("posture", "")):
+		"prone":
+			return PackedStringArray(["자세: 엎드림 (은신 중) | 일어서기 [%s]" % key])
+		"resting":
+			return PackedStringArray(["자세: 누워 잠 | 엎드리기 [%s]" % key])
+	return PackedStringArray(["자세: 서 있음 | 엎드리기 [%s]" % key])
+
+
+## Server answer to a posture request (stand up / lie prone). A refused
+## lie-down is told like the rest key's (format_rest_result).
+static func format_posture_result(ok: bool, reason: String) -> String:
+	if ok:
+		return "자세 변경 승인"
+	if reason.begins_with(SurvivalService.REASON_CANNOT_REST_PREFIX):
+		return format_rest_result(false, reason)
+	return "자세 변경 거부: %s" % reason
+
+
 ## Name of a key as shown in the HUD ("B", "F1", ...).
 static func key_label(key: Key) -> String:
 	return OS.get_keycode_string(key)
 
 
 static func format_attack_result(ok: bool, reason: String) -> String:
-	return "공격 요청 승인" if ok else "공격 요청 거부: %s" % reason
+	if ok:
+		return "공격 요청 승인"
+	# P2-T11: a prone player must stand up first.
+	if reason == PostureService.REASON_PLAYER_PRONE:
+		return "공격 요청 거부: 엎드린 채로는 공격할 수 없습니다"
+	return "공격 요청 거부: %s" % reason
 
 
 ## Server answer to a use request (eat, drink, bandage).

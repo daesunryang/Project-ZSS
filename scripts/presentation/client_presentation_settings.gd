@@ -46,6 +46,14 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 ## How far a resting player's capsule is tilted (PI / 2 = lying flat).
 @export_range(0.0, PI) var rest_tilt_rad: float = PI * 0.5
 
+## Prone (P2-T11, docs/15 P2-194): the key asks the server to lie prone, or
+## to stand up when the mirror says the local player is prone. Requests share
+## the flood guard interval of the rest key.
+@export var prone_key: Key = KEY_C
+## How far a prone player's capsule leans forward. Less than PI / 2, so it
+## is told apart from a sleeper, which lies flat on its back.
+@export_range(0.0, PI) var prone_tilt_rad: float = 1.25
+
 ## Name tag above a player's capsule (P2-T9, docs/15 P2-170): a billboard
 ## Label3D. Distance above the top of the capsule, world size of one font
 ## pixel, font size, and the colours of the local player's name, other
@@ -94,8 +102,12 @@ func validate() -> PackedStringArray:
 		errors.append("rest_tilt_rad must be within (0, PI]")
 	if name_tag_margin_m < 0.0 or name_tag_pixel_size <= 0.0 or name_tag_font_size < 1:
 		errors.append("name tag margin must be >= 0, pixel size > 0 and font size >= 1")
-	if not _are_distinct([consume_key, drink_key, bandage_key, cure_key, rest_key]):
-		errors.append("use keys (consume, drink, bandage, cure) and the rest key must be different keys")
+	if prone_key == KEY_NONE:
+		errors.append("prone_key must not be KEY_NONE")
+	if prone_tilt_rad <= 0.0 or prone_tilt_rad > PI:
+		errors.append("prone_tilt_rad must be within (0, PI]")
+	if not _are_distinct([consume_key, drink_key, bandage_key, cure_key, rest_key, prone_key]):
+		errors.append("use keys (consume, drink, bandage, cure), the rest key and the prone key must be different keys")
 	return errors
 
 

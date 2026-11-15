@@ -46,6 +46,15 @@ enum PlayerDeathZombieRule { NEVER = 0, INFECTION_DEATH = 1, INFECTED_AT_DEATH =
 ## Lighting factor applied to sight range (1 = daylight). Constant until a
 ## day/night and light model exists.
 @export_range(0.0, 10.0) var light_sight_multiplier: float = 1.0
+## Sight and the target's visibility (P2-T11, docs/09 §14.26): the sight
+## range is multiplied by ServerWorld.player_visibility_multiplier of each
+## player (posture, movement). For the target a zombie is chasing or
+## attacking and saw at its last decision, the factor is never below this
+## value: 1.0 = lying down in front of a zombie that already sees you does
+## not hide you (the chase only ends out of its full sight range or view
+## cone); 0.0 = a tracked target is hidden like anybody else. PROVISIONAL
+## (docs/15 P2-192).
+@export_range(0.0, 1.0) var tracked_target_min_visibility: float = 1.0
 ## Passed to NoiseService.query_audible().
 @export_range(0.0, 100.0) var hearing_multiplier: float = 1.0
 
@@ -110,6 +119,8 @@ func validate() -> PackedStringArray:
 			break
 	if sight_half_angle_deg < 0.0 or sight_half_angle_deg > 180.0:
 		errors.append("zombie sight_half_angle_deg must be within [0, 180]")
+	if not is_finite(tracked_target_min_visibility) or tracked_target_min_visibility < 0.0 or tracked_target_min_visibility > 1.0:
+		errors.append("zombie tracked_target_min_visibility must be within [0, 1]")
 	if arrive_radius_m <= 0.0:
 		errors.append("zombie arrive_radius_m must be > 0")
 	if chase_stop_distance_m > attack_range_m:

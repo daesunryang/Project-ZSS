@@ -16,6 +16,8 @@ const USE_BANDAGE: StringName = &"use_bandage"
 const USE_CURE: StringName = &"use_cure"
 ## Lie down / get up (P2-T8).
 const REST: StringName = &"rest"
+## Lie prone / stand up (P2-T11).
+const PRONE: StringName = &"prone"
 ## Use action -> the kind of item its key asks the server to use.
 const USE_ACTION_KINDS: Dictionary[StringName, ConsumeIntentPolicy.Kind] = {
 	CONSUME: ConsumeIntentPolicy.Kind.FOOD,
@@ -38,6 +40,7 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 		_add_key_action(USE_BANDAGE, presentation.bandage_key, settings.input_deadzone)
 		_add_key_action(USE_CURE, presentation.cure_key, settings.input_deadzone)
 		_add_key_action(REST, presentation.rest_key, settings.input_deadzone)
+		_add_key_action(PRONE, presentation.prone_key, settings.input_deadzone)
 
 
 static func _add_key_action(action: StringName, key: Key, deadzone: float) -> void:

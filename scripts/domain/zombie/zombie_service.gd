@@ -37,7 +37,11 @@ extends ServerSystem
 ##
 ## AI decision priority (one decision, highest first):
 ##   1. sight   - a living online player inside range and view cone:
-##                chase, or attack when within attack range
+##                chase, or attack when within attack range. The range
+##                towards a player is the sight range times that player's
+##                visibility (P2-T11, docs/09 §14.26: posture and movement,
+##                asked from ServerWorld.player_visibility_multiplier; see
+##                _sight_range_to for the target being chased)
 ##   2. damage  - it was hit by a player it cannot see: turn to the attacker
 ##                and investigate the attacker's position
 ##   3. sound   - the strongest new noise: investigate its position
@@ -521,9 +525,10 @@ func _attack(context: _Context, zombie: ZombieState, target_id: String) -> void:
 
 
 ## Nearest visible living online player ("" = none). The current target is
-## kept while it stays visible; ties resolve by player id order.
+## kept while it stays visible; ties resolve by player id order. The sight
+## range towards each player is the zombie's range times that player's
+## visibility (P2-T11, _sight_range_to).
 func _visible_target(context: _Context, zombie: ZombieState) -> String:
-	var range_m: float = _settings.effective_sight_range_m()
 	var half_angle: float = deg_to_rad(_settings.sight_half_angle_deg)
 	var best_id: String = ""
 	var best_distance: float = INF
@@ -531,7 +536,7 @@ func _visible_target(context: _Context, zombie: ZombieState) -> String:
 		if not _is_valid_target(context, player_id):
 			continue
 		var player_position: Vector3 = context.world.get_player(player_id).position
-		if not ZombiePerception.can_see(zombie.position, zombie.yaw, player_position, range_m, half_angle):
+		if not ZombiePerception.can_see(zombie.position, zombie.yaw, player_position, _sight_range_to(context, zombie, player_id), half_angle):
 			continue
 		if player_id == zombie.target_player_id:
 			return player_id
@@ -540,6 +545,23 @@ func _visible_target(context: _Context, zombie: ZombieState) -> String:
 			best_distance = distance
 			best_id = player_id
 	return best_id
+
+
+## Distance at which this zombie can see `player_id` now (P2-T11): its sight
+## range (with the light factor) times how visible the player is. The
+## visibility is what the world's systems say (posture, movement:
+## ServerWorld.player_visibility_multiplier); this system knows nothing about
+## postures. The target the zombie is chasing or attacking and saw at its
+## last decision is never less visible than
+## ZombieSettings.tracked_target_min_visibility, so with the default (1.0)
+## lying down in front of a zombie that already sees you does not hide you:
+## the chase ends only out of its full range or view cone.
+func _sight_range_to(context: _Context, zombie: ZombieState, player_id: String) -> float:
+	var visibility: float = clampf(context.world.player_visibility_multiplier(player_id), 0.0, 1.0)
+	var engaged: bool = zombie.state == ZombieState.State.CHASE or zombie.state == ZombieState.State.ATTACK
+	if engaged and zombie.target_visible and zombie.target_player_id == player_id:
+		visibility = maxf(visibility, _settings.tracked_target_min_visibility)
+	return _settings.effective_sight_range_m() * visibility
 
 
 ## Only living, online players can be sensed or attacked.

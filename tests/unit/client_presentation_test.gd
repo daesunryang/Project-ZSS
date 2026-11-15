@@ -460,6 +460,70 @@ func test_fatigue_work_line_refusal_and_wake_texts() -> void:
 	assert_eq(ClientPresentationFormatter.format_survival_notice({"scope": ClientSurvivalState.SCOPE_OWNER, "event_type": SurvivalService.EVENT_PLAYER_REST_STARTED, "player_id": "player_000001", "world_time": 1.0}), "")
 
 
+# ------------------------------------------------------------ P2-T11: prone and stealth
+
+func test_prone_key_posture_hud_lines_and_prone_capsule() -> void:
+	var shipped: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
+	assert_eq(shipped.validate().size(), 0, "; ".join(shipped.validate()))
+	assert_eq(shipped.prone_key, KEY_C)
+	var camera: CameraSettings = CameraSettings.new()
+	var presentation: ClientPresentationSettings = ClientPresentationSettings.new()
+	ClientInputActions.register(camera, presentation)
+	var events: Array[InputEvent] = InputMap.action_get_events(ClientInputActions.PRONE)
+	assert_eq(events.size(), 1)
+	assert_eq((events[0] as InputEventKey).physical_keycode, presentation.prone_key)
+	assert_false(ClientInputActions.USE_ACTION_KINDS.has(ClientInputActions.PRONE), "going prone uses no item")
+	var invalid: ClientPresentationSettings = ClientPresentationSettings.new()
+	invalid.prone_key = KEY_NONE
+	invalid.prone_tilt_rad = 0.0
+	assert_eq(invalid.validate().size(), 2, "; ".join(invalid.validate()))
+	var shared: ClientPresentationSettings = ClientPresentationSettings.new()
+	shared.prone_key = shared.rest_key
+	assert_eq(shared.validate().size(), 1, "the prone key must differ from the rest and use keys: %s" % "; ".join(shared.validate()))
+
+	# HUD: the own posture, "hidden" while prone, and the key.
+	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
+	assert_eq(ClientPresentationFormatter.build_posture_lines({"alive": true, "posture": "standing"}, settings), PackedStringArray(["자세: 서 있음 | 엎드리기 [C]"]))
+	assert_eq(ClientPresentationFormatter.build_posture_lines({"alive": true, "posture": "prone"}, settings), PackedStringArray(["자세: 엎드림 (은신 중) | 일어서기 [C]"]))
+	assert_eq(ClientPresentationFormatter.build_posture_lines({"alive": true, "posture": "resting"}, settings), PackedStringArray(["자세: 누워 잠 | 엎드리기 [C]"]), "sleeping is not shown as hidden")
+	assert_eq(ClientPresentationFormatter.build_posture_lines({"alive": true}, settings), PackedStringArray(["자세: 서 있음 | 엎드리기 [C]"]), "standing until the server says otherwise")
+	settings.prone_key = KEY_X
+	assert_eq(ClientPresentationFormatter.build_posture_lines({"alive": true, "posture": "prone"}, settings)[0], "자세: 엎드림 (은신 중) | 일어서기 [X]", "the key comes from the settings")
+	assert_true(ClientPresentationFormatter.build_posture_lines({"alive": false, "posture": "prone"}, settings).is_empty(), "a dead character has no posture line")
+	assert_true(ClientPresentationFormatter.build_posture_lines({}, settings).is_empty(), "no owner mirror, no line")
+	assert_contains(ClientPresentationFormatter.format_posture_result(true, ""), "승인")
+	assert_contains(ClientPresentationFormatter.format_posture_result(false, PostureService.REASON_ALREADY_IN_POSTURE), PostureService.REASON_ALREADY_IN_POSTURE)
+	assert_contains(ClientPresentationFormatter.format_posture_result(false, SurvivalService.REASON_CANNOT_REST_PREFIX + SurvivalService.REST_END_THIRST), "누울 수 없습니다", "a refused lie-down is told as for the rest key")
+	assert_contains(ClientPresentationFormatter.format_attack_result(false, PostureService.REASON_PLAYER_PRONE), "엎드린", "a prone player is told why its attack is refused")
+
+	# Capsule pose: a prone capsule leans forward and is told apart from a
+	# sleeper (lying on its back) and from a dead one.
+	settings = ClientPresentationSettings.new()
+	var standing: float = ClientPresentationFormatter.player_pose_tilt_rad(true, false, false, settings)
+	var prone: float = ClientPresentationFormatter.player_pose_tilt_rad(true, false, true, settings)
+	var resting: float = ClientPresentationFormatter.player_pose_tilt_rad(true, true, false, settings)
+	assert_eq(standing, 0.0)
+	assert_eq(prone, -settings.prone_tilt_rad, "prone: forward")
+	assert_eq(resting, settings.rest_tilt_rad, "resting: on the back")
+	assert_true(prone < 0.0 and resting > 0.0 and absf(prone) != absf(resting), "prone and sleeping look different")
+	assert_eq(ClientPresentationFormatter.player_pose_tilt_rad(true, true, true, settings), settings.rest_tilt_rad, "sleep wins over prone")
+	assert_eq(ClientPresentationFormatter.player_pose_tilt_rad(false, false, true, settings), settings.dead_tilt_rad, "death wins over everything")
+	# The capsule keeps touching the ground at any tilt.
+	const RADIUS: float = 0.4
+	const HEIGHT: float = 1.8
+	assert_true(absf(ClientPresentationFormatter.player_body_center_height(RADIUS, HEIGHT, 0.0) - HEIGHT * 0.5) < 0.0001, "upright: half the height")
+	assert_true(absf(ClientPresentationFormatter.player_body_center_height(RADIUS, HEIGHT, PI * 0.5) - RADIUS) < 0.0001, "flat: the radius")
+	var prone_center: float = ClientPresentationFormatter.player_body_center_height(RADIUS, HEIGHT, prone)
+	assert_true(prone_center > RADIUS and prone_center < HEIGHT * 0.5, "prone: lower than standing, not flat (%f)" % prone_center)
+	# The mirror says which posture to draw: sleep from either mirror, prone
+	# from the posture mirror, nothing for a dead character.
+	assert_false(ClientPresentationFormatter.player_is_prone(true, false, PlayerPosture.Kind.STANDING))
+	assert_true(ClientPresentationFormatter.player_is_prone(true, false, PlayerPosture.Kind.PRONE))
+	assert_false(ClientPresentationFormatter.player_is_prone(true, true, PlayerPosture.Kind.PRONE), "the survival mirror already says asleep")
+	assert_false(ClientPresentationFormatter.player_is_prone(false, false, PlayerPosture.Kind.PRONE))
+	assert_false(ClientPresentationFormatter.player_is_prone(true, false, PlayerPosture.Kind.RESTING))
+
+
 # ------------------------------------------------------------ P2-T4: permanent death
 
 func test_survival_hud_shows_which_character_and_the_permanent_death_notice() -> void:

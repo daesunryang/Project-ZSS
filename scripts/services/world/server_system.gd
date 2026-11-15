@@ -71,6 +71,38 @@ func player_action_block_reason(_player_id: String) -> String:
 	return ""
 
 
+## "" when this system lets the player make an attack, otherwise a stable
+## reason code such as "player_prone" (P2-T11). Only for what blocks attacks
+## but not item handling; whatever blocks every action belongs in
+## player_action_block_reason. CombatService asks through
+## ServerWorld.player_attack_block_reason, which asks both hooks.
+func player_attack_block_reason(_player_id: String) -> String:
+	return ""
+
+
+## How well this player can be seen (P2-T11, docs/09 §14.26): a factor on
+## the distance at which a zombie's sight reaches it (1.0 = no effect, 0.0 =
+## cannot be seen). ServerWorld multiplies the factors of all systems and
+## clamps the product to [0, 1], so a system can only hide a player. The
+## zombie system asks ServerWorld.player_visibility_multiplier and so needs
+## to know nothing about postures, sleep or movement.
+func player_visibility_multiplier(_player_id: String) -> float:
+	return 1.0
+
+
+## Factors on this player's footsteps (P2-T11): the loudness of one footstep
+## and the distance walked between two of them (1.0 = no effect).
+## PlayerNoiseService asks ServerWorld.player_footstep_loudness_multiplier /
+## player_footstep_stride_multiplier, which multiply the factors of all
+## systems.
+func player_footstep_loudness_multiplier(_player_id: String) -> float:
+	return 1.0
+
+
+func player_footstep_stride_multiplier(_player_id: String) -> float:
+	return 1.0
+
+
 ## "" when this system lets the player start a NEW character now, replacing
 ## the one it has (P2-T9, docs/09 §14.24), otherwise a stable reason code.
 ## ServerWorld.create_character asks every system when a player that already

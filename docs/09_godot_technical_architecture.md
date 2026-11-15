@@ -233,7 +233,9 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. 시스템 사이의 시그널 연결도 여기서 한다(P2-T5: `SurvivalService.player_died` → `ZombieService.on_player_died`, §14.20). `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
 | 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가), player v2→v3(`character_generation` 추가, 값은 1. P2-T4), player v3→v4(`character` 추가, 값은 기본 이름과 빈 외형. P2-T9, §14.24). `SaveService` 기본 마이그레이터 |
 
-채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 7(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24)).
+채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 8(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24), P2-T10~T12 묶음에서 8: 기상 원인(§14.25), `PostureNet` 모듈(§14.26), 다른 플레이어 치료(§14.27)).
+
+P2-T11에서 `ServerSystem`에 훅 넷이 추가됐다(모두 기본값은 "영향 없음"이고 `ServerWorld`의 같은 이름 함수가 모든 시스템의 값을 모은다, §14.26): `player_attack_block_reason(player_id)`(공격만 막는 사유. `ServerWorld.player_attack_block_reason`은 행동 전체를 막는 사유를 먼저 본다), `player_visibility_multiplier(player_id)`(좀비 시야 거리에 곱하는 가시성, 곱을 0~1로 제한), `player_footstep_loudness_multiplier(player_id)`·`player_footstep_stride_multiplier(player_id)`(발소리 세기·보폭 배율, 곱). 잘못된 값(NaN·무한·음수)은 오류 로그를 남기고 무시한다(1.0으로 취급: 고장 난 시스템이 누구도 숨기지 못한다). 조립에 시그널 연결 둘이 늘었다: `SurvivalService.rest_changed`·`player_died` → `PostureService.on_rest_changed`·`on_player_died`.
 
 ### 14.6 생존 계약(B1, system id `survival`)
 
@@ -312,6 +314,7 @@ P2-T10부터(§14.25가 우선) `handling_multiplier`는 팔·손 상처 배율�
 | `zombie_died` | `source_id` |
 | `zombie_removed` | — |
 
+- 시야와 가시성(P2-T11, §14.26이 우선): 좀비가 플레이어를 볼 수 있는 거리는 `sight_range_m × light_sight_multiplier × 그 플레이어의 가시성`이다. 가시성은 `ServerWorld.player_visibility_multiplier(player_id)`로 묻는 0~1의 값이고(자세와 움직임에서 나온다: 서서 움직임 1.0, 서서 정지 0.9, 누워 잠 0.8, 엎드려 이동 0.6, 엎드려 정지 0.4), 좀비 시스템은 자세·수면·이동을 알지 못한다. 시야각 규칙은 그대로다. 지금 추격·공격 중이고 직전 판단에서 보였던 대상의 가시성은 `tracked_target_min_visibility`(기본 1.0)보다 낮아지지 않는다: 이미 보고 있는 좀비 앞에서 엎드려도 추격은 끊기지 않고, 전체 시야 거리나 시야각 밖으로 벗어나야 놓친다. 놓친 뒤(수색 중)에는 일반 배율이 적용된다.
 - 공격: 좀비는 플레이어 체력을 직접 바꾸지 않는다. 서버가 `DamageInput`(source = 좀비 ID, 부위·상처 종류·피해량은 설정과 좀비 RNG)을 만들어 `SurvivalService.apply_damage`에 넘기고, 이어서 `apply_infection_exposure`(물림 = BITE, 긁힘 = SCRATCH)를 호출한다. 대상은 접속 중이고 살아 있는 플레이어뿐이다.
 - 결정론: 좀비마다 RNG(seed = hash("<rng_seed>:<zombie_id>"))를 갖고 배회·수색 지점·공격 굴림에 쓴다. 같은 seed와 같은 입력이면 좀비 문서·이벤트·플레이어 피해가 같다(테스트로 확인).
 - 저장: world_state.json `systems.zombie` = `{schema_version: 1, rng_seed, rng_state, zombies: [ZombieState.to_dict()]}`(64비트 RNG 값은 문자열). 불러올 때 ID 형식·중복·tombstone·수치 범위를 검사하고 하나라도 틀리면 월드 복구를 실패시킨다. `seed_new_world`는 새 월드에만 개발용 좀비를 놓는다. 저장하지 않는 것은 docs/15 P2-31.
@@ -340,6 +343,7 @@ P2-T10부터(§14.25가 우선) `handling_multiplier`는 팔·손 상처 배율�
 | `not_online` | 접속 중이 아님 |
 | `player_dead` | 사망 상태 |
 | `player_resting` | 누워 쉬는 중(P2-T8, §14.23). `ServerWorld.player_action_block_reason`이 돌려주는 사유를 그대로 쓰므로 다른 시스템이 행동을 막는 사유가 생기면 이 자리에서 함께 거부된다 |
+| `player_prone` | 엎드린 채로는 공격할 수 없다(P2-T11, §14.26). 전투는 `ServerWorld.player_attack_block_reason`을 묻고, 그 함수가 행동 전체를 막는 사유(위 둘)를 먼저, 공격만 막는 사유를 다음에 돌려준다 |
 | `no_weapon` | 쓸 무기 정의가 없음(맨손 정의 누락 = 설정 오류, 시작 시 `validate()`가 먼저 잡는다) |
 | `attack_on_cooldown` | 직전 공격의 쿨다운(행동 시간, 실제 초)이 남음 |
 | `not_enough_stamina` | 스태미나가 무기 비용보다 적음(`SurvivalService.try_spend_stamina`가 마지막 검사이자 차감) |
@@ -389,6 +393,8 @@ P2-T10부터(§14.25가 우선) `handling_multiplier`는 팔·손 상처 배율�
 | 월드 시계 정지(`action_delta` = 0) | 소음 없음. 정지 중에 움직인 거리는 나중에도 세지 않는다 |
 | 순간이동: `teleport_speed_mps`(15m/s)보다 빠른 위치 변화(리스폰, 관리자 이동 등) | 소음 없음, 걸은 거리를 0으로 되돌린다 |
 | `footstep_loudness` = 0, 또는 소음 시스템 미등록 | 전체 비활성 |
+
+자세에 따른 발소리(P2-T11, §14.26): 발소리의 세기와 보폭은 설정값에 `ServerWorld.player_footstep_loudness_multiplier(player_id)`·`player_footstep_stride_multiplier(player_id)`를 곱한 값이다(기본 1.0). 엎드린 플레이어는 세기 ×0.4, 보폭 ×0.5라서 발소리 하나가 들리는 거리가 7m에서 2.2m로 줄어든다(기본 소음 설정). 세기 배율이 0이면 그 플레이어는 소리를 내지 않는다. 이 시스템은 자세를 알지 못한다. "걷는 중인지"의 기준 속도(`min_speed_mps`)는 그대로라 엎드려 기는 속도(1.4m/s)도 발소리를 낸다.
 
 - 속도는 `action_delta`(실제 초)로 계산한다(`ServerWorld.step_movement`가 실제 초 단위로 이동을 적분하기 때문). 소음의 시각·감쇠도 소음 시스템대로 행동 시간이다(§14.8).
 - 플레이어를 처음 보는 것은 `step`이다. 그래서 접속 직후부터 첫 틱까지의 위치 변화는 발소리가 되지 않는다(첫 틱의 이동 최대 한 번이 빠진다).
@@ -937,6 +943,8 @@ P2-T6부터 `ItemConsumption`은 아이템 정의의 사용 효과 전부를 적
 
 **P2-T10에서 바뀐 것(§14.25가 우선)**: 회복 속도(월드 8시간 → 3.2시간), 위험할 때 저절로 깸(시간 피해로 누운 채 죽지 않음), 위험할 때 눕기 거부, 자는 중 피격은 죽이지 않음. 아래 본문에서 해당하는 곳에 표시했다.
 
+**P2-T11에서 바뀐 것(§14.26)**: 자는 것은 자세 모델(서 있음/엎드림/누워 잠)의 한 상태가 됐다. 눕기·일어나기는 이 절의 휴식 RPC로도, `PostureNet`의 "원하는 자세" 의도(`resting`/`standing`)로도 요청할 수 있고 둘 다 `SurvivalService.start_rest`/`stop_rest`로 끝나 규칙이 같다(이 절의 RPC·형식·테스트는 그대로다). 엎드린 채 누우면 엎드림이 끝나고, 깨면 서 있는 자세다. 자는 플레이어는 좀비에게 조금 덜 보인다(가시성 0.8).
+
 구성: `SurvivalSettings`(휴식 수치 2개), `SurvivalService`(휴식 상태와 규칙), `ServerSystem.player_action_block_reason`의 뜻 확장, `CombatService`·`ItemConsumption`(휴식 중 거부), `SurvivalNetModule`(휴식 의도 RPC와 결과, 복제), `SurvivalNetSettings`(요청 빈도), `ClientSurvivalState`(누가 누워 있는지), 클라이언트 휴식 키·HUD·누운 캡슐. `network_service.gd`는 수정하지 않았다.
 
 **프로토콜 변경 있음**: RPC 2개(`_rpc_request_rest`, `_rpc_rest_result`)가 새로 생기고, 생존 본인 스냅샷·공개 행·접속 조각에 `resting`이 추가됐으며(스키마 3, §14.14), 공개·본인 이벤트 `player_rest_started`/`player_rest_ended`가 생겼다. `BuildInfo.PROTOCOL_VERSION`을 6으로 올렸다(P2-T6~T8 묶음에서 한 번).
@@ -1310,3 +1318,115 @@ row = {
 클라이언트 표시(`scripts/presentation/`): `ClientPresentationFormatter.build_rest_lines`가 휴식 줄 아래에 피로 문구(`fatigue_work_text`: "피로로 작업 능력 저하 (주의)" / "피로로 작업 능력 크게 저하 (위험)")를 붙인다. `format_rest_result`가 `cannot_rest_<위험>`을 문장으로 바꾸고, `format_rest_ended`/`format_survival_notice`가 본인 기상 이벤트를 "…잠에서 깼습니다" 문구로 바꾼다(`ClientView`가 생존 미러의 `event_received`에 연결해 사용 결과 자리에 표시). 화면 설명은 docs/11 §2.9.
 
 테스트: `tests/unit/sleep_tuning_test.gd`(기본값이 실제 8분인지와 설정 검증 11종, 피로 범주별 조작 배율·허기와 갈증은 무관·상처와의 곱·하한·사망, 피로에 따른 근접 피해, 갈증·허기 위험 기상과 틱 안의 기상 시각, 설정을 끈 경우, 출혈 중인 플레이어가 기준 체력에서 깨고 누운 채 죽지 않음(큰 틱 하나), 틱 크기 무관, 말기 기상과 기상 단계를 끈 경우의 좀비화, 위험별 눕기 거부와 우선순위, 깬 직후 재눕기 거부(진동 없음), 자는 중 치명적 피격의 생존·이벤트·다음 피격의 사망, 가벼운 피격과 하한보다 낮은 체력, 좀비 연속 공격), `tests/integration/sleep_tuning_net_test.gd`(서버 1 + 클라이언트 2, 실제 ENet: A가 자다가 갈증 위험으로 깨면 A는 원인을 받고 B는 공개 이벤트 둘만 받음(키 목록 고정, 사적 단어 없음), 깬 뒤 3회 연속 눕기 거부와 거부 횟수, B는 누울 수 있음 / 치명적 피해의 좀비가 자는 A를 공격하면 A가 체력 1로 살아서 깨고 양쪽 미러가 일치, 이후 피격으로 사망), `tests/unit/client_presentation_test.gd`(피로 문구, 거부 문장, 기상 문구, 본인 이벤트만 알림). 뜻이 바뀌어 고친 기존 테스트: `tests/unit/rest_test.gd`의 "누운 채 시간 피해로 죽을 수 있다"(→ 죽기 전에 깬다)와 "사망이 휴식을 끝낸다"(치명적 피격 대신 기상 단계를 끈 좀비화로), `tests/integration/rest_net_test.gd`의 휴식 중 사망(첫 피격은 깨우고 둘째가 죽인다).
+
+### 14.26 자세와 은신(P2-T11, docs/00 ADR-017)
+
+사용자 결정(2026-11-15): "엎드리면 은신효과는 있지만, 자는건 없게, 그래도 움직이는것보다는 적게". 플레이어가 엎드릴 수 있고, 좀비의 시각 감지가 플레이어의 자세와 움직임에 따라 달라진다. 순서는 **엎드림 < 누워 잠 < 움직임**(오른쪽일수록 잘 보인다)이고, 자는 것에는 엎드리기 같은 은신 효과가 없다. 임시 가정은 docs/15 §14.2 P2-189~P2-194.
+
+구성: 새 도메인 `scripts/domain/posture/`(`PlayerPosture`, `PostureSettings`, `PostureService` = ServerSystem `posture`), `ServerSystem`·`ServerWorld`의 훅 넷(§14.5), `ZombieService`(시야 거리에 가시성 곱), `ZombieSettings.tracked_target_min_visibility`, `PlayerNoiseService`(발소리 배율), `CombatService`(공격 차단 사유), `SurvivalService.rest_changed` 시그널, 새 NetModule `PostureNet`(`PostureNetModule`, `PostureNetSettings`, `ClientPostureState`), 클라이언트 엎드리기 키·HUD·엎드린 캡슐. `network_service.gd`는 수정하지 않았다. `PROTOCOL_VERSION`은 P2-T10에서 올린 8 그대로다(묶음에서 한 번).
+
+#### 결합 방식
+
+좀비·발소리·전투는 자세를 모른다. 각자 `ServerWorld`에 "이 플레이어의 가시성 / 발소리 배율 / 공격 차단 사유"를 묻고, `ServerWorld`가 모든 시스템의 훅 값을 모은다. 자세 시스템은 그 훅에 답할 뿐이다. 자세 시스템이 아는 다른 시스템은 생존 하나이고(`is_resting`, `start_rest`, `stop_rest`, `is_alive`: 공개 API만), 생존은 자세 시스템을 모른다: 휴식의 시작·끝과 사망을 시그널로 알릴 뿐이고 연결은 `ServerComposition`이 한다(§14.20과 같은 방식). 등록 순서는 `survival` → `posture` → `noise` → `player_noise` → `zombie` → `combat`이라 발소리와 좀비가 같은 틱의 자세·이동을 본다.
+
+#### 자세 모델
+
+`PlayerPosture.Kind`: `STANDING`(서 있음), `PRONE`(엎드림), `RESTING`(누워 잠). 네트워크·이벤트 이름은 `standing`, `prone`, `resting`. 한 플레이어는 항상 셋 중 하나다.
+
+- "누워 잠"은 §14.23의 휴식 그 자체다(`SurvivalService`가 소유). 자세 시스템은 "엎드림"만 소유하고 셋을 하나의 자세로 보고한다: `posture_of` = 쉬는 중이면 `RESTING`, 아니고 엎드림 표시가 있으면 `PRONE`, 아니면 `STANDING`.
+- 엎드린 채 누우면(어느 의도로든) 엎드림이 끝난다. 잠에서 깨면(일어나기, 피격, 위험 기상) 서 있는 자세다. 엎드린 자세로 되돌아가지 않는다.
+- 죽으면 엎드림이 끝난다(죽은 캐릭터에게는 자세가 없다: `STANDING`으로 보고). 퇴장하면 조용히 끝나고 재접속하면 서 있다. 새 캐릭터는 서서 시작한다.
+- 자세 전환에는 시간이 걸리지 않는다(요청이 승인되는 틱에 바뀐다, docs/15 P2-190).
+
+#### 데이터(`PostureSettings`, `data/tuning/posture_settings.tres`)
+
+| 설정 | 기본값 | 뜻 |
+|---|---|---|
+| `standing_moving_visibility` | 1.0 | 서서 움직이는 플레이어의 가시성(기준) |
+| `standing_still_visibility` | 0.9 | 서서 가만히 있는 플레이어 |
+| `resting_visibility` | 0.8 | 누워 자는 플레이어 |
+| `prone_moving_visibility` | 0.6 | 엎드려 기는 플레이어 |
+| `prone_still_visibility` | 0.4 | 엎드려 가만히 있는 플레이어 |
+| `moving_min_speed_mps` | 0.5 | 한 틱에 서버가 이만큼 이상의 속도로 움직였으면 "움직이는 중" |
+| `moving_memory_sec` | 0.5 | 마지막으로 움직인 틱 뒤 이 시간(실제 초) 동안은 계속 "움직이는 중" |
+| `prone_movement_multiplier` | 0.35 | 엎드린 플레이어의 이동 속도 배율(4m/s → 1.4m/s) |
+| `prone_footstep_loudness_multiplier` | 0.4 | 엎드린 플레이어의 발소리 세기 배율 |
+| `prone_footstep_stride_multiplier` | 0.5 | 엎드린 플레이어의 보폭 배율(2m → 1m마다 발소리) |
+| `prone_blocks_attack` | true | 엎드린 채 근접 공격 불가 |
+| `max_pending_events` | 256 | 네트워크 계층이 가져가기 전까지 보관하는 이벤트 수 |
+
+검증(`validate()`): 가시성은 모두 0~1이고, 사용자가 정한 순서를 설정 오류로 막는다: 엎드려 정지 ≤ 엎드려 이동 < 누워 잠 < 서서 움직임, 서서 정지 ≤ 서서 움직임. 그래서 "자는 것이 엎드린 것보다 잘 숨는" 설정이나 "자는 것이 움직이는 것만큼 잘 보이는" 설정은 서버가 시작하지 않는다.
+
+#### 서버 규칙(`PostureService`)
+
+| API | 계약 |
+|---|---|
+| `posture_of(player_id) -> PlayerPosture.Kind` | 현재 자세. 모르는·오프라인·죽은 플레이어는 `STANDING` |
+| `is_prone(player_id) -> bool` | 엎드려 있는지 |
+| `is_moving(player_id) -> bool` | 서버가 최근에 움직였는지(아래 "움직이는 중") |
+| `visibility_multiplier(player_id) -> float` | `PostureSettings.visibility(자세, 움직이는 중)`. 이 시스템이 아직 추적하지 않는 플레이어(월드에 없거나 접속 뒤 첫 틱 전)는 1.0 |
+| `request_posture(world, player_id, wanted) -> ActionResult` | 원하는 자세로 바꾼다. 성공 이벤트는 아래 `player_posture_changed`. 실패 사유(순서대로): `posture_unavailable`(월드나 생존 시스템 없음), `bad_posture`(자세 값이 아님), `not_online`(오프라인, 캐릭터 없는 접속자, 모르는 플레이어), `unknown_player`(생존 상태 없음), `player_dead`, `already_in_posture`, 또는 `SurvivalService.start_rest`/`stop_rest`의 사유(`already_resting`, `cannot_rest_<위험>` 등). 실패하면 아무것도 바뀌지 않는다 |
+| `drain_events() -> Array[Dictionary]` | 네트워크용 읽기 전용. 지난 호출 이후의 이벤트 |
+
+`request_posture`의 전환: `resting` 요청은 `start_rest`(§14.23·§14.25의 규칙과 거부 사유 그대로), 누워 자는 중의 `standing` 요청은 `stop_rest`, 엎드린 중의 `standing` 요청은 엎드림 해제, `prone` 요청은 서 있으면 바로 엎드리고 자는 중이면 깨운 뒤 엎드린다(이벤트 둘: `standing`, `prone`).
+
+이벤트(JSON-safe, 변화마다 하나): `{event_type: "player_posture_changed", player_id, posture: "standing"|"prone"|"resting", previous: 같은 이름들, world_time}`. 휴식의 시작·끝도(어느 경로로 일어났든 `rest_changed` 시그널을 받아) 이 이벤트로 기록된다. 퇴장과 새 캐릭터 시작은 이벤트가 없다.
+
+**엎드림의 효과**(모두 훅을 통해서다):
+
+- 이동: `player_movement_multiplier`가 0.35를 돌려준다. `ServerWorld`가 다른 시스템의 배율(상처·욕구)과 곱한다. 클라이언트가 보내는 것은 기존 이동 의도 그대로이고 속도는 서버가 정한다.
+- 공격: `player_attack_block_reason`이 `player_prone`을 돌려준다(`prone_blocks_attack`). 근접 공격이 거부되고 스태미나·쿨다운·소음·이벤트가 없다(§14.10). **아이템은 다룰 수 있다**: 줍기·내려놓기·먹기·붕대·치료제는 엎드린 채로 된다(`player_action_block_reason`에는 답하지 않는다). 어떤 행동도 자세를 바꾸지 않는다.
+- 발소리: 세기 ×0.4, 보폭 ×0.5(§14.11). 청각 규칙 자체는 그대로다.
+- 피격·시간 피해는 자세와 무관하고 자세를 바꾸지 않는다.
+
+**움직이는 중**: 자세 시스템이 매 틱(`step`: 같은 틱의 `step_movement` 뒤) 접속 중인 플레이어의 이전 서버 위치와 지금 서버 위치를 비교한다. XZ 이동 속도가 `moving_min_speed_mps` 이상이면 그 행동 시각을 기록하고, 그 뒤 `moving_memory_sec` 동안 "움직이는 중"이다(좀비는 0.5초마다 판단하고 플레이어는 매 틱 움직이므로, 잠깐 멈춘 것은 숨은 것이 아니다). 근거는 서버 위치뿐이다: 이동 의도가 왔어도 위치가 바뀌지 않았으면(자는 플레이어) 움직임이 아니고, 클라이언트가 자기 움직임에 대해 보내는 값은 없다. 리스폰처럼 위치가 건너뛰는 경우도 한 번의 움직임으로 센다(새 캐릭터 시작은 추적을 새로 시작해 예외).
+
+#### 좀비 시야(§14.9에 추가)
+
+좀비가 플레이어를 볼 수 있는 거리 = `sight_range_m × light_sight_multiplier × 가시성`. 기본 수치(시야 25m)에서: 서서 움직임 25m, 서서 정지 22.5m, 누워 잠 20m, 엎드려 이동 15m, 엎드려 정지 10m. 시야각(좌우 60도)은 그대로다. 가시성 0이면 바로 앞에서도 보이지 않는다(기본값에는 0이 없다).
+
+**이미 추격 중인 좀비**: 추격·공격 중이고 직전 판단에서 보였던 그 대상에게는 가시성의 하한 `ZombieSettings.tracked_target_min_visibility`(기본 1.0)가 적용된다. 기본값에서는 **좀비가 보고 있는 앞에서 엎드려도 추격이 끊기지 않는다**. 전체 시야 거리나 시야각 밖으로 벗어나 한 번 놓치면(수색 상태) 그때부터는 일반 가시성이 적용되어, 엎드려 가만히 있으면 10m 밖에서는 다시 발견되지 않는다. 이 값을 0으로 두면 추격 중인 대상도 엎드리는 즉시 일반 가시성으로 판정된다(엎드려서 추격을 끊을 수 있다). 다른 좀비(그 플레이어를 보고 있지 않던 좀비)에게는 항상 일반 가시성이다. 제품 결정이라 docs/15 P2-192에 [사용자 확인 필요]로 적었다.
+
+청각: 규칙을 바꾸지 않았다. 엎드린 플레이어의 발소리가 작을 뿐이다. 근접 공격 소음, 다른 소음원은 자세와 무관하다.
+
+#### 네트워크 메시지(`PostureNetModule`, 노드 이름 `PostureNet`)
+
+| 방향 | RPC | 채널/모드 | 받는 쪽 검증 |
+|---|---|---|---|
+| C→S | `_rpc_request_posture(request_id: int, posture: String)` | 0 reliable | 아래 "요청 검증" |
+| S→요청자 | `_rpc_posture_result(request_id: int, ok: bool, reason: String)` | 0 reliable | 서버 발신만 수용, 타입, `request_id` ≥ 0, `reason` 길이 ≤ 64, `ok`일 때만 `reason`이 빈 문자열 |
+| S→모든 접속자 | `_rpc_posture_rows(rows: Array)` | 0 reliable | 서버 발신만 수용, 배열, 행마다 `{player_id: String, posture: String}`의 키가 정확히 둘이고 자세 이름이 셋 중 하나. 틀린 행만 버린다. 최대 256행 |
+
+의도 설계: 토글이 아니라 **원하는 자세**(`standing`, `prone`, `resting`)를 보낸다(§14.23의 휴식 의도와 같은 이유: 미러가 한 박자 늦어도 반대 동작이 되지 않고 거부될 뿐이다). 대상 플레이어 인자가 없다(행위자는 보낸 peer의 플레이어). 위치·속도·"숨었다" 같은 인자도 없다: 엎드렸는지, 얼마나 느린지, 얼마나 보이는지는 모두 서버가 정한다. 인자를 더 붙인 호출은 엔진이 거부한다(테스트로 고정).
+
+**기존 휴식 RPC와의 관계**: `SurvivalNet`의 `_rpc_request_rest(request_id, lie_down)`(§14.23)는 그대로 둔다. 새 의도의 `resting`/`standing`(자는 중)은 같은 서버 규칙(`start_rest`/`stop_rest`)으로 가는 다른 입구이고, 어느 쪽으로 눕든 자세 모델은 일관된다(엎드림 해제, 자세 행 복제, 생존 미러의 `resting`). 기존 클라이언트 API(`SurvivalNetModule.request_rest`)와 그 테스트를 깨지 않으려고 하나로 합쳐 지우지 않았다. 기본 클라이언트는 휴식 키에 기존 휴식 의도를, 엎드리기 키에 새 의도를 쓴다. 휴식 RPC를 없애고 자세 의도로 통합할지는 docs/15 P2-193.
+
+요청 검증(순서대로, 먼저 걸린 것 하나. 거부되면 서버 상태는 바뀌지 않고 `rejected_intent_count(reason)`이 1 오른다):
+
+| 순서 | 사유 코드 | 조건 | 요청자에게 결과 전송 |
+|---|---|---|---|
+| 1 | `not_joined` | join 핸드셰이크를 마치지 않은 peer | 보내지 않음 |
+| 2 | `bad_type` | `request_id`가 int가 아니거나 `posture`가 String이 아님 | `request_id`가 0 이상 int일 때만 |
+| 3 | `bad_sequence` | `request_id` < 0 | 보내지 않음 |
+| 4 | `bad_posture` | 자세 이름이 셋 중 하나가 아님(대소문자 구분, 16자 초과 포함) | 보냄 |
+| 5 | `rate_limited` | peer별 토큰 버킷(`PostureNetSettings.posture_intent_rate_per_sec`/`posture_intent_burst`, 기본 4/s·버스트 4) | 보냄 |
+| 6 | `posture_unavailable` | 월드에 자세 시스템이 없음(조립 오류) | 보냄 |
+| 7 | `PostureService`의 사유(`not_online`, `player_dead`, `already_in_posture`, `already_resting`, `cannot_rest_<위험>` 등) | 규칙이 거부. 횟수만 센다 | 보냄 |
+
+승인되면 서버는 그 자리에서 자세 행을 모든 접속자에게 보낸 뒤 결과를 보낸다(같은 채널이라 요청자는 자기 자세 변화를 결과보다 먼저 받는다). 요청 없이 일어난 변화(피격으로 깸, 사망, 휴식 RPC)는 다음 서버 틱에 보낸다.
+
+접속 조각(`snapshot.modules.PostureNet`): `{schema_version: 1, players: [{player_id, posture}, ...]}`(월드에 있는 전 플레이어). 캐릭터 없는 접속자도 받는다(자신의 행은 없다). 행이 없는 플레이어는 서 있는 것으로 본다.
+
+복제와 정보 공개(ADR-009): 자세는 옆에서 보면 보이는 사실이라 **모든 접속자에게** 보낸다(누워 있음과 같은 부류, §14.23). 행에는 플레이어와 자세뿐이다. 보내지 않는 것: 왜 바뀌었는지, 이전 자세, 가시성 수치, 움직이는 중인지, 어느 좀비가 그 플레이어를 보는지. 거리·시야 제한은 없다(다른 공개 사실과 같다).
+
+`ClientPostureState`: `posture_of(player_id) -> PlayerPosture.Kind`(본인과 다른 플레이어 모두, 모르면 `STANDING`), `is_prone`, 시그널 `posture_changed(player_id, posture)`·`changed`. 접속 조각이 틀리면 통째로 버리고(전원 서 있음), 퇴장한 플레이어의 행은 지운다.
+
+클라이언트 표면(`PostureNetModule`): `request_posture(posture: PlayerPosture.Kind) -> int`(요청 번호, join 전이면 `NO_REQUEST`), `signal posture_result(request_id, ok, reason)`, `send_raw_posture_request(request_id, posture)`(테스트 전용).
+
+#### 저장
+
+자세는 **저장하지 않는다**(쉬는 상태와 같은 세션 상태, §14.23). `to_world_document()`·`to_player_fragment()` 모두 빈 문서이고 저장 스키마는 바뀌지 않았다. 퇴장하면 해제되고 재시작 뒤에는 접속자가 없어 엎드린 사람이 있을 수 없다. 자세 변경만으로는 저장이 일어나지 않는다.
+
+클라이언트 표시(`scripts/presentation/`): 엎드리기 키(`ClientPresentationSettings.prone_key`, 기본 C)를 누르면 본인이 엎드려 있으면 `standing`, 아니면 `prone`을 요청한다(자는 중이면 서버가 깨운 뒤 엎드린다). 요청 간격은 휴식 키의 값을 함께 쓴다. 생존 HUD 끝에 자세 줄: "자세: 서 있음 | 엎드리기 [C]", "자세: 엎드림 (은신 중) | 일어서기 [C]", "자세: 누워 잠 | 엎드리기 [C]". 엎드린 캡슐은 앞으로 기울여(`prone_tilt_rad`, 기본 1.25rad) 바닥에 붙인다: 뒤로 완전히 누운 자는 캡슐(`rest_tilt_rad` = π/2)이나 어두운 색의 죽은 캡슐과 구분된다. 엎드린 채 공격하면 "엎드린 채로는 공격할 수 없습니다"를 표시한다. 화면 설명은 docs/11 §2.10.
+
+테스트: `tests/unit/posture_test.gd`(기본값과 설정 검증 10종·자세 이름·가시성 표, 조립 순서와 저장 없음, 엎드리기·일어서기의 이벤트와 거부 사유, 캐릭터 없는 접속자, 엎드림과 수면이 하나의 자세 모델(양쪽 경로, 깨면 서 있음, 자는 중 → 엎드림, 위험 시 거부), 사망·퇴장·새 캐릭터, 엎드려 이동 속도와 상처 배율과의 곱, 엎드린 채 공격 거부와 줍기·먹기·내려놓기 허용, 발소리 수·세기·들리는 거리, 움직이는 중 판정과 기억 시간·이동 의도만으로는 움직임이 아님, 같은 거리에서 서 있으면 보이고 엎드리면 안 보임, 자세별 시야 거리 경계(±0.5m)와 "자는 플레이어는 움직이는 플레이어보다 덜 보이고 엎드린 플레이어보다 잘 보임", 추격 중 엎드려도 추격 유지(하한 1.0)와 하한 0에서 놓침, 놓친 뒤 엎드리면 재발견되지 않고 일어서면 발견됨, 월드 훅의 곱·제한·잘못된 값 무시·공격 차단 순서), `tests/integration/posture_net_test.gd`(서버 1 + 클라이언트 2~3, 실제 ENet: A가 엎드리면 서버·A·B·늦게 온 C의 미러 일치, 같은 이동 의도에서 A의 이동 거리가 B의 약 0.35배, 일어서기, B가 받은 변화 2개와 생존 이벤트 0개, 엎드린 채 퇴장·재접속 / 같은 거리의 서 있는 B는 좀비가 보고 엎드린 A는 못 봄, 양쪽 좀비 미러의 추격 / 휴식 RPC와 자세 의도를 섞어 쓴 흐름, 엎드린 채 공격 거부, 사망 / 조작된 요청 11종과 인자를 더 붙인 호출·잘못된 상태·남의 자세를 바꾸려는 요청·클라이언트가 보낸 서버 메시지 / join 전 요청과 캐릭터 없는 접속자 / 빈도 초과 / 설정·RPC 구성·요청 검증 규칙 / 미러의 페이로드 검증), `tests/unit/client_presentation_test.gd`(엎드리기 키 등록·검증, 자세 HUD 줄, 결과 문구, 엎드린 캡슐의 기울기와 높이). 고친 기존 테스트: `tests/unit/server_system_seam_test.gd`의 시스템 등록 순서 목록에 `posture` 추가.

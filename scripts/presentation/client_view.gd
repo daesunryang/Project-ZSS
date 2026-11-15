@@ -52,6 +52,11 @@ var _inventory_signature: int = 0
 var _survival_module: SurvivalNetModule = null
 ## Flood guard of the rest key (same rule as the attack guard).
 var _rest_policy: AttackIntentPolicy = null
+## Lie prone / stand up requests and everybody's posture (P2-T11).
+var _posture_module: PostureNetModule = null
+var _posture_state: ClientPostureState = null
+## Flood guard of the prone key (the interval of the rest key).
+var _posture_policy: AttackIntentPolicy = null
 ## Character names and appearance, and the creation request (P2-T9).
 var _character_module: CharacterNetModule = null
 var _character_state: ClientCharacterState = null
@@ -82,6 +87,7 @@ func _ready() -> void:
 	_attack_policy = AttackIntentPolicy.new(_presentation.attack_min_interval_sec)
 	_consume_policy = AttackIntentPolicy.new(_presentation.consume_min_interval_sec)
 	_rest_policy = AttackIntentPolicy.new(_presentation.rest_min_interval_sec)
+	_posture_policy = AttackIntentPolicy.new(_presentation.rest_min_interval_sec)
 	_item_catalog = ItemCatalog.load_directory()
 	ClientInputActions.register(_settings, _presentation)
 	_prepare_player_resources()
@@ -134,6 +140,8 @@ func _physics_process(_delta: float) -> void:
 			_request_use(ClientInputActions.USE_ACTION_KINDS[action])
 	if Input.is_action_just_pressed(ClientInputActions.REST):
 		_request_rest()
+	if Input.is_action_just_pressed(ClientInputActions.PRONE):
+		_request_prone()
 	if _network == null or _state == null or _state.local_player_id.is_empty():
 		return
 	var sample: Vector2 = Vector2(
@@ -180,6 +188,14 @@ func _bind_network() -> void:
 			_survival_state.event_received.connect(_on_survival_event)
 		if not _survival_module.rest_result.is_connected(_on_rest_result):
 			_survival_module.rest_result.connect(_on_rest_result)
+	_posture_module = _network.get_module(PostureNetModule.MODULE_NAME) as PostureNetModule
+	if _posture_module != null:
+		_posture_state = _posture_module.client_state
+		# A posture changes what the capsules and the HUD show, like survival.
+		if not _posture_state.changed.is_connected(_on_survival_state_changed):
+			_posture_state.changed.connect(_on_survival_state_changed)
+		if not _posture_module.posture_result.is_connected(_on_posture_result):
+			_posture_module.posture_result.connect(_on_posture_result)
 	_combat_module = _network.get_module(CombatNetModule.MODULE_NAME) as CombatNetModule
 	if _combat_module != null:
 		if not _combat_module.melee_result.is_connected(_on_melee_result):
@@ -257,6 +273,11 @@ func _on_rest_result(_request_id: int, ok: bool, reason: String) -> void:
 	_show_consume_text(ClientPresentationFormatter.format_rest_result(ok, reason))
 
 
+## The answer to a posture request is shown where the use results are shown.
+func _on_posture_result(_request_id: int, ok: bool, reason: String) -> void:
+	_show_consume_text(ClientPresentationFormatter.format_posture_result(ok, reason))
+
+
 ## A survival event that deserves a notice (P2-T10: why the local player
 ## woke) is shown where the use results are shown.
 func _on_survival_event(event: Dictionary) -> void:
@@ -309,8 +330,12 @@ func _sync_player_visuals() -> void:
 		var alive: bool = _survival_state == null or not _survival_state.has_player(player_id) or _survival_state.is_alive(player_id)
 		# Lying down to rest is visible on every client (P2-T8): the capsule
 		# lies on the ground like a dead one but keeps its living colour.
-		var resting: bool = _survival_state != null and _survival_state.is_resting(player_id)
+		var posture: PlayerPosture.Kind = _posture_state.posture_of(player_id) if _posture_state != null else PlayerPosture.Kind.STANDING
+		var resting: bool = (_survival_state != null and _survival_state.is_resting(player_id)) or (alive and posture == PlayerPosture.Kind.RESTING)
 		var lying: bool = ClientPresentationFormatter.player_is_lying(alive, resting)
+		# Lying prone is visible on every client too (P2-T11): the capsule
+		# leans forward, so it is told apart from a sleeper on its back.
+		var prone: bool = ClientPresentationFormatter.player_is_prone(alive, resting, posture)
 		var is_local: bool = player_id == _state.local_player_id
 		# Name and appearance (P2-T9): the top colour is the capsule colour,
 		# height and body type its size. Without a character row the usual
@@ -339,10 +364,12 @@ func _sync_player_visuals() -> void:
 		var height: float = mesh.height
 		visual.position = entry.get("position", Vector3.ZERO) as Vector3
 		visual.rotation = Vector3(0.0, float(entry.get("yaw", 0.0)), 0.0)
-		body.position = Vector3.UP * (radius if lying else height * 0.5)
-		body.rotation = Vector3(ClientPresentationFormatter.player_tilt_rad(alive, resting, _presentation), 0.0, 0.0)
+		var tilt: float = ClientPresentationFormatter.player_pose_tilt_rad(alive, resting, prone, _presentation)
+		var center_height: float = radius if lying else ClientPresentationFormatter.player_body_center_height(radius, height, tilt)
+		body.position = Vector3.UP * center_height
+		body.rotation = Vector3(tilt, 0.0, 0.0)
 		# The name stays upright above whatever the capsule does.
-		tag.position = Vector3.UP * ((radius * 2.0 if lying else height) + _presentation.name_tag_margin_m)
+		tag.position = Vector3.UP * ((radius * 2.0 if lying else (center_height * 2.0 if prone else height)) + _presentation.name_tag_margin_m)
 
 
 ## A player's placeholder: a root that follows position and facing, the
@@ -408,11 +435,13 @@ func _refresh_survival_hud() -> void:
 		"character_generation": _survival_state.character_generation(),
 		"character_name": _character_state.character_name(_survival_state.local_player_id) if _character_state != null else "",
 		"resting": _survival_state.is_resting(_survival_state.local_player_id),
+		"posture": PlayerPosture.name_of(_local_posture()),
 	}
 	var lines: PackedStringArray = ClientPresentationFormatter.build_survival_lines(vitals, _presentation)
 	var carried: Array[Dictionary] = _state.inventory if _state != null else ([] as Array[Dictionary])
 	lines.append_array(ClientPresentationFormatter.build_treatment_lines(vitals, carried, _item_catalog, _presentation))
 	lines.append_array(ClientPresentationFormatter.build_rest_lines(vitals, _presentation))
+	lines.append_array(ClientPresentationFormatter.build_posture_lines(vitals, _presentation))
 	_survival_label.text = "\n".join(lines)
 	_survival_label.visible = true
 
@@ -524,6 +553,32 @@ func _request_rest() -> void:
 	if not _rest_policy.should_send(connected, _now_sec()):
 		return
 	_survival_module.request_rest(not _survival_state.is_resting(_state.local_player_id))
+
+
+## Prone key (P2-T11): asks the server to lie prone, or to stand up when the
+## mirror says the local player is prone. Only the wanted posture is sent;
+## the server decides (and wakes a sleeper that wants to lie prone).
+func _request_prone() -> void:
+	var connected: bool = (
+		_posture_module != null
+		and _network != null
+		and _network.is_client()
+		and _state != null
+		and not _state.local_player_id.is_empty()
+	)
+	if not _posture_policy.should_send(connected, _now_sec()):
+		return
+	_posture_module.request_posture(PlayerPosture.Kind.STANDING if _local_posture() == PlayerPosture.Kind.PRONE else PlayerPosture.Kind.PRONE)
+
+
+## Posture of the local player as the mirrors know it: asleep when either
+## mirror says so, otherwise what the posture mirror says.
+func _local_posture() -> PlayerPosture.Kind:
+	if _state == null or _state.local_player_id.is_empty():
+		return PlayerPosture.Kind.STANDING
+	if _survival_state != null and _survival_state.is_resting(_state.local_player_id):
+		return PlayerPosture.Kind.RESTING
+	return _posture_state.posture_of(_state.local_player_id) if _posture_state != null else PlayerPosture.Kind.STANDING
 
 
 # ------------------------------------------------------------ character creation (P2-T9)

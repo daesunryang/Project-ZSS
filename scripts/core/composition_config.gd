@@ -32,6 +32,10 @@ var inventory_net: InventoryNetSettings
 ## module (servers and clients) and the creation screen.
 var character: CharacterSettings
 var appearance: AppearanceCatalog
+## P2-T11 (posture and stealth, docs/09 §14.26): the server rules and the
+## network module (request rate; servers and clients).
+var posture: PostureSettings
+var posture_net: PostureNetSettings
 ## P2-T9: true = a player must create its character (name and appearance)
 ## before it is in the world, and again after every death. False (the
 ## default of a composition built directly: tests, tools) = ServerWorld.join()
@@ -60,6 +64,8 @@ static func from_defaults() -> CompositionConfig:
 	config.inventory_net = InventoryNetSettings.load_or_default()
 	config.character = CharacterSettings.load_or_default()
 	config.appearance = AppearanceCatalog.load_directory()
+	config.posture = PostureSettings.load_or_default()
+	config.posture_net = PostureNetSettings.load_or_default()
 	return config
 
 
@@ -84,6 +90,9 @@ func validate() -> PackedStringArray:
 	if character == null or appearance == null:
 		errors.append("composition config is incomplete (character)")
 		return errors
+	if posture == null or posture_net == null:
+		errors.append("composition config is incomplete (posture)")
+		return errors
 	errors.append_array(gameplay.validate())
 	errors.append_array(clock.validate())
 	errors.append_array(dev_seed.validate())
@@ -100,4 +109,6 @@ func validate() -> PackedStringArray:
 	errors.append_array(inventory_net.validate())
 	errors.append_array(character.validate())
 	errors.append_array(appearance.validate())
+	errors.append_array(posture.validate())
+	errors.append_array(posture_net.validate())
 	return errors

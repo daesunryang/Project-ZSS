@@ -22,6 +22,11 @@ extends ServerSystem
 ##   - teleports: a position change faster than `teleport_speed_mps`
 ##     (respawn, admin move); the stride restarts
 ##   - footstep_loudness == 0 or no noise system registered
+## Posture (P2-T11, docs/09 §14.26): the stride and the loudness of a
+## player's footsteps are multiplied by the world's factors for that player
+## (ServerWorld.player_footstep_stride_multiplier / _loudness_multiplier;
+## the posture system makes a prone player quieter). This system knows no
+## postures.
 ## A player is first seen in step(), so the position change between joining
 ## and the first tick is never a footstep.
 ##
@@ -83,15 +88,18 @@ func step(world: ServerWorld, action_delta: float, _world_delta: float) -> void:
 		_last_position[player_id] = player.position
 		if action_delta <= 0.0:
 			continue
-		_advance_stride(noise, player, from, action_delta)
+		_advance_stride(world, noise, player, from, action_delta)
 	total_footstep_count += last_footstep_count
 
 
 # ------------------------------------------------------------ internals
 
 ## Adds this tick's movement to the player's stride and emits the footsteps
-## it completes.
-func _advance_stride(noise: NoiseService, player: PlayerState, from: Vector3, action_delta: float) -> void:
+## it completes. The stride and the loudness are the configured ones times
+## what the world's systems say about this player (P2-T11: a prone player
+## crawls quietly; ServerWorld.player_footstep_*_multiplier). A loudness
+## factor of 0 makes the player silent.
+func _advance_stride(world: ServerWorld, noise: NoiseService, player: PlayerState, from: Vector3, action_delta: float) -> void:
 	var player_id: String = player.player_id
 	var moved: float = FootstepRules.flat_distance(from, player.position)
 	if FootstepRules.is_teleport(moved, action_delta, _settings.teleport_speed_mps):
@@ -99,10 +107,16 @@ func _advance_stride(noise: NoiseService, player: PlayerState, from: Vector3, ac
 		return
 	if not FootstepRules.is_walking(moved, action_delta, _settings.min_speed_mps):
 		return
+	var stride_m: float = _settings.stride_length_m * world.player_footstep_stride_multiplier(player_id)
+	var loudness: float = _settings.footstep_loudness * world.player_footstep_loudness_multiplier(player_id)
+	if stride_m <= 0.0:
+		return
 	var carried: float = _carried_m[player_id]
-	_carried_m[player_id] = FootstepRules.carried_after(carried, moved, _settings.stride_length_m)
-	for position: Vector3 in FootstepRules.footstep_positions(from, player.position, carried, _settings.stride_length_m, _settings.max_footsteps_per_tick):
-		var emitted: ActionResult = noise.emit(player_id, position, _settings.footstep_loudness, _settings.footstep_frequency_profile)
+	_carried_m[player_id] = FootstepRules.carried_after(carried, moved, stride_m)
+	if loudness <= 0.0:
+		return
+	for position: Vector3 in FootstepRules.footstep_positions(from, player.position, carried, stride_m, _settings.max_footsteps_per_tick):
+		var emitted: ActionResult = noise.emit(player_id, position, loudness, _settings.footstep_frequency_profile)
 		if emitted.ok:
 			last_footstep_count += 1
 		else:

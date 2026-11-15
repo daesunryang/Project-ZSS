@@ -43,7 +43,11 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    the owner event "player_rest_ended" may carry the causes "low_health",
 ##    "thirst", "hunger" and "infection" (a client of protocol 7 drops such an
 ##    event), and the rest result may say "cannot_rest_<danger>". No RPC or
-##    message format changed in P2-T10.
+##    message format changed in P2-T10. P2-T11 (prone and stealth): new
+##    module PostureNet with the wanted-posture intent and its result
+##    (_rpc_request_posture, _rpc_posture_result), posture rows to every
+##    peer (_rpc_posture_rows) and a join fragment; the melee result may say
+##    "player_prone". The rest RPCs of SurvivalNet are unchanged.
 const PROTOCOL_VERSION: int = 8
 
 const _VERSION_SETTING: String = "application/config/version"

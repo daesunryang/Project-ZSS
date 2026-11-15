@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="PostureNetSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/services/multiplayer/posture_net_settings.gd" id="1_posture_net"]
+
+[resource]
+script = ExtResource("1_posture_net")
+posture_intent_rate_per_sec = 4.0
+posture_intent_burst = 4
+max_player_id_length = 128

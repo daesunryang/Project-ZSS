@@ -385,6 +385,57 @@ func player_action_block_reason(player_id: String) -> String:
 	return ""
 
 
+## "" when every system lets the player make an attack (P2-T11), otherwise a
+## reason code: first whatever blocks every action
+## (player_action_block_reason: "player_dead", "player_resting"), then what
+## blocks attacks only (ServerSystem.player_attack_block_reason:
+## "player_prone").
+func player_attack_block_reason(player_id: String) -> String:
+	var blocked: String = player_action_block_reason(player_id)
+	if not blocked.is_empty():
+		return blocked
+	for system: ServerSystem in _system_order:
+		var reason: String = system.player_attack_block_reason(player_id)
+		if not reason.is_empty():
+			return reason
+	return ""
+
+
+## How well the player can be seen (P2-T11): the product of every system's
+## visibility factor, clamped to [0, 1]. An invalid factor (NaN / inf /
+## negative) is logged and ignored, so a broken system never hides anybody.
+func player_visibility_multiplier(player_id: String) -> float:
+	var product: float = 1.0
+	for system: ServerSystem in _system_order:
+		product *= _valid_factor(system.player_visibility_multiplier(player_id), system, player_id, "player_visibility_multiplier")
+	return clampf(product, 0.0, 1.0)
+
+
+## Product of every system's footstep loudness factor (>= 0; P2-T11).
+func player_footstep_loudness_multiplier(player_id: String) -> float:
+	var product: float = 1.0
+	for system: ServerSystem in _system_order:
+		product *= _valid_factor(system.player_footstep_loudness_multiplier(player_id), system, player_id, "player_footstep_loudness_multiplier")
+	return product
+
+
+## Product of every system's footstep stride factor (>= 0; P2-T11).
+func player_footstep_stride_multiplier(player_id: String) -> float:
+	var product: float = 1.0
+	for system: ServerSystem in _system_order:
+		product *= _valid_factor(system.player_footstep_stride_multiplier(player_id), system, player_id, "player_footstep_stride_multiplier")
+	return product
+
+
+## `factor` when it is a usable multiplier (finite, >= 0), otherwise 1.0
+## (no effect) and an error log naming the system.
+func _valid_factor(factor: float, system: ServerSystem, player_id: String, operation: String) -> float:
+	if is_finite(factor) and factor >= 0.0:
+		return factor
+	GameLogger.error("world", "invalid player factor ignored", {"player_id": player_id, "system": system.get_system_id(), "operation": operation})
+	return 1.0
+
+
 ## Pickup by an online player, using the server-known position (the client
 ## never supplies a position). Returns the InventoryService result, or the
 ## reason a system blocks the player from acting (a dead character cannot
