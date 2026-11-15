@@ -181,8 +181,24 @@ func step_movement(delta: float, now_msec: int, input_timeout_msec: int) -> void
 		var input: Dictionary = _move_inputs[player_id]
 		if now_msec - int(input["received_msec"]) > input_timeout_msec:
 			continue
+		var multiplier: float = player_movement_multiplier(player_id)
+		if multiplier <= 0.0:
+			continue
 		var state: PlayerState = _players[player_id]
-		state.position = MovementRules.step(state.position, input["direction"], gameplay.move_speed_mps, delta, gameplay.world_half_extent_m)
+		state.position = MovementRules.step(state.position, input["direction"], gameplay.move_speed_mps * multiplier, delta, gameplay.world_half_extent_m)
+
+
+## Product of every system's movement factor for this player, clamped to
+## [0, 1]. Invalid values (NaN/inf) stop the player rather than speed it up.
+func player_movement_multiplier(player_id: String) -> float:
+	var product: float = 1.0
+	for system: ServerSystem in _system_order:
+		var factor: float = system.player_movement_multiplier(player_id)
+		if not is_finite(factor):
+			GameLogger.error("world", "invalid movement multiplier", {"player_id": player_id, "system": system.get_system_id(), "operation": "player_movement_multiplier"})
+			return 0.0
+		product *= factor
+	return clampf(product, 0.0, 1.0)
 
 
 ## Pickup by an online player, using the server-known position (the client

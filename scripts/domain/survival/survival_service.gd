@@ -268,6 +268,11 @@ func apply_infection_treatment(player_id: String, source_id: String) -> ActionRe
 
 # ------------------------------------------------------------ ServerSystem
 
+## Server movement factor (ServerWorld.step_movement): wounds, needs, death.
+func player_movement_multiplier(player_id: String) -> float:
+	return movement_speed_multiplier(player_id)
+
+
 func on_player_online(_world: ServerWorld, player_id: String) -> void:
 	_online[player_id] = true
 	if not _vitals.has(player_id):

@@ -36,6 +36,13 @@ func on_player_offline(_world: ServerWorld, _player_id: String) -> void:
 	return
 
 
+## Factor applied to this player's server movement speed (1.0 = no effect,
+## 0.0 = cannot move). ServerWorld multiplies the factors of all systems and
+## clamps the product to [0, 1], so a system can only slow a player down.
+func player_movement_multiplier(_player_id: String) -> float:
+	return 1.0
+
+
 ## World-level save document ({} = nothing to save).
 func to_world_document() -> Dictionary:
 	return {}
