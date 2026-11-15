@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="PlayerNoiseSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/player_noise/player_noise_settings.gd" id="1_player_noise"]
+
+[resource]
+script = ExtResource("1_player_noise")
+stride_length_m = 2.0
+footstep_loudness = 8.0
+footstep_frequency_profile = "broadband"
+min_speed_mps = 0.5
+teleport_speed_mps = 15.0
+max_footsteps_per_tick = 4

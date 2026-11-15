@@ -12,8 +12,9 @@ var clock: WorldClockSettings
 var dev_seed: DevWorldSeed
 ## Phase 2-B (survival).
 var survival: SurvivalSettings
-## Phase 2-A (noise, zombies).
+## Phase 2-A (noise, player movement noise, zombies).
 var noise: NoiseSettings
+var player_noise: PlayerNoiseSettings
 var zombie: ZombieSettings
 ## Phase 2-C (melee combat).
 var combat: CombatSettings
@@ -29,6 +30,7 @@ static func from_defaults() -> CompositionConfig:
 	config.dev_seed = DevWorldSeed.load_or_default()
 	config.survival = SurvivalSettings.load_or_default()
 	config.noise = NoiseSettings.load_or_default()
+	config.player_noise = PlayerNoiseSettings.load_or_default()
 	config.zombie = ZombieSettings.load_or_default()
 	config.combat = CombatSettings.load_or_default()
 	config.melee_weapons = MeleeWeaponCatalog.load_directory()
@@ -44,11 +46,16 @@ func validate() -> PackedStringArray:
 	if combat == null or melee_weapons == null:
 		errors.append("composition config is incomplete (combat)")
 		return errors
+	if player_noise == null:
+		errors.append("composition config is incomplete (player_noise)")
+		return errors
 	errors.append_array(gameplay.validate())
 	errors.append_array(clock.validate())
 	errors.append_array(dev_seed.validate())
 	errors.append_array(survival.validate())
 	errors.append_array(noise.validate())
+	errors.append_array(player_noise.validate())
+	errors.append_array(player_noise.validate_against(noise))
 	errors.append_array(zombie.validate())
 	errors.append_array(combat.validate())
 	errors.append_array(melee_weapons.validate_against(combat.unarmed_weapon_id, catalog, noise))

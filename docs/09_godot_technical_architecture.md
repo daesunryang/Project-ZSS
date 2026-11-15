@@ -272,7 +272,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 - 세기 모델과 수치는 docs/15 P2-20. 시간 감쇠·만료는 월드 시간 기준이라 월드 시계가 멈춘 동안(접속자 0명)에는 줄지도 사라지지도 않는다. 만료된 소음은 정리 전이라도 조회에 나오지 않는다.
 - 공간 조회: 소음은 XZ 평면 해시 격자(기본 16m)의 한 칸에 들어간다. 조회는 듣는 쪽 칸에서 "지금 가장 큰 소음이 들릴 수 있는 거리"만큼의 이웃 칸만 훑고, 그 후보 목록을 (칸, 범위)별로 캐시한다. 같은 칸에 있는 다른 청취자는 소음이 추가·삭제되기 전까지 캐시를 다시 쓴다(무리 지은 좀비 N마리가 칸 훑기 1번을 공유, docs/02 §6.3). 점유 칸 수가 이웃 칸 수보다 적으면 점유 칸만 훑는다. `query_audible_brute_force`는 격자 없이 전부 검사하는 기준 구현이며 테스트가 두 결과가 같은지 비교한다.
 - 저장하지 않는다(`to_world_document()`는 빈 문서). 이유와 ID 형식은 docs/15 P2-23. 다른 시스템이 저장 문서에 `noise_id`를 넣으면 안 되고, 필요하면 위치·시간을 복사해 저장한다.
-- 소음을 내는 호출자: 근접 공격(`CombatService`, §14.10)이 휘두를 때마다 `emit`을 호출한다.
+- 소음을 내는 호출자: 근접 공격(`CombatService`, §14.10)이 휘두를 때마다, 플레이어 이동(`PlayerNoiseService`, §14.11)이 보폭마다 `emit`을 호출한다.
 
 ### 14.9 좀비 계약(P2-A2, system id `zombie`)
 
@@ -309,7 +309,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 
 ### 14.10 근접 전투 계약(P2-C1, system id `combat`)
 
-`scripts/domain/combat/`: `MeleeWeaponDefinition`(무기 한 종류의 정적 정의 Resource), `MeleeWeaponCatalog`(무기 ID·아이템 ID로 찾는 읽기 전용 목록, `resources/definitions/melee_weapons/*.tres`를 읽음), `MeleeHitRules`(노드 없는 판정 규칙: 호 안 여부, 대상 선택, 피해 계산), `CombatSettings`(`data/tuning/combat_settings.tres`), `CombatService`(ServerSystem). 네트워크 코드는 없다. 등록 순서는 `survival` → `noise` → `zombie` → `combat`이며 전투는 앞의 셋을 `world.get_system`으로 얻어 쓴다. `CompositionConfig`에 `combat`, `melee_weapons` 필드가 추가됐고 `validate()`가 무기 목록을 아이템 목록·소음 설정과 대조한다. 임시 가정은 docs/15 P2-40~P2-47.
+`scripts/domain/combat/`: `MeleeWeaponDefinition`(무기 한 종류의 정적 정의 Resource), `MeleeWeaponCatalog`(무기 ID·아이템 ID로 찾는 읽기 전용 목록, `resources/definitions/melee_weapons/*.tres`를 읽음), `MeleeHitRules`(노드 없는 판정 규칙: 호 안 여부, 대상 선택, 피해 계산), `CombatSettings`(`data/tuning/combat_settings.tres`), `CombatService`(ServerSystem). 네트워크 코드는 없다. 등록 순서는 `survival` → `noise` → `player_noise`(§14.11) → `zombie` → `combat`이며 전투는 `survival`·`noise`·`zombie`를 `world.get_system`으로 얻어 쓴다. `CompositionConfig`에 `combat`, `melee_weapons` 필드가 추가됐고 `validate()`가 무기 목록을 아이템 목록·소음 설정과 대조한다. 임시 가정은 docs/15 P2-40~P2-47.
 
 클라이언트가 보낼 수 있는 것은 "누가(`player_id`, 네트워크 계층이 peer에서 구함) 어느 방향으로(`aim_yaw`) 휘둘렀다"뿐이다. 위치·대상·무기·피해·명중 여부·사망은 모두 서버 상태에서 정한다(docs/02 §5.2).
 
@@ -361,3 +361,27 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 - 결정론: 같은 seed와 같은 요청 순서면 이벤트가 같고, 저장→재생성→로드 뒤에도 피해 굴림이 이어진다(테스트로 확인). 전투는 `step`에서 하는 일이 없어 좀비와 달리 저장을 사이에 두어도 결과가 달라지지 않는다.
 - 무기 정의 데이터: `unarmed`(맨손), `dev_melee_pipe`(둔기, 아이템 `dev_melee_pipe`가 인벤토리에 있을 때). 개발용 파이프 아이템은 정의만 있고 월드에는 놓지 않았다(docs/15 P2-47).
 - 테스트: `tests/unit/combat_rules_test.gd`(순수 규칙·정의·설정 검증), `tests/unit/combat_service_test.gd`(사거리·호, 가장 가까운 대상, 쿨다운, 스태미나, 사망·오프라인·없는 플레이어, 잘못된 aim_yaw, 팔 부상 피해 감소, 연속 공격으로 좀비 사망, 인벤토리 무기 규칙, 공격 소음에 다른 좀비가 조사 상태로, 이벤트 큐 상한, 같은 seed 재현, 저장→로드 후 RNG 이어짐, 손상 문서 거부).
+
+### 14.11 플레이어 이동 소음 계약(P2-A3, system id `player_noise`)
+
+`scripts/domain/player_noise/`: `FootstepRules`(노드 없는 규칙: 걷는 중인지, 순간이동인지, 한 틱의 이동에서 발소리가 나는 지점), `PlayerNoiseSettings`(`data/tuning/player_noise_settings.tres`), `PlayerNoiseService`(ServerSystem). 소음 시스템(`scripts/domain/noise/`)과 소유를 나누려고 별도 디렉터리에 둔다. 네트워크 코드도, 클라이언트 입력도 없다: 유일한 근거는 서버가 플레이어를 얼마나 움직였는지다. `noise` 다음, `zombie` 앞에 등록해 발소리가 난 틱에 좀비가 들을 수 있게 한다. `CompositionConfig`에 `player_noise` 필드가 추가됐고 `validate()`가 세기·주파수 이름을 소음 설정과 대조한다. 임시 가정은 docs/15 P2-48~P2-50.
+
+동작: 매 서버 틱(`NetworkService`가 `step_movement` 다음에 `step_systems`를 부르므로 그 틱의 이동이 반영된 뒤), 접속 중이고 살아 있는 플레이어마다 직전 틱 위치와 지금 위치의 XZ 거리를 그 플레이어의 "마지막 발소리 이후 걸은 거리"에 더한다. `stride_length_m`(2m)를 채울 때마다 `NoiseService.emit(player_id, 경로 위의 지점, footstep_loudness, footstep_frequency_profile)`을 호출한다. 한 틱에 여러 걸음이 나오면(긴 틱) 경로를 따라 나눠 놓으므로 틱 길이와 무관하게 이동 거리에 비례한다. 틱당 플레이어 한 명의 발소리는 `max_footsteps_per_tick`개까지다.
+
+발소리가 나지 않는 경우:
+
+| 경우 | 처리 |
+|---|---|
+| 정지, 또는 `min_speed_mps`(0.5m/s)보다 느린 이동 | 소음 없음, 걸은 거리에도 더하지 않는다 |
+| 사망한 플레이어 | 소음 없음. 걸은 거리 기록을 지우므로 리스폰 뒤에는 새로 센다 |
+| 오프라인 플레이어 | 추적하지 않는다(`on_player_offline`에서 기록 삭제). 다시 접속한 뒤 첫 틱의 위치가 기준점이 된다 |
+| 월드 시계 정지(`world_delta` = 0) | 소음 없음. 정지 중에 움직인 거리는 나중에도 세지 않는다 |
+| 순간이동: `teleport_speed_mps`(15m/s)보다 빠른 위치 변화(리스폰, 관리자 이동 등) | 소음 없음, 걸은 거리를 0으로 되돌린다 |
+| `footstep_loudness` = 0, 또는 소음 시스템 미등록 | 전체 비활성 |
+
+- 속도는 `real_delta`로 계산한다(`ServerWorld.step_movement`가 실제 초 단위로 이동을 적분하기 때문). 소음의 시각·감쇠는 소음 시스템대로 월드 시간이다.
+- 플레이어를 처음 보는 것은 `step`이다. 그래서 접속 직후부터 첫 틱까지의 위치 변화는 발소리가 되지 않는다(첫 틱의 이동 최대 한 번이 빠진다).
+- 한 틱의 발소리는 플레이어 ID 순서로 낸다(결정론). 난수는 쓰지 않는다.
+- 저장하지 않는다(`to_world_document()`·`to_player_fragment()` 모두 빈 문서). 상태가 "보폭 하나보다 짧은 걸은 거리"뿐이고, 재시작 뒤에는 모두 오프라인이라 어차피 0에서 시작한다(docs/15 P2-50).
+- 진단: `last_footstep_count`(이번 틱), `total_footstep_count`.
+- 테스트: `tests/unit/player_noise_test.gd`(순수 규칙, 이동 거리에 비례한 발소리 수와 위치, 긴 틱, 정지·저속·사망·리스폰·오프라인·순간이동·시계 정지 무소음, 소음 만료, 저장 없음, 등 뒤를 걷는 플레이어를 좀비가 소리로 조사하는 통합 시나리오와 발소리를 끈 대조 시나리오).
