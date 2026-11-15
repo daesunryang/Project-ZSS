@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="BuildingSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/building/building_settings.gd" id="1_building"]
+
+[resource]
+script = ExtResource("1_building")
+grid_module_m = 1.0
+placement_range_m = 4.0
+demolish_range_m = 4.0
+door_interact_range_m = 2.5
+instant_completion = true
+door_starts_open = false
+blocker_clearance_m = 0.3
+max_structures_per_cell = 4000
+default_material_quality = 1.0
+collision_skin_m = 0.05
+sliding_mover_kinds = PackedStringArray("player")
+max_pending_events = 4096

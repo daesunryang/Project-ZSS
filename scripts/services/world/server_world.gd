@@ -91,6 +91,9 @@ var _move_inputs: Dictionary[String, Dictionary] = {}
 var _systems: Dictionary[String, ServerSystem] = {}
 ## Registration order (= step order and save order; deterministic).
 var _system_order: Array[ServerSystem] = []
+## The systems that can stop a mover (ServerSystem.constrains_movement), in
+## registration order (P3-4a). Empty in a world without structures.
+var _movement_constraints: Array[ServerSystem] = []
 
 
 func _init(id: String, gameplay_settings: GameplaySettings, catalog: ItemCatalog) -> void:
@@ -133,6 +136,8 @@ func register_system(system: ServerSystem) -> Error:
 	_system_order.append(system)
 	if system is WorldCellService:
 		_cells = system as WorldCellService
+	if system.constrains_movement():
+		_movement_constraints.append(system)
 	system.on_registered(self)
 	return OK
 
@@ -380,7 +385,22 @@ func step_movement(delta: float, now_msec: int, input_timeout_msec: int) -> void
 		if multiplier <= 0.0:
 			continue
 		var state: PlayerState = _players[player_id]
-		state.position = MovementRules.step(state.position, input["direction"], gameplay.move_speed_mps * multiplier, delta, gameplay.world_half_extent_m)
+		var next: Vector3 = MovementRules.step(state.position, input["direction"], gameplay.move_speed_mps * multiplier, delta, gameplay.world_half_extent_m)
+		# P3-4a: walls and closed doors stop the step (or let it slide).
+		state.position = resolve_movement(ENTITY_KIND_PLAYER, state.position, next)
+
+
+## Where a straight step of a mover from `from` to `to` ends (P3-4a, docs/09
+## §15.4): `to` unless a system has something in the way (walls, closed
+## doors; ServerSystem.resolve_movement_step). `mover_kind` is the entity
+## kind of the mover (ENTITY_KIND_PLAYER, "zombie"). Every system that moves
+## an entity through the world asks this for each step and so needs to know
+## nothing about structures. Each constraining system gets the answer of the
+## one before it as its target. A world without such a system answers `to`.
+func resolve_movement(mover_kind: String, from: Vector3, to: Vector3) -> Vector3:
+	for system: ServerSystem in _movement_constraints:
+		to = system.resolve_movement_step(mover_kind, from, to)
+	return to
 
 
 ## Product of every system's movement factor for this player, clamped to

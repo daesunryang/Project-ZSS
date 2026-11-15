@@ -148,6 +148,10 @@ var skipped_player_zombie_count: int = 0
 ## Steps refused because the zombie would have entered a cell that is not
 ## in memory (P3-1). Since the server started; not saved.
 var blocked_move_count: int = 0
+## Steps that ended short of where the zombie was heading because something
+## stood in the way (P3-4a: ServerWorld.resolve_movement). Since the server
+## started; not saved.
+var obstructed_move_count: int = 0
 
 var _settings: ZombieSettings
 var _ids: EntityIdGenerator
@@ -836,8 +840,9 @@ func _set_state(context: _Context, zombie: ZombieState, next: ZombieState.State,
 
 # ------------------------------------------------------------ movement
 
-## Straight-line movement towards the current goal (no navigation mesh or
-## obstacles yet, docs/15 P2-26). Runs every tick for living zombies.
+## Straight-line movement towards the current goal (no navigation mesh yet,
+## docs/15 P2-26; obstacles only stop the step, P3-4a). Runs every tick for
+## living zombies.
 func _move(world: ServerWorld, zombie: ZombieState, action_delta: float) -> void:
 	var goal: Vector3
 	var speed: float
@@ -876,7 +881,15 @@ func _move(world: ServerWorld, zombie: ZombieState, action_delta: float) -> void
 	var direction: Vector3 = offset / distance
 	var travel: float = minf(speed * action_delta, distance - stop_distance)
 	var previous: Vector3 = zombie.position
-	zombie.position = world.clamp_to_world(zombie.position + direction * travel)
+	var wanted: Vector3 = world.clamp_to_world(zombie.position + direction * travel)
+	# P3-4a: a wall or a closed door stops the step. No way around it is
+	# looked for yet (P3-6); a wandering or searching zombie gives the
+	# waypoint up, so it does not push against the obstacle for ever.
+	zombie.position = world.resolve_movement(ENTITY_KIND_ZOMBIE, previous, wanted)
+	if zombie.position != wanted:
+		obstructed_move_count += 1
+		if zombie.state == ZombieState.State.IDLE or zombie.state == ZombieState.State.SEARCH:
+			zombie.has_move_target = false
 	zombie.yaw = ZombiePerception.yaw_towards(direction, zombie.yaw)
 	var cell: Vector2i = world.cell_coords_at(zombie.position)
 	if cell != _zombie_cells.get(zombie.zombie_id, cell):

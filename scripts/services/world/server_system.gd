@@ -62,6 +62,27 @@ func player_movement_multiplier(_player_id: String) -> float:
 	return 1.0
 
 
+## Movement obstacles (P3-4a, docs/09 §15.4). A system that can stop a mover
+## on its way (BuildingService: walls, closed doors) answers true here and
+## implements resolve_movement_step(). Asked once, when the system is
+## registered: only such systems are asked about steps, so a world without
+## one moves exactly as before.
+func constrains_movement() -> bool:
+	return false
+
+
+## Where a straight step of a mover from `from` to `to` ends: `to` when
+## nothing of this system is in the way, otherwise a point the mover can
+## reach (never beyond `to`, never behind `from`). `mover_kind` is the
+## entity kind of the mover ("player", "zombie"); the system decides what a
+## kind may do (slide along an obstacle or just stop). Whoever moves an
+## entity asks ServerWorld.resolve_movement() and needs to know nothing about
+## what stands in the world. Must be cheap: it runs for every mover every
+## tick.
+func resolve_movement_step(_mover_kind: String, _from: Vector3, to: Vector3) -> Vector3:
+	return to
+
+
 ## "" when this system lets the player act (pick up, put down, use an item,
 ## attack), otherwise a stable reason code such as "player_dead" or
 ## "player_resting". ServerWorld asks every system before a pickup or a drop

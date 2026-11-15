@@ -54,6 +54,11 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# Survival only announces deaths; the zombie system decides. The world
 	# owns both systems, and the connection holds no reference to either.
 	survival.player_died.connect(zombies.on_player_died)
+	# P3-4a (docs/09 §15.4): grid structures. After the zombies, whose
+	# positions a placement looks at. It acts on requests, not in step(), and
+	# constrains the movement of players and zombies.
+	if world.register_system(BuildingService.new(config.building, config.structures, world.ids, world.registry, world.clock)) != OK:
+		return null
 	# Phase 2-C: melee combat (C1). After survival, noise and zombies, which
 	# it uses. It acts on requests (request_melee_attack), not in step().
 	if world.register_system(CombatService.new(config.combat, config.melee_weapons, world.clock)) != OK:
@@ -85,6 +90,13 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	error = service.register_module(world_cell_net)
 	if error != OK:
 		world_cell_net.free()
+		return error
+	# P3-4a (docs/09 §15.4): placement / demolish / door intents and
+	# replication of structures.
+	var structure_net: StructureNetModule = StructureNetModule.new(config.structure_net, config.structures)
+	error = service.register_module(structure_net)
+	if error != OK:
+		structure_net.free()
 		return error
 	# Phase 2-N1c: survival owner detail + public observable facts.
 	var survival_net: SurvivalNetModule = SurvivalNetModule.new(config.survival_net, config.survival)

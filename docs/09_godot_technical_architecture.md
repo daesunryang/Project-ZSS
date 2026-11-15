@@ -1976,3 +1976,77 @@ Phase 3(docs/13 §5, §15) 티켓의 계약을 티켓마다 한 절씩 적는다
 **테스트**: `tests/unit/world_cell_grid_test.gd`(좌표·ID·음수·정확한 경계·이웃·전이 표·색인), `world_cell_service_test.gd`(서버 위치 기반 활성화, 전이 순서, 히스테리시스, 미리보기, 로딩 예산, 로딩 실패·저장 실패, 저장소 없음, 떠돌이, 해제→재로딩 동일성), `world_cell_gating_test.gd`(비활성 셀의 좀비는 이동·감지·공격하지 않고 같은 조건의 활성 셀 좀비는 한다, 소음, 경계, 처리량), `world_cell_save_test.gd`(셀 파일, v3→v4, 빈 셀, 백업, 바뀌지 않은 파일), `world_cell_measure_test.gd`(측정값 출력), `tests/integration/world_cell_persistence_test.gd`(저장→재시작→복구, 구버전 저장, 시드 아이템 재생성 없음, 해제 세대의 일관성, 격자 변경, 손상된 셀 파일), `world_cell_net_test.gd`(두 클라이언트 미러의 제거·추가·일치). 아이템 이동과 셀: `tests/unit/item_moves_in_cells_test.gd`(일부 내려놓기의 셀·색인·셀 문서, 합쳐진 줍기의 색인 제거와 ID 은퇴, 일부 내려놓기·합쳐진 줍기 뒤 해제→재로딩의 수량 보존과 ID 유일, 줍기 전의 셀 문서가 돌아와도 합쳐진 수량이 되살아나지 않음, 내려놓기·합쳐진 줍기·완료된 거래 뒤 해제된 셀이 있는 월드 문서 왕복), `tests/integration/item_moves_cell_persistence_test.gd`(같은 흐름의 저장→재시작→복구를 실제 파일로 두 번, 디스크의 world_state와 셀 파일 전체에서 수량 보존·ID 유일·은퇴 ID 없음, 줍기 전 백업 셀 파일로 복구된 재시작).
 
 **P3-2가 알아야 할 것**: (1) 클라이언트별 범위는 `WorldCellNetModule`과 `ZombieNetModule`의 `cell_loaded`/`cell_unloading` 처리와 `NetworkService._build_join_snapshot`·`ZombieNetModule.build_join_fragment`·좀비 스냅샷 전송 세 곳을 "그 접속자의 관심 셀"로 거르면 된다. 관심 셀 계산에는 `WorldCellGrid.cells_within`과 `ServerWorld.cell_index.entities_in_cell`을 쓸 수 있다. (2) 지금은 PRELOADED 셀의 엔티티도 전송된다. (3) 아이템 제거는 아이템마다 메시지 하나다. (4) `InventoryNetModule`과 `NetworkService`에 공개 함수를 두면 이름으로 RPC를 부르는 부분을 없앨 수 있다. (5) 직접 `inventory.spawn_world_item`을 부르는 서버 코드는 여전히 복제되지 않는다(docs/15 P2-119). (6) 클라이언트 쪽 바닥·경계 표시는 서버의 `WorldCellSettings.bounds`와 `world_half_extent_m`이 같은 사각형임을 전제로 하면 된다.
+
+### 15.4 격자 구조물: 바닥·벽·문(P3-4a, docs/00 ADR-024, system id `building`, 모듈 `StructureNet`)
+
+서버·네트워크·클라이언트 미러까지다. 구조물을 화면에 그리는 것과 건축 모드 입력은 P3-4b, 청사진·자재·작업 진행은 P3-5, 길찾기와 시야 차단은 P3-6이다. **새 RPC가 여섯 개 생겼으므로 `PROTOCOL_VERSION`을 올려야 한다**(이 티켓에서는 올리지 않았다: 병합할 때 올린다).
+
+**정의와 설정**
+
+| 구성 요소 | 계약 |
+|---|---|
+| `StructureDefinition` (`resources/definitions/structures/*.tres`) | `definition_id`(snake_case), `display_name`, `placement`(`TILE` 타일을 채움 / `EDGE` 타일의 변에 섬), `blocks_movement`(변 조각만 가능), `is_door`(변 조각만 가능), `max_health`, `build_costs`(`{아이템 정의 ID: 수량}`, P3-4a에서는 기록만). 지금 있는 것: `dev_floor`(타일), `dev_wall`(변, 막음), `dev_door`(변, 막음, 문). 개발용 자리 표시이고 비용은 비어 있다 |
+| `StructureCatalog` | `ItemCatalog`와 같은 모양: `load_directory()`, `add`, `has`, `get_definition`, `definition_ids()`, `validate_against(item_catalog)`(비용에 적힌 아이템이 있어야 한다). 서버 규칙과 클라이언트 미러가 같이 쓴다 |
+| `BuildingSettings` (`data/tuning/building_settings.tres`) | `grid_module_m`(1.0), `placement_range_m`(4.0), `demolish_range_m`(4.0), `door_interact_range_m`(2.5), `instant_completion`(true: 임시 규칙), `door_starts_open`(false), `blocker_clearance_m`(0.3), `max_structures_per_cell`(4000), `default_material_quality`(1.0), `collision_skin_m`(0.05, 모듈의 절반보다 작아야 한다), `sliding_mover_kinds`(`["player"]`), `max_pending_events`(4096). `validate()` |
+| `StructureNetSettings` (`data/tuning/structure_net_settings.tres`) | 의도별 빈도(배치 4/s·버스트 8, 철거 4/s·8, 문 4/s·4), `rows_per_message`(64), `removals_per_message`(128), `max_mirror_structures`(200000), `persist_on_place_and_demolish`(true), `persist_on_door_change`(false) |
+| `CompositionConfig` | 필드 셋이 늘었다: `building`, `structures`, `structure_net`. `validate()`가 셋을 검사한다 |
+
+**격자(`StructureGrid`, 순수 수학, 노드 없음)**
+
+- 타일 `(tx, tz)` = `[tx·m, (tx+1)·m)`. `tile_of(position)`, `tile_center(tile)`.
+- 자리(slot)는 `Vector3i(x, z, layer)`다. `TILE`: 타일 `(x, z)` 자체. `EDGE_LOW_X`: 타일 `(x, z)`의 x가 작은 쪽 변(선분 `x = x·m`, `z ∈ [z·m, (z+1)·m]`). `EDGE_LOW_Z`: z가 작은 쪽 변. 두 타일 사이의 변은 좌표가 큰 타일의 "낮은 쪽 변" 하나로만 표현되므로 변 하나에 자리 하나다.
+- `slot_of(placement, tile, rotation)`: 변 조각은 회전 0 = -Z 변, 1 = +X 변, 2 = +Z 변, 3 = -X 변(`SIDE_DIRECTIONS`). `slot_key(slot)`(정수 키), `slot_anchor(slot)`(타일 중심 또는 변의 중점: 거리 판정의 기준점), `slot_home(slot)`(자리 이름이 된 타일의 중심: 어느 월드 셀에 속하는지 정한다), `edge_ends`, `distance_to_edge`, `is_tile_inside(tile, half_extent)`, `MAX_TILE_COORD`(±1,000,000).
+- `resolve_step(from, to, blocking, skin_m, slide) -> Vector3`: 막는 변 집합을 넘지 못하는 걸음의 끝점. 걸음이 지나는 타일만 따라가며(타일을 하나 넘을 때마다 사전 조회 한 번) 처음 만나는 막힌 변 앞 `skin_m` 지점에서 멈춘다. 이미 그보다 가까우면 제자리다(뒤로 밀지 않는다: 밀면 변 가까이에서 멈춘 걸음이 다음 틱에 튄다). `slide`면 남은 걸음 중 변과 나란한 성분으로 한 번 더 나아간다. 격자 꼭짓점을 정확히 지나는 걸음은 꼭짓점을 도는 두 길이 모두 막혔을 때만 막힌다. 선 위의 점은 좌표가 큰 쪽 타일에 있다. 막는 변이 하나도 없으면 `to`를 그대로 돌려준다. 계산은 64비트로 하고, 32비트로 저장될 끝점을 다시 따라가 확인한다(반올림으로 막힌 변을 넘게 되면 움직이지 않는다).
+
+**런타임 모델(`StructureInstance`)**: docs/04 §4의 필수 필드 그대로다. `structure_id`(`structure_<번호>`, 월드의 `EntityIdGenerator`·`EntityRegistry`, 종류 `structure`), `definition_id`, `owner_shelter_id`(지금은 항상 `""`), `cell_id`, 변환 = `tile`(Vector2i) + `rotation`(0~3), `construction_state`(`blueprint`, `constructing`, `completed`, `damaged`, `destroyed`), `health`, `material_quality`, `inventory_costs`, `connections`(지금은 항상 빈 배열), `last_modified_at`(달력 월드 시간), 그리고 `placed_by`(배치한 플레이어 ID, 서버 규칙이 놓았으면 `""`), `door_open`. `is_standing()` = completed 또는 damaged. `to_dict()`/`from_dict()`(모양만 검사한다. 정의 존재·체력 상한·자리는 서비스가 검사한다).
+
+**`BuildingService`(`scripts/domain/building/building_service.gd`)**: `ServerComposition`이 좀비 뒤, 전투 앞에 등록한다. `step()`은 없다(요청에만 반응한다).
+
+- 플레이어 요청: `try_place(world, player_id, definition_id, tile, rotation)`, `try_demolish(world, player_id, structure_id)`, `try_set_door(world, player_id, structure_id, open)`. 서버 규칙(행위자·사거리 없음): `place_structure(world, definition_id, tile, rotation, placed_by = "")`, `remove_structure(world, structure_id)`, `set_door_open(world, structure_id, open)`.
+- 배치 검사 순서(먼저 걸린 것이 사유, 거부되면 아무것도 바뀌지 않는다): `not_online` → `player_dead`/`player_resting`(`ServerWorld.player_action_block_reason`) → `unknown_structure_definition` → `bad_rotation` → `out_of_bounds`(타일 전체가 플레이 영역 안) → `too_far`(플레이어의 **서버 위치**에서 기준점까지) → `cell_not_loaded` → `slot_occupied` → `blocked_by_entity`(막는 조각의 변에서 `blocker_clearance_m` 안에 살아 있는 플레이어나 살아 있는 좀비) → `structure_limit`. 좌표가 정수 타일이라 "격자에서 벗어난 요청"은 표현할 수 없다(네트워크에서는 정수가 아니면 `bad_type`). 같은 자리의 요청 둘은 서버 처리 순서대로 하나만 통과하고 다른 하나는 `slot_occupied`다(docs/04 §10).
+- 철거: `not_online` → 행동 차단 → `unknown_structure`(메모리에 없는 셀의 구조물 포함) → `not_owner` → `too_far`. 철거된 ID는 은퇴한다(tombstone).
+- 문: `not_online` → 행동 차단 → `unknown_structure` → `not_a_door` → `too_far` → `structure_not_usable`(서 있지 않음) → `door_already_in_state` → `blocked_by_entity`(닫을 때만). 요청은 토글이 아니라 원하는 상태다.
+- 조회: `has_structure`, `get_structure`, `structure_ids`, `structure_count`, `structure_id_at(slot)`, `is_edge_blocked(slot)`, `blocking_edge_count`, `slot_of_structure`, `public_row(structure)`, `rows()`, `rows_in_cell(world, cell_id)`, `structure_ids_in_cell`, `grid`, `drain_events()`.
+- 이벤트(`drain_events`, JSON-safe): `structure_placed`, `structure_changed`(`cause: "door"`), `structure_removed`. 모두 `event_type`, `world_time`, `player_id`(서버 규칙이면 `""`), `cell_id`와 공개 행(`structure_id`, `definition_id`, `x`, `z`, `rotation`, `state`, `door_open`, `health_fraction`)을 가진다. 셀 로딩·해제는 이벤트를 남기지 않는다.
+- 막는 변 집합: 정의가 `blocks_movement`이고 `is_standing()`이며 (문이면) 닫혀 있는 구조물의 변. 청사진은 자리만 차지한다.
+
+**이동 충돌 seam**(티켓 밖의 구조 변경): `ServerSystem`에 훅 둘이 추가됐다.
+
+- `constrains_movement() -> bool`(기본 false): 등록할 때 한 번 묻는다. true인 시스템만 걸음마다 불린다.
+- `resolve_movement_step(mover_kind, from, to) -> Vector3`(기본 `to`): 그 시스템의 장애물 때문에 걸음이 끝나는 곳.
+- `ServerWorld.resolve_movement(mover_kind, from, to) -> Vector3`: 걸음을 막는 시스템들을 등록 순서대로 거친다. 엔티티를 움직이는 쪽은 이것만 부르고 구조물을 모른다. `ServerWorld.step_movement`(플레이어, `ENTITY_KIND_PLAYER`)와 `ZombieService._move`(좀비, `ENTITY_KIND_ZOMBIE`)가 부른다. 걸음을 막는 시스템이 없거나 막는 변이 없으면 결과는 이 티켓 전과 비트 단위로 같다.
+- 좀비: 막힌 걸음은 `obstructed_move_count`(새 진단 값)에 세고 로그를 남기지 않는다. 배회·수색 중이던 좀비는 그 목표를 버린다(다음 목표를 기다린다). 추격·조사 중인 좀비는 벽 앞에 서서 계속 민다(틱당 타일 한두 칸 조회). 좀비의 시야와 근접 공격은 아직 구조물에 막히지 않는다(P3-6).
+
+**월드 셀**(§15.1의 훅 그대로): 구조물은 `ServerWorld.cell_index`에 종류 `structure`로, `slot_home`이 속한 셀 아래에 들어간다(셀 경계 위의 변은 좌표가 큰 쪽 셀: 자리 하나는 항상 셀 하나에 속한다). `to_cell_document`/`restore_cell_document`/`release_cell`을 구현한다. 활성·비활성 훅은 쓰지 않는다(구조물은 시뮬레이션되지 않는다). 메모리에 없는 셀에는 지을 수 없다(`cell_not_loaded`: 그 셀의 점유 상태를 모른다).
+
+- 복구는 먼저 전부 검증한다: 스키마 버전, 각 구조물의 모양, 정의 존재, 체력 ≤ 정의의 최대 체력, 문이 아닌데 열려 있지 않은지, 문서 안의 ID·자리 중복. 하나라도 틀리면 아무것도 바꾸지 않고 오류를 돌려준다(그 셀은 로딩되지 않는다).
+- 셀 문서에서는 이미 메모리에 있는 ID, 은퇴한 ID, 메모리의 다른 구조물이 차지한 자리의 구조물을 건너뛰고 경고를 남긴다(오래된 셀 파일이 복구된 경우). 월드 문서에서는 같은 경우가 오류다.
+- 구조물의 셀은 저장된 `cell_id`가 아니라 자리로 다시 정하므로, 다른 격자로 나뉜 문서도 그대로 읽힌다(`ServerWorld.repartition_from`).
+
+**저장 배치**: 셀 문서 `systems.building = {schema_version: 1, structures: [StructureInstance]}`(docs/14 §3). 셀 문서에 저장되지 않는 구조물(저장소 없는 월드, 메모리 저장소의 메모리에 있는 셀)은 world_state `systems.building`에 같은 모양으로 들어간다. 구조물이 하나도 없으면 두 곳 모두 키 자체가 없다: P3-4a 전의 저장과 같은 모양이고, 그런 저장은 그대로 읽힌다. world_state 스키마(4)와 셀 문서 스키마(1)는 바꾸지 않았다(시스템 문서가 하나 늘었을 뿐이다). 이벤트는 저장하지 않는다.
+
+**네트워크(`StructureNetModule`, 노드 이름 `StructureNet`)**: 채널 0(`CHANNEL_RELIABLE`), reliable ordered. 구조물은 월드 상태이고 추가·변경·제거가 서버 순서대로 도착해야 하기 때문이다.
+
+| 방향 | RPC | 채널/모드 | 내용 |
+|---|---|---|---|
+| C→S | `_rpc_request_place(request_id:int, definition_id:String, x:int, z:int, rotation:int)` | 0 reliable | 배치 의도 |
+| C→S | `_rpc_request_demolish(request_id:int, structure_id:String)` | 0 reliable | 철거 의도 |
+| C→S | `_rpc_request_door(request_id:int, structure_id:String, open:bool)` | 0 reliable | 문을 열어 달라/닫아 달라(원하는 상태) |
+| S→요청자 | `_rpc_structure_result(request_id:int, ok:bool, reason:String, structure_id:String)` | 0 reliable | `reason`은 승인일 때만 `""`, `structure_id`는 승인일 때만 채워진다 |
+| S→전체 | `_rpc_structure_rows(rows:Array)` | 0 reliable | 생기거나 바뀐 구조물의 행(미러가 ID로 추가와 변경을 구분한다) |
+| S→전체 | `_rpc_structures_removed(structure_ids:Array)` | 0 reliable | 철거됐거나 메모리에서 내려간 구조물 |
+
+- 행(wire row): `[structure_id, definition_id, x, z, rotation, state, door_open, health_fraction]`. 접속 조각: `{schema_version: 1, structures: [행, ...]}`(서버 메모리에 있는 구조물 전부, 건축 시스템이 없으면 `{}`).
+- 의도 검증 순서: 접속(`not_joined`) → 인자 타입(`bad_type`) → 요청 번호 ≥ 0(`bad_sequence`) → ID·숫자의 모양(`bad_definition_id`, `bad_structure_id`, `out_of_bounds`(좌표 ±1,000,000 밖), `bad_rotation`) → 의도별 빈도(`rate_limited`) → 규칙(`BuildingService`: 사거리·겹침·권한·상태). 행위자는 보낸 peer의 플레이어이고 인자에 없다. 위치·소유자·비용·결과는 클라이언트가 보내지 않는다. 모든 거부는 `NetworkService.rejected_intent_count`에 세고, 요청 번호를 쓸 수 있으면 요청자에게 결과를 보낸다.
+- 승인된 요청은 먼저 전체에 복제하고 그다음 요청자에게 결과를 보낸다(같은 순서 채널). 서버 규칙이 직접 만든 변화는 다음 서버 틱에 복제된다. 이 모듈이 `BuildingService.drain_events()`의 유일한 소비자다.
+- 셀: `WorldCellService.cell_loaded`에서 그 셀의 구조물을 행으로, `cell_unloading`에서 ID 묶음으로 보낸다(P3-1의 아이템·좀비와 같은 방식).
+- 범위: 서버 메모리에 있는 구조물 전부를 접속자 전원에게 보낸다(클라이언트별 범위는 P3-2).
+- 저장: 배치·철거가 승인되면 바로 월드를 저장한다(`persist_on_place_and_demolish`). 문 여닫기는 바로 저장하지 않는다(자동 저장·셀 해제·종료 저장에 들어간다).
+
+**클라이언트 미러(`ClientStructureState`, `StructureNetModule.client_state`)**: 권한 없음. `structures`(`structure_id -> {definition_id, tile: Vector2i, rotation, state, door_open, health_fraction}`), `structure_ids()`, `has_structure`, `get_structure`, `structure_count`, `slot_of(id)`, `structure_id_at(slot)`, 시그널 `changed`, `structure_added(id)`, `structure_changed(id)`, `structure_removed(id)`. 모든 payload를 검증한다(행 길이와 타입, ID 형식과 길이, 클라이언트가 가진 정의인지, 좌표·회전 범위, 상태 이름, 문이 아닌데 열려 있지 않은지, 체력 비율 0~1, 메시지당 행 256개·ID 256개, 미러 상한). 틀린 행은 세고(`rejected_payload_count`) 건너뛴다. 틀린 접속 조각은 통째로 버리고 미러를 비운다. 모르는 ID의 제거는 오류가 아니다(`unknown_removal_count`). 클라이언트 API: `request_place(definition_id, tile, rotation)`, `request_demolish(structure_id)`, `request_door(structure_id, open)`(요청 번호를 돌려준다), 시그널 `structure_result(request_id, ok, reason, structure_id)`.
+
+**테스트**: `tests/unit/structure_grid_test.gd`(타일·자리·회전·거리, 걸음 추적: 양쪽에서 막힘, 긴 걸음, 꼭짓점 대각선, 미끄러짐, 무작위 걸음 4000개), `building_service_test.gd`(정의·설정, 필수 필드, 거부 사유 전부, 한 자리 두 요청, 청사진 규칙, 문, 철거, 플레이어·좀비 이동), `building_cell_test.gd`(셀 색인, 해제 → 재로딩 동일성, 월드 문서 왕복, 복구 검증, 격자 변경, 구조물 한 개의 저장 형식), `structure_net_state_test.gd`(미러 검증), `building_measure_test.gd`(측정값 출력), `tests/integration/structure_net_test.gd`(두 클라이언트가 같은 구조물을 봄, 문, 한 자리 요청 셋, 위조 요청, 빈도 제한, 늦은 접속, 셀 해제·재로딩, 저장 → 재시작 → 복구), `building_persistence_test.gd`(실제 파일: 메모리에 있는 셀과 해제된 셀, 구조물 없는 저장, 격자 변경).
+
+**P3-4b(클라이언트 표시·건축 모드 입력)가 알아야 할 것**: (1) 읽을 곳은 `StructureNetModule.client_state`와 그 시그널 넷, 보낼 곳은 `request_place`/`request_demolish`/`request_door`, 답은 `structure_result`다. (2) 월드 위치는 `StructureGrid`로 구한다: 타일 조각은 `tile_center(tile)`, 변 조각은 `slot_anchor(slot_of(id))`와 회전(0 = -Z 변 … 3 = -X 변). 클라이언트에는 `BuildingSettings`가 없으므로 모듈 크기를 `CompositionConfig.building.grid_module_m`에서 받아 `StructureGrid`를 만들어야 한다(서버와 같은 리소스 파일). (3) 미리보기의 유효·무효 표시는 클라이언트가 추정하고 확정은 서버 결과로 한다(사유 코드는 위 목록). (4) 미러에는 누가 지었는지가 없다: 철거 가능 여부는 요청해서 `not_owner`를 받아야 안다. 필요하면 행에 필드를 더한다(프로토콜 변경). (5) 서버 충돌은 점 대 선분이고 캐릭터 반지름이 없다: 캡슐이 벽에 반쯤 묻혀 보일 수 있다. (6) 클라이언트 이동 예측을 넣는다면 `StructureGrid.resolve_step`과 미러의 자리 표(`structure_id_at`)로 같은 계산을 할 수 있다. (7) 구조물 정의에는 아직 모델·재질 정보가 없다.
+
+**P3-5(청사진·자재·완공)가 알아야 할 것**: (1) `BuildingSettings.instant_completion`을 끄면 배치가 `blueprint`(체력 0)를 만든다: 자리를 차지하고 아무것도 막지 않으며 문으로 쓸 수 없다(테스트 있음). 완공으로 바꾸는 함수는 아직 없다: 상태를 바꾼 뒤 `_refresh_blocking`을 불러 막는 변 집합을 갱신하고 `structure_changed` 이벤트를 남기면 복제는 이미 된다(행에 `state`가 있다). (2) 완공 순간에는 배치 때 건너뛴 "사람·좀비가 변 가까이에 있는가" 검사를 다시 해야 한다. (3) `inventory_costs`는 배치 때 정의의 `build_costs`를 복사해 둔 것이다. 투입한 자재·진행률 필드는 없다: 더하면 `StructureInstance.to_dict`/`from_dict`와 셀 문서 스키마 버전(`CELL_SCHEMA_VERSION`, `SCHEMA_VERSION`)을 올리고 구버전 문서를 읽는 경로를 넣는다. (4) 배치·철거와 인벤토리 차감을 한 트랜잭션으로 묶어야 한다: 저장 한 번이 월드 전체라서 둘은 항상 같은 세대에 들어간다. (5) 철거 환급 규칙은 정의에 넣기로 돼 있다(docs/04 §5). (6) 메모리에 없는 셀에는 서버 규칙도 지을 수 없다: 시드로 건물을 놓으려면 그 셀을 먼저 로딩해야 한다.

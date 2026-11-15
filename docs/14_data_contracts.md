@@ -45,13 +45,35 @@ source/target 순서는 의미가 있다. A→B와 B→A를 별도 레코드로 
 ### BuildingInstance
 `structure_instance_id`, `definition_id`, `shelter_id`, `cell_id`, `transform`, `state`, `health`, `construction_progress`, `owner_permissions`, `connections`.
 
+P3-4a 임시안(docs/00 ADR-024, docs/09 §15.4): 구현된 구조물 문서(`StructureInstance`)는 docs/04 §4의 필드 이름을 쓴다. 위 목록과 `schemas/building_instance.schema.json`(초안)과는 이름이 다르다(`structure_id` ↔ `structure_instance_id`, `construction_state` ↔ `state`, `owner_shelter_id` ↔ `shelter_id`, 격자 좌표 ↔ 미터 좌표). 어느 쪽을 기준으로 할지는 미결정이다(docs/15 P3-117). `construction_progress`와 `owner_permissions`는 아직 없다(P3-5, 쉘터).
+
+구조물 하나(셀 문서와 world_state의 `systems.building.structures[]` 항목):
+
+| 필드 | 타입 | 뜻 |
+|---|---|---|
+| `structure_id` | 문자열 `structure_<번호>` | 월드에서 유일하고 재사용하지 않는 ID. 철거되면 은퇴(tombstone)한다 |
+| `definition_id` | snake_case 문자열 | `StructureDefinition`의 ID. 저장에 정의 Resource는 들어가지 않는다 |
+| `owner_shelter_id` | 문자열 | 쉘터가 생길 때까지 `""` |
+| `cell_id` | 문자열 | 저장할 때의 월드 셀. 읽을 때는 참고만 하고 자리로 다시 정한다 |
+| `transform` | `{tile: [x, z], rotation: 0~3}` | 격자 좌표(정수 타일)와 1/4바퀴 회전. 미터가 아니다 |
+| `construction_state` | `blueprint`/`constructing`/`completed`/`damaged`/`destroyed` | P3-4a에서는 `completed`만 생긴다(임시 규칙을 끄면 `blueprint`) |
+| `health` | 0 이상, 정의의 `max_health` 이하 | |
+| `material_quality` | 0 이상 | 지금은 항상 1.0 |
+| `inventory_costs` | `{아이템 정의 ID: 수량(1 이상)}` | 정의의 비용을 기록한 것. 차감 여부를 뜻하지 않는다 |
+| `connections` | 구조물 ID 배열 | 지금은 항상 `[]` |
+| `last_modified_at` | 숫자 | 마지막으로 바뀐 달력 월드 시간(§2) |
+| `placed_by` | 문자열 | 배치한 플레이어의 `player_id`, 서버 규칙이 놓았으면 `""` |
+| `door_open` | bool | 문만 true가 될 수 있다 |
+
+`systems.building` 문서는 `{schema_version: 1, structures: [...]}`다. 구조물이 없으면 문서 자체가 없다. Node 참조·RID는 들어가지 않는다.
+
 ### ItemInstance
 `item_instance_id`, `definition_id`, `quantity`, `condition`, `quality`, `freshness`, `location_type`, `location_id`, `slot_id`.
 
 P3-1 임시안: `location_type`이 `world`인 아이템의 `location_id`는 그 아이템이 놓인 위치의 `cell_id`다(P3-1 전에는 모든 아이템이 `cell_0_0`이었고, 그런 저장은 읽을 때 위치로 다시 정한다). 월드 아이템은 world_state.json이 아니라 그 셀의 문서에 저장된다.
 
 ### WorldCellDocument (cells/<cell_id>.json, P3-1 임시안)
-`schema_version`(1), `cell_id`, `world_items`(`items`: 그 셀에 놓인 ItemInstance 배열, `world_item_positions`: `{item_instance_id: [x, y, z]}`. 없으면 `{}`), `systems`(`{system_id: 그 시스템의 셀 문서}`. 지금은 `zombie`: `{schema_version: 1, zombies: [ZombieState]}`). 플레이어는 셀 문서에 들어가지 않는다. 시스템이 셀에 두는 엔티티(보관함, 구조물)는 `systems` 아래에 같은 방식으로 더한다(docs/09 §15.1).
+`schema_version`(1), `cell_id`, `world_items`(`items`: 그 셀에 놓인 ItemInstance 배열, `world_item_positions`: `{item_instance_id: [x, y, z]}`. 없으면 `{}`), `systems`(`{system_id: 그 시스템의 셀 문서}`. 지금은 `zombie`: `{schema_version: 1, zombies: [ZombieState]}`와 P3-4a의 `building`: `{schema_version: 1, structures: [BuildingInstance 절의 구조물 문서]}`). 플레이어는 셀 문서에 들어가지 않는다. 시스템이 셀에 두는 엔티티(보관함, 구조물)는 `systems` 아래에 같은 방식으로 더한다(docs/09 §15.1).
 
 ### CropInstance
 `crop_instance_id`, `crop_definition_id`, `plot_id`, `growth_progress`, `water_level`, `health`, `planted_at`, `harvest_state`.

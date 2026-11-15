@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="StructureNetSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/services/multiplayer/structure_net_settings.gd" id="1_structure_net"]
+
+[resource]
+script = ExtResource("1_structure_net")
+place_intent_rate_per_sec = 4.0
+place_intent_burst = 8
+demolish_intent_rate_per_sec = 4.0
+demolish_intent_burst = 8
+door_intent_rate_per_sec = 4.0
+door_intent_burst = 4
+rows_per_message = 64
+removals_per_message = 128
+max_mirror_structures = 200000
+persist_on_place_and_demolish = true
+persist_on_door_change = false

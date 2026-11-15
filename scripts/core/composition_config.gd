@@ -49,6 +49,11 @@ var trade_net: TradeNetSettings
 var require_character_creation: bool = false
 ## P3-1 (world cells, docs/09 §15.1): the cell grid and the cell lifecycle.
 var world_cells: WorldCellSettings
+## P3-4a (grid structures, docs/09 §15.4): the building rules, the structure
+## definitions (servers and client mirrors) and the network module.
+var building: BuildingSettings
+var structures: StructureCatalog
+var structure_net: StructureNetSettings
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -75,6 +80,9 @@ static func from_defaults() -> CompositionConfig:
 	config.world_cells = WorldCellSettings.load_or_default()
 	config.trade = TradeSettings.load_or_default()
 	config.trade_net = TradeNetSettings.load_or_default()
+	config.building = BuildingSettings.load_or_default()
+	config.structures = StructureCatalog.load_directory()
+	config.structure_net = StructureNetSettings.load_or_default()
 	return config
 
 
@@ -108,6 +116,12 @@ func validate() -> PackedStringArray:
 	if trade == null or trade_net == null:
 		errors.append("composition config is incomplete (trade)")
 		return errors
+	if building == null or structures == null or structure_net == null:
+		errors.append("composition config is incomplete (building)")
+		return errors
+	errors.append_array(building.validate())
+	errors.append_array(structures.validate_against(catalog))
+	errors.append_array(structure_net.validate())
 	errors.append_array(gameplay.validate())
 	errors.append_array(clock.validate())
 	errors.append_array(dev_seed.validate())

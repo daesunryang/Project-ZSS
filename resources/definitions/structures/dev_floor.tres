@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="StructureDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/building/structure_definition.gd" id="1_structure"]
+
+[resource]
+script = ExtResource("1_structure")
+definition_id = "dev_floor"
+display_name = "Development Floor"
+placement = 0
+blocks_movement = false
+is_door = false
+max_health = 100.0
