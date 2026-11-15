@@ -35,6 +35,16 @@ extends RefCounted
 ##                          were saved); their ids are NOT retired
 ## Carried items never leave memory with a cell. These three announce
 ## nothing through `transaction_committed`: no item changed hands.
+## The transactions keep the index right (tests/unit/item_moves_in_cells_test.gd):
+##   - an item that comes to lie in the world is indexed under the cell the
+##     caller names, whether it is a whole stack or the new instance a part
+##     of a stack becomes (drop_item, drop_all_items);
+##   - an item that is picked up leaves the index, whether it keeps its id in
+##     a slot or merges into carried stacks. One that merged completely is
+##     retired (tombstoned), not released: restore_cell_snapshot skips
+##     retired ids and ids that are in memory, so a saved copy of its cell
+##     never brings its units back a second time;
+##   - transfer_item and exchange_items only touch carried items: no cell.
 
 ## A transaction was committed. `event` is a copy of the ActionResult event.
 signal transaction_committed(event: Dictionary)
@@ -196,6 +206,8 @@ func spawn_world_item(definition_id: String, quantity: int, cell_id: String, pos
 ## (`inventory_full`). If nothing is left over, the picked-up instance is
 ## deleted and its id retired (docs/14 §1): the event's `slot_id` is "" then
 ## and `merged` says which carried stacks took its units.
+## Either way the instance leaves the cell index (P3-1): it no longer lies in
+## a cell, and a retired id is never restored from a cell's save data.
 func try_pickup(inventory_id: String, item_instance_id: String, actor_position: Vector3) -> ActionResult:
 	if not _inventories.has(inventory_id):
 		return _reject(REASON_UNKNOWN_INVENTORY, inventory_id, item_instance_id)
@@ -252,7 +264,9 @@ func try_pickup(inventory_id: String, item_instance_id: String, actor_position: 
 ##     smaller and the units become a NEW instance with a new id lying in
 ##     the world, with the stack's condition and quality (event
 ##     `item_units_dropped`). Two stacks never share an id.
-## Anything else is `bad_quantity`. The units are conserved either way.
+## Anything else is `bad_quantity`. The units are conserved either way, and
+## what lies in the world afterwards is in the cell index under `cell_id`
+## (P3-1; ServerWorld passes the cell of `position`).
 func drop_item(inventory_id: String, item_instance_id: String, cell_id: String, position: Vector3, quantity: int = WHOLE_STACK) -> ActionResult:
 	const OPERATION: String = "drop_item"
 	if not _inventories.has(inventory_id):

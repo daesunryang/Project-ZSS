@@ -1685,7 +1685,7 @@ row = {
 | 1 ≤ 수량 < 묶음 수량 | 들고 있는 묶음은 수량만 줄고, 내려놓은 수량이 **새 ID의 새 인스턴스**로 월드에 생긴다(`condition`·`quality`는 원래 묶음의 것). 두 묶음이 같은 ID를 갖는 경우는 없다 | `item_units_dropped` = `{event_type, inventory_id, item_instance_id(들고 있는 묶음), definition_id, quantity, remaining_quantity, world_item_instance_id(바닥의 새 인스턴스), cell_id, position: [x, y, z]}` |
 | 그 밖(음수, 묶음 수량 초과) | 거부 | `bad_quantity` |
 
-검사 순서: `unknown_inventory` → `unknown_item` → `item_not_in_inventory` → `bad_quantity` → `bad_cell`/`bad_position` → `id_unavailable`(새 ID를 등록할 수 없음. 일어나지 않아야 하는 경우의 방어). 소유 검사가 수량 검사보다 앞이라 남의 묶음에 몇 개가 있는지는 알 수 없다. 새 ID는 상태를 바꾸기 전에 발급·등록한다.
+검사 순서: `unknown_inventory` → `unknown_item` → `item_not_in_inventory` → `bad_quantity` → `bad_cell`/`bad_position` → `id_unavailable`(새 ID를 등록할 수 없음. 일어나지 않아야 하는 경우의 방어). 소유 검사가 수량 검사보다 앞이라 남의 묶음에 몇 개가 있는지는 알 수 없다. 새 ID는 상태를 바꾸기 전에 발급·등록한다. 월드 셀(P3-1, §15.1): `ServerWorld.try_drop_item`은 `cell_id`로 놓는 위치의 셀(`cell_id_at`)을 넘기고, 일부를 내려놓아 생긴 새 인스턴스도 묶음 전체와 똑같이 그 셀의 색인(`WorldCellIndex`)과 그 셀의 저장 문서에 들어간다.
 
 **줍기** `try_pickup(inventory_id, item_instance_id, actor_position)`(검사는 그대로: 인벤토리, 아이템, 월드에 있음, 사거리, 자리):
 
@@ -1966,6 +1966,13 @@ Phase 3(docs/13 §5, §15) 티켓의 계약을 티켓마다 한 절씩 적는다
 - 좀비: `ZombieNetModule`이 같은 두 시그널에서 그 셀의 좀비마다 기존 `zombie_spawned`/`zombie_removed` 전선 이벤트를 번호가 이어지는 이벤트 흐름에 넣는다. 월드에서 실제로 생기거나 없어진 것이 아니므로 `ZombieService`의 도메인 이벤트와 `server_events_drained`에는 들어가지 않는다. 이렇게 나타난 좀비는 다음 스냅샷(0.1초 이내)이 올 때까지 미러에서 idle·체력 100%로 보인다.
 - 나중에 접속한 클라이언트의 join 스냅샷에는 그 순간 메모리에 있는 것만 들어간다.
 
-**테스트**: `tests/unit/world_cell_grid_test.gd`(좌표·ID·음수·정확한 경계·이웃·전이 표·색인), `world_cell_service_test.gd`(서버 위치 기반 활성화, 전이 순서, 히스테리시스, 미리보기, 로딩 예산, 로딩 실패·저장 실패, 저장소 없음, 떠돌이, 해제→재로딩 동일성), `world_cell_gating_test.gd`(비활성 셀의 좀비는 이동·감지·공격하지 않고 같은 조건의 활성 셀 좀비는 한다, 소음, 경계, 처리량), `world_cell_save_test.gd`(셀 파일, v3→v4, 빈 셀, 백업, 바뀌지 않은 파일), `world_cell_measure_test.gd`(측정값 출력), `tests/integration/world_cell_persistence_test.gd`(저장→재시작→복구, 구버전 저장, 시드 아이템 재생성 없음, 해제 세대의 일관성, 격자 변경, 손상된 셀 파일), `world_cell_net_test.gd`(두 클라이언트 미러의 제거·추가·일치).
+**아이템 이동(P2-T15·T16, §14.29·§14.30)과 셀**: 세 규칙이 지켜진다. 새 RPC·새 저장 형식은 없다.
+
+- 내려놓기: 묶음 전체든 일부든, 월드에 놓이는 인스턴스는 놓인 위치의 셀 ID를 `location_id`로 갖고 셀 색인에 들어간다(`InventoryService._move_to_world`). 일부 내려놓기로 생기는 새 ID의 인스턴스도 같다. 그래서 그 셀이 해제될 때 셀 문서로 저장되고, 다시 로딩될 때 같은 ID·수량·위치로 돌아온다.
+- 줍기: 주운 인스턴스는 합쳐지든 아니든 셀 색인에서 빠진다. 일부만 합쳐진 것은 ID를 지닌 채 인벤토리에 있고(들고 있는 아이템은 셀과 함께 내려가지 않는다), **전부 합쳐져 없어진 것은 ID가 은퇴(tombstone)한다**. 셀을 로딩할 때 메모리에 있는 ID와 은퇴한 ID는 건너뛰므로, 그 셀의 저장본이 나머지 저장보다 오래됐어도(백업에서 복구) 합쳐진 수량이 다시 생기지 않는다. 일부만 합쳐진 것의 옛 수량도 되살아나지 않는다(메모리의 수량이 우선).
+- 거래(`exchange_items`)와 `transfer_item`은 들고 있는 아이템만 다룬다: 셀 색인을 건드리지 않고, 없어진 묶음의 ID는 은퇴한다. `TradeService`는 셀에 두는 엔티티가 없어 셀 훅을 구현하지 않고, 두 플레이어의 서버 위치 사이 거리만 본다.
+- 한계: 셀 파일이 백업에서 복구되면 그 백업 뒤에 그 셀에 내려놓은 것은 사라진다(묶음 전체든 일부든 같다). 복제는 되지 않지만 수량은 줄 수 있다(docs/15 §14.6 "확인하지 못한 것").
+
+**테스트**: `tests/unit/world_cell_grid_test.gd`(좌표·ID·음수·정확한 경계·이웃·전이 표·색인), `world_cell_service_test.gd`(서버 위치 기반 활성화, 전이 순서, 히스테리시스, 미리보기, 로딩 예산, 로딩 실패·저장 실패, 저장소 없음, 떠돌이, 해제→재로딩 동일성), `world_cell_gating_test.gd`(비활성 셀의 좀비는 이동·감지·공격하지 않고 같은 조건의 활성 셀 좀비는 한다, 소음, 경계, 처리량), `world_cell_save_test.gd`(셀 파일, v3→v4, 빈 셀, 백업, 바뀌지 않은 파일), `world_cell_measure_test.gd`(측정값 출력), `tests/integration/world_cell_persistence_test.gd`(저장→재시작→복구, 구버전 저장, 시드 아이템 재생성 없음, 해제 세대의 일관성, 격자 변경, 손상된 셀 파일), `world_cell_net_test.gd`(두 클라이언트 미러의 제거·추가·일치). 아이템 이동과 셀: `tests/unit/item_moves_in_cells_test.gd`(일부 내려놓기의 셀·색인·셀 문서, 합쳐진 줍기의 색인 제거와 ID 은퇴, 일부 내려놓기·합쳐진 줍기 뒤 해제→재로딩의 수량 보존과 ID 유일, 줍기 전의 셀 문서가 돌아와도 합쳐진 수량이 되살아나지 않음, 내려놓기·합쳐진 줍기·완료된 거래 뒤 해제된 셀이 있는 월드 문서 왕복), `tests/integration/item_moves_cell_persistence_test.gd`(같은 흐름의 저장→재시작→복구를 실제 파일로 두 번, 디스크의 world_state와 셀 파일 전체에서 수량 보존·ID 유일·은퇴 ID 없음, 줍기 전 백업 셀 파일로 복구된 재시작).
 
 **P3-2가 알아야 할 것**: (1) 클라이언트별 범위는 `WorldCellNetModule`과 `ZombieNetModule`의 `cell_loaded`/`cell_unloading` 처리와 `NetworkService._build_join_snapshot`·`ZombieNetModule.build_join_fragment`·좀비 스냅샷 전송 세 곳을 "그 접속자의 관심 셀"로 거르면 된다. 관심 셀 계산에는 `WorldCellGrid.cells_within`과 `ServerWorld.cell_index.entities_in_cell`을 쓸 수 있다. (2) 지금은 PRELOADED 셀의 엔티티도 전송된다. (3) 아이템 제거는 아이템마다 메시지 하나다. (4) `InventoryNetModule`과 `NetworkService`에 공개 함수를 두면 이름으로 RPC를 부르는 부분을 없앨 수 있다. (5) 직접 `inventory.spawn_world_item`을 부르는 서버 코드는 여전히 복제되지 않는다(docs/15 P2-119). (6) 클라이언트 쪽 바닥·경계 표시는 서버의 `WorldCellSettings.bounds`와 `world_half_extent_m`이 같은 사각형임을 전제로 하면 된다.
