@@ -410,6 +410,8 @@ func test_the_player_zombie_survives_a_save_and_restart() -> void:
 	assert_not_null(restored, "world restored from save")
 	if restored == null:
 		return
+	# P3-1: a restart brings no cell into memory; this test looks at the whole world.
+	(restored.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).load_all_saved_cells(restored)
 	var restored_zombies: ZombieService = _zombies(restored)
 	assert_eq(restored_zombies.zombie_ids(), PackedStringArray([zombie_id]), "the same zombie, once")
 	var zombie: ZombieState = restored_zombies.get_zombie(zombie_id)

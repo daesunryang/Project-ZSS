@@ -58,6 +58,18 @@ func save_cells(world: ServerWorld, cell_ids: PackedStringArray) -> Error:
 	return OK
 
 
+## True while the next world save must replace every saved cell document
+## (only a store of a saved world can ask for that, after the cell grid
+## changed).
+func replaces_saved_cells() -> bool:
+	return false
+
+
+## The world save that replaced every cell document succeeded.
+func saved_cells_replaced() -> void:
+	return
+
+
 ## Ids of the cells this store has a document for, sorted.
 func saved_cell_ids() -> PackedStringArray:
 	var ids: PackedStringArray = PackedStringArray(_documents.keys())

@@ -64,6 +64,8 @@ func test_persistence_round_trip_restores_players_and_items() -> void:
 
 	var reloaded: ServerWorld = WorldPersistence.new(SaveService.new(_root), _config()).load_or_create(WORLD)
 	assert_not_null(reloaded)
+	# P3-1: a restart brings no cell into memory; this test looks at the whole world.
+	(reloaded.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).load_all_saved_cells(reloaded)
 	assert_eq(reloaded.known_player_count(), 1)
 	assert_eq(reloaded.get_player(alice.player_id).position, Vector3(3, 0, 4))
 	assert_eq(reloaded.inventory.world_item_ids().size(), 1, "seed is not applied again to an existing save")

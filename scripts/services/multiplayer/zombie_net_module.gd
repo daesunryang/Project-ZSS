@@ -28,6 +28,17 @@ extends NetModule
 ## server-side code that needs the events connects to
 ## `server_events_drained`.
 ## No interest management: every client gets every zombie (docs/15 P2-83).
+##
+## World cells (P3-1, docs/09 §15.1): "every zombie" is every zombie the
+## server has in memory. When a cell comes into memory its zombies are
+## announced to the clients as `zombie_spawned` wire events, and when a cell
+## is about to leave memory as `zombie_removed` wire events: the two events
+## that change a mirror's membership anyway, in the same reliable, numbered
+## stream, so nothing changes in the wire format. They are made here, not by
+## ZombieService: no zombie was spawned or removed in the world, so they are
+## NOT part of `server_events_drained`. A zombie announced this way shows as
+## idle with full health until the next snapshot (at most one snapshot
+## period) corrects its state and health (docs/15 P3-015).
 
 ## Server: the raw domain events drained this tick, oldest first.
 signal server_events_drained(events: Array[Dictionary])
@@ -44,6 +55,8 @@ var ignored_sender_count: int = 0
 
 var _settings: ZombieNetSettings
 var _zombies: ZombieService = null
+var _world: ServerWorld = null
+var _cells: WorldCellService = null
 var _tick: int = 0
 var _snapshot_elapsed: float = 0.0
 ## Sequence of the newest drained event (the first event is 1).
@@ -65,6 +78,63 @@ func on_server_started(world: ServerWorld) -> void:
 	_zombies = world.get_system(ZombieService.SYSTEM_ID) as ZombieService
 	if _zombies == null:
 		GameLogger.info("net", "world has no zombie system, zombie replication is off", {"world_id": world.world_id, "module": MODULE_NAME})
+		return
+	_world = world
+	_cells = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
+	if _cells != null:
+		_cells.cell_loaded.connect(_on_cell_loaded)
+		_cells.cell_unloading.connect(_on_cell_unloading)
+
+
+func _exit_tree() -> void:
+	if _cells == null:
+		return
+	if _cells.cell_loaded.is_connected(_on_cell_loaded):
+		_cells.cell_loaded.disconnect(_on_cell_loaded)
+	if _cells.cell_unloading.is_connected(_on_cell_unloading):
+		_cells.cell_unloading.disconnect(_on_cell_unloading)
+
+
+## P3-1: the zombies of a cell that came into memory appear on the clients.
+func _on_cell_loaded(cell_id: String) -> void:
+	_announce_cell(cell_id, ZombieService.EVENT_SPAWNED)
+
+
+## P3-1: the zombies of a cell that is about to leave memory disappear from
+## the clients.
+func _on_cell_unloading(cell_id: String) -> void:
+	_announce_cell(cell_id, ZombieService.EVENT_REMOVED)
+
+
+## Queues one wire event of `event_type` for every zombie of the cell,
+## after the domain events recorded so far (the order clients see is the
+## order things happened on the server).
+func _announce_cell(cell_id: String, event_type: String) -> void:
+	if _zombies == null or network == null or not network.is_server():
+		return
+	var zombie_ids: PackedStringArray = _world.cell_index.entities_in_cell(cell_id, ZombieService.ENTITY_KIND_ZOMBIE)
+	if zombie_ids.is_empty():
+		return
+	_collect_events()
+	for zombie_id: String in zombie_ids:
+		var zombie: ZombieState = _zombies.get_zombie(zombie_id)
+		if zombie == null:
+			continue
+		var event: Dictionary = {
+			ZombieNetProtocol.KEY_EVENT_TYPE: event_type,
+			ZombieNetProtocol.KEY_ZOMBIE_ID: zombie_id,
+			ZombieNetProtocol.KEY_WORLD_TIME: _world.clock.world_time_sec,
+		}
+		if event_type == ZombieService.EVENT_SPAWNED:
+			event["position"] = [zombie.position.x, zombie.position.y, zombie.position.z]
+			event["yaw"] = zombie.yaw
+		var wire: Dictionary = ZombieNetProtocol.encode_event(event)
+		if wire.is_empty():
+			unsendable_event_count += 1
+			GameLogger.error("net", "zombie event does not fit the wire format", {"entity_id": zombie_id, "event_type": event_type, "cell_id": cell_id, "operation": "announce_cell"})
+			continue
+		_event_sequence += 1
+		_pending.append(wire)
 
 
 func server_physics(delta: float) -> void:

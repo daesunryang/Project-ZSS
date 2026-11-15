@@ -559,7 +559,7 @@ func test_both_clocks_survive_save_and_restart() -> void:
 	assert_true(world.clock.action_time_sec > 6.0 and world.clock.world_time_sec > 160.0)
 	assert_eq(persistence.save(world), OK)
 	var documents: Dictionary = world.to_documents()
-	assert_eq(int((documents["world_state"] as Dictionary)["schema_version"]), 3, "world_state schema v3 carries the action clock")
+	assert_eq(int((documents["world_state"] as Dictionary)["schema_version"]), ServerWorld.SCHEMA_VERSION, "world_state carries the action clock (since schema v3)")
 	assert_eq((documents["world_state"] as Dictionary)[ServerWorld.KEY_ACTION_TIME], world.clock.action_time_sec)
 
 	var reloaded: ServerWorld = WorldPersistence.new(SaveService.new(_root), _config(SCALE_DAY_PER_HOUR)).load_or_create(WORLD)
@@ -616,6 +616,8 @@ func test_saved_action_deadlines_stay_correct_after_restart() -> void:
 	assert_not_null(reloaded)
 	if reloaded == null:
 		return
+	# P3-1: a restart brings no cell into memory; this test looks at the zombie at once.
+	(reloaded.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).load_all_saved_cells(reloaded)
 	var restored_left: float = _zombies(reloaded).get_zombie(zombie_id).attack_ready_at - reloaded.clock.action_time_sec
 	assert_true(_near(restored_left, cooldown_left, TIGHT), "cooldown left after loading: %f" % restored_left)
 	reloaded.join("alice")

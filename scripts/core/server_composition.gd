@@ -71,6 +71,14 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	if error != OK:
 		zombie_net.free()
 		return error
+	# P3-1 (docs/09 §15.1): world items of cells that enter or leave the
+	# server's memory. No RPC of its own (it sends the existing world item
+	# messages), so the protocol is unchanged.
+	var world_cell_net: WorldCellNetModule = WorldCellNetModule.new(config.inventory_net)
+	error = service.register_module(world_cell_net)
+	if error != OK:
+		world_cell_net.free()
+		return error
 	# Phase 2-N1c: survival owner detail + public observable facts.
 	var survival_net: SurvivalNetModule = SurvivalNetModule.new(config.survival_net, config.survival)
 	error = service.register_module(survival_net)

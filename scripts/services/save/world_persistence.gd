@@ -1,6 +1,14 @@
 class_name WorldPersistence
 extends RefCounted
 ## Loads/saves a ServerWorld through SaveService. Server only.
+##
+## World cells (P3-1, docs/09 §15.1): a world loaded or created here keeps
+## its released cells in the save itself (SaveWorldCellStore). Loading a
+## world brings no cell into memory; the server reads a cell file when a
+## player comes near. Every save() is one generation of the whole world:
+## world_state.json, the players and every cell that is in memory. That is
+## also how a cell is saved before it is released, and why a shutdown save
+## flushes every loaded cell.
 
 var _save: SaveService
 var _config: CompositionConfig
@@ -19,6 +27,10 @@ func load_or_create(world_id: String) -> ServerWorld:
 	var world: ServerWorld = ServerComposition.create_world(world_id, _config)
 	if world == null:
 		return null
+	var cells: WorldCellService = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
+	var store: SaveWorldCellStore = SaveWorldCellStore.new(_save, self, world_id)
+	if cells != null:
+		cells.set_store(store)
 	if not _save.has_save(world_id):
 		if world.seed_new_world(_config.dev_seed) != OK:
 			return null
@@ -33,6 +45,8 @@ func load_or_create(world_id: String) -> ServerWorld:
 	if not errors.is_empty():
 		GameLogger.fatal("save", "save failed integrity checks", {"world_id": world_id, "errors": "; ".join(errors), "operation": "restore_world"})
 		return null
+	if cells != null and cells.needs_repartition() and not _repartition(world, cells, store, loaded["cell_ids"] as PackedStringArray):
+		return null
 	return world
 
 
@@ -42,4 +56,34 @@ func save(world: ServerWorld) -> Error:
 	for player_id: String in world.online_player_ids():
 		world.get_player(player_id).last_saved_at_utc = now
 	var documents: Dictionary = world.to_documents()
-	return _save.save_world(world.world_id, documents["world_state"], documents["players"])
+	var error: Error = _save.save_world(world.world_id, documents["world_state"], documents["players"], documents["cells"], bool(documents["replace_cells"]))
+	if error == OK:
+		var cells: WorldCellService = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
+		if cells != null:
+			cells.on_world_saved()
+	return error
+
+
+## The save was cut with another cell grid (the cell size or the map bounds
+## were changed): reads every cell file, gives every entity the cell of its
+## position in the new grid and writes the whole world again, replacing the
+## old cell files in one generation. False (logged) when a cell file cannot
+## be read or restored: the save is then left as it is.
+func _repartition(world: ServerWorld, cells: WorldCellService, store: SaveWorldCellStore, cell_ids: PackedStringArray) -> bool:
+	var documents: Dictionary = {}
+	for cell_id: String in cell_ids:
+		var loaded: Dictionary = _save.load_cell(world.world_id, cell_id)
+		if loaded["error"] != OK:
+			GameLogger.fatal("save", "cell file could not be read for the new cell grid", {"world_id": world.world_id, "cell_id": cell_id, "error": error_string(loaded["error"]), "operation": "repartition"})
+			return false
+		documents[cell_id] = loaded["document"]
+	var errors: PackedStringArray = world.repartition_from(documents)
+	if not errors.is_empty():
+		GameLogger.fatal("save", "saved cells could not be sorted into the new cell grid", {"world_id": world.world_id, "errors": "; ".join(errors), "operation": "repartition"})
+		return false
+	store.discard_saved_cells()
+	cells.repartition_done()
+	if save(world) != OK:
+		return false
+	GameLogger.info("save", "world partitioned for the new cell grid", {"world_id": world.world_id, "old_cells": cell_ids.size(), "cells": _save.saved_cell_ids(world.world_id).size()})
+	return true

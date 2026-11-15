@@ -55,8 +55,13 @@ signal cell_unloading(cell_id: String)
 signal cell_unloaded(cell_id: String)
 
 const SYSTEM_ID: String = "world_cells"
+const SCHEMA_VERSION: int = 1
+## World document key: the WorldCellGrid.signature() the save was cut with.
+const KEY_GRID: String = "grid"
 ## Float tolerance for delays measured in summed tick lengths.
 const TIME_EPSILON_SEC: float = 0.000001
+## Float tolerance when a saved grid is compared with the current one.
+const GRID_EPSILON_M: float = 0.0001
 
 ## Diagnostics (tests / profiling).
 var load_count: int = 0
@@ -78,6 +83,10 @@ var _last_positions: Dictionary[String, Vector3] = {}
 var _last_refresh_time: float = 0.0
 var _since_refresh: float = 0.0
 var _refreshing: bool = false
+## WorldCellGrid.signature() of the world this system is registered with.
+var _grid_signature: Dictionary = {}
+## The restored save was cut with another grid (see needs_repartition).
+var _repartition_needed: bool = false
 
 
 func _init(settings: WorldCellSettings) -> void:
@@ -175,6 +184,21 @@ func refresh(world: ServerWorld) -> void:
 	_refreshing = false
 
 
+## Brings every cell the store has a document for into memory (tools,
+## tests, anything that must look at the whole world at once). The cells
+## become PRELOADED and are released again by the normal rules. Returns the
+## ids of the cells that could not be loaded.
+func load_all_saved_cells(world: ServerWorld) -> PackedStringArray:
+	var failed: PackedStringArray = []
+	if _store == null:
+		return failed
+	var now: float = world.clock.action_time_sec
+	for cell_id: String in _store.saved_cell_ids():
+		if state_of(cell_id) == WorldCellLifecycle.State.UNLOADED and not _load(world, cell_id, now):
+			failed.append(cell_id)
+	return failed
+
+
 ## Loads the cell of every entity that is in memory in a cell that is not
 ## loaded (see "strays" in the header). Part of every look; also called
 ## before a save, so that a save never writes a cell without what was
@@ -186,7 +210,105 @@ func adopt_strays(world: ServerWorld) -> void:
 			_load(world, cell_id, now)
 
 
+# ------------------------------------------------------------ saving
+
+## True when a world save made now writes the entities of this cell into
+## the cell's own document, so they must not be in the world document too:
+## the cell is in memory and the store is the world save. With a memory
+## store (or none) every entity in memory is saved in the world document.
+func saves_cell_document(cell_id: String) -> bool:
+	return _store != null and _store.saves_loaded_cells() and is_loaded(cell_id)
+
+
+## The cell documents of a world save made now ({cell_id: document}):
+##   - store of a saved world: every cell that is in memory (the files of
+##     the other cells are already in the save);
+##   - memory store: every cell that is NOT in memory (the released ones),
+##     so the returned documents are the whole world;
+##   - no store: none.
+## Strays get their cell loaded first, so a cell document is never written
+## without what was saved for that cell before.
+func cell_documents_for_save(world: ServerWorld) -> Dictionary:
+	adopt_strays(world)
+	var documents: Dictionary = {}
+	if _store == null:
+		return documents
+	if _store.saves_loaded_cells():
+		for cell_id: String in loaded_cell_ids():
+			documents[cell_id] = world.cell_document(cell_id)
+	else:
+		for cell_id: String in _store.saved_cell_ids():
+			if not is_loaded(cell_id):
+				documents[cell_id] = _store.document_of(cell_id)
+	return documents
+
+
+## True when the world save being made must replace every saved cell file
+## (the world was partitioned again).
+func replaces_saved_cells() -> bool:
+	return _store != null and _store.replaces_saved_cells()
+
+
+## A world save succeeded.
+func on_world_saved() -> void:
+	if _store != null and _store.replaces_saved_cells():
+		_store.saved_cells_replaced()
+
+
+## True when the restored save was cut with another cell grid (the cell
+## size or the map bounds changed since): its cell documents do not match
+## this world's cells. Whoever restores the world must then bring every
+## saved cell into memory (ServerWorld.repartition_from) before the cell
+## store is used.
+func needs_repartition() -> bool:
+	return _repartition_needed
+
+
+## Takes the cell documents that came with restored world documents
+## (ServerWorld.restore_documents). Returns errors.
+func restore_cell_documents(world: ServerWorld, documents: Dictionary) -> PackedStringArray:
+	if documents.is_empty():
+		return PackedStringArray()
+	if _repartition_needed:
+		var errors: PackedStringArray = world.repartition_from(documents)
+		if errors.is_empty():
+			_repartition_needed = false
+		return errors
+	if _store == null or _store.saves_loaded_cells():
+		return PackedStringArray(["cell documents can only be restored into a memory cell store"])
+	_store.replace_documents(documents)
+	return PackedStringArray()
+
+
+## Every saved cell was brought into memory for the new grid.
+func repartition_done() -> void:
+	_repartition_needed = false
+
+
 # ------------------------------------------------------------ ServerSystem
+
+func on_registered(world: ServerWorld) -> void:
+	_grid_signature = world.cell_grid.signature()
+
+
+func to_world_document() -> Dictionary:
+	return {"schema_version": SCHEMA_VERSION, KEY_GRID: _grid_signature.duplicate(true)}
+
+
+func restore_world_document(document: Dictionary) -> PackedStringArray:
+	var errors: PackedStringArray = []
+	if not ItemInstance.is_integer_value(document.get("schema_version", null)) or int(document["schema_version"]) != SCHEMA_VERSION:
+		errors.append("world_cells: unsupported schema_version")
+		return errors
+	var saved: Variant = document.get(KEY_GRID, null)
+	if typeof(saved) != TYPE_DICTIONARY:
+		errors.append("world_cells: grid must be an object")
+		return errors
+	_repartition_needed = not _same_grid(saved as Dictionary, _grid_signature)
+	if _repartition_needed:
+		GameLogger.warning("cells", "the save was cut with another cell grid; its cells are sorted again", {"saved": str(saved), "current": str(_grid_signature), "operation": "restore_world"})
+	return errors
+
 
 func step(world: ServerWorld, action_delta: float, _world_delta: float) -> void:
 	if action_delta <= 0.0:
@@ -312,11 +434,18 @@ func _set_active(world: ServerWorld, cell_id: String, active: bool) -> void:
 
 ## PRELOADED -> SAVING -> UNLOADING -> UNLOADED for every cell of the
 ## batch, or back to PRELOADED when the save failed: nothing is released
-## that was not saved.
+## that was not saved. A batch in which no cell holds an entity and no cell
+## has a saved document has nothing to save: its cells go through the same
+## states without the store being asked (most cells of a map are empty, and
+## a save writes the whole world).
 func _unload(world: ServerWorld, cell_ids: PackedStringArray, now: float) -> void:
+	var saved_ids: PackedStringArray = _store.saved_cell_ids()
+	var anything_to_save: bool = false
 	for cell_id: String in cell_ids:
 		_set_state(cell_id, WorldCellLifecycle.State.SAVING)
-	var error: Error = _store.save_cells(world, cell_ids)
+		if world.cell_index.count_in_cell(cell_id) > 0 or saved_ids.has(cell_id):
+			anything_to_save = true
+	var error: Error = _store.save_cells(world, cell_ids) if anything_to_save else OK
 	if error != OK:
 		failed_save_count += 1
 		GameLogger.error("cells", "cells could not be saved and stay in memory", {"world_id": world.world_id, "cell_ids": ", ".join(cell_ids), "error": error_string(error), "retry_in_sec": _settings.retry_delay_sec, "operation": "unload_cells"})
@@ -358,6 +487,32 @@ func _waited(cell_id: String, now: float, delay: float) -> bool:
 	if not _idle_since.has(cell_id):
 		_idle_since[cell_id] = now
 	return now - _idle_since[cell_id] + TIME_EPSILON_SEC >= delay
+
+
+## True when two WorldCellGrid signatures describe the same grid.
+static func _same_grid(a: Dictionary, b: Dictionary) -> bool:
+	var numbers_a: Array = _grid_numbers(a)
+	var numbers_b: Array = _grid_numbers(b)
+	if numbers_a.is_empty() or numbers_a.size() != numbers_b.size():
+		return false
+	for index: int in range(numbers_a.size()):
+		if absf(float(numbers_a[index]) - float(numbers_b[index])) > GRID_EPSILON_M:
+			return false
+	return true
+
+
+## The numbers of a grid signature in a fixed order; [] when it is malformed.
+static func _grid_numbers(signature: Dictionary) -> Array:
+	var numbers: Array = [signature.get(WorldCellGrid.KEY_CELL_SIZE, null)]
+	for key: String in [WorldCellGrid.KEY_BOUNDS_MIN, WorldCellGrid.KEY_BOUNDS_MAX]:
+		var corner: Variant = signature.get(key, null)
+		if typeof(corner) != TYPE_ARRAY or (corner as Array).size() != 2:
+			return []
+		numbers.append_array(corner as Array)
+	for value: Variant in numbers:
+		if typeof(value) != TYPE_FLOAT and typeof(value) != TYPE_INT:
+			return []
+	return numbers
 
 
 func _may_try(cell_id: String, now: float) -> bool:

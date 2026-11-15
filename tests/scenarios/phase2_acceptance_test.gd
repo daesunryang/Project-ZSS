@@ -182,6 +182,17 @@ func _settle() -> void:
 		await tree.physics_frame
 
 
+## What is saved of the zombie system: its world document and every zombie
+## (P3-1: zombies are saved with their cells, so the world document alone no
+## longer lists them).
+func _zombie_save_state(world: ServerWorld) -> Dictionary:
+	var service: ZombieService = _zombies(world)
+	var zombies: Dictionary = {}
+	for zombie_id: String in service.zombie_ids():
+		zombies[zombie_id] = service.get_zombie(zombie_id).to_dict()
+	return {"document": service.to_world_document(), "zombies": zombies}
+
+
 func _zombies(world: ServerWorld) -> ZombieService:
 	return world.get_system(ZombieService.SYSTEM_ID) as ZombieService
 
@@ -842,7 +853,7 @@ func test_two_clients_fight_one_zombie_agree_on_the_result_and_it_survives_a_res
 	# The old world object no longer ticks: this is what was written.
 	var saved_alice: Dictionary = _survival(world).to_player_fragment(alice_id)
 	var saved_bob: Dictionary = _survival(world).to_player_fragment(bob_id)
-	var saved_zombies: Dictionary = _zombies(world).to_world_document()
+	var saved_zombies: Dictionary = _zombie_save_state(world)
 	var saved_combat: Dictionary = _combat(world).to_world_document()
 	var saved_far: ZombieState = _zombies(world).get_zombie(far_id)
 	var saved_alice_position: Vector3 = world.get_player(alice_id).position
@@ -858,6 +869,8 @@ func test_two_clients_fight_one_zombie_agree_on_the_result_and_it_survives_a_res
 	assert_not_null(world2, "world restored from the save")
 	if world2 == null:
 		return
+	# P3-1: a restart brings no cell into memory; this test looks at the whole world.
+	(world2.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).load_all_saved_cells(world2)
 	var vitals2: PlayerVitals = _survival(world2).get_vitals(alice_id)
 	assert_not_null(vitals2, "alice's survival state was saved")
 	if vitals2 == null:
@@ -868,7 +881,7 @@ func test_two_clients_fight_one_zombie_agree_on_the_result_and_it_survives_a_res
 	assert_eq(vitals2.injuries.size(), saved_wounds)
 	assert_eq(vitals2.infection.stage, InfectionState.Stage.LATENT, "still infected, same stage")
 	assert_true(vitals2.infection.stage_elapsed_world_sec > 0.0, "time already spent in the stage is kept")
-	assert_true(_approx_equal(_zombies(world2).to_world_document(), saved_zombies), "the zombie document is restored")
+	assert_true(_approx_equal(_zombie_save_state(world2), saved_zombies), "the zombie document and every zombie are restored")
 	assert_eq(_zombies(world2).zombie_ids(), PackedStringArray([far_id]), "the dead zombie is gone, the other one is there")
 	assert_false(_zombies(world2).has_zombie(zombie_id))
 	assert_true(world2.registry.is_tombstoned(zombie_id), "the dead zombie's id stays retired")

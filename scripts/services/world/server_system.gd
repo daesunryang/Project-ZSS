@@ -5,6 +5,8 @@ extends RefCounted
 ## ServerComposition, stepped every server physics tick, and persisted:
 ##   world_state.json  -> "systems": {system_id: to_world_document()}
 ##   players/<id>.json -> "systems": {system_id: to_player_fragment(id)}
+##   cells/<cell_id>.json -> "systems": {system_id: to_cell_document(cell_id)}
+##                         (P3-1: entities that lie in a world cell)
 ## Documents must be JSON-safe (SaveService.is_json_safe) and contain
 ## "schema_version". Systems must not hold Node references.
 ##

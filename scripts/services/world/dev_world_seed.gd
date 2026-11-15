@@ -5,7 +5,10 @@ extends Resource
 ## generation / loot rules are Phase 3 (docs/03, docs/13).
 
 const DEFAULT_PATH: String = "res://data/tuning/dev_world_seed.tres"
-## Cell id used for all seeded items until cell streaming exists.
+## The cell at the world origin. Before P3-1 every world item was saved with
+## this id; the server now uses the cell of an item's position
+## (ServerWorld.cell_id_at). Kept for tests and tools that place an item
+## near the origin by hand.
 const DEV_CELL_ID: String = "cell_0_0"
 const DEFAULT_QUANTITY: int = 1
 

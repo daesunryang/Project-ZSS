@@ -852,6 +852,8 @@ func test_dropped_and_removed_items_survive_a_save_and_server_restart() -> void:
 	assert_not_null(_world, "world restored from save")
 	if _world == null:
 		return
+	# P3-1: a restart brings no cell into memory; this test looks at the whole world.
+	(_world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).load_all_saved_cells(_world)
 	assert_eq(_world.inventory.world_item_ids(), PackedStringArray([dropped]), "the dropped item lies in the world")
 	assert_eq(_world.inventory.world_position_of(dropped), ALICE_AT, "... where it was dropped")
 	assert_null(_world.inventory.get_item(used_up), "the used-up item is not restored")

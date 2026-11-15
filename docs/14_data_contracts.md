@@ -6,6 +6,8 @@
 - 정의 ID는 사람이 읽기 쉬운 snake_case.
 - 런타임 인스턴스 ID와 정적 정의 ID를 구분한다.
 - 삭제된 ID를 재사용하지 않는다.
+- `cell_id`(P3-1 임시안, docs/00 ADR-023): 월드 셀의 안정적인 ID. 형식은 `cell_<cx>_<cz>`이고 `cx`·`cz`는 셀 좌표(부호 있는 정수, 앞자리 0 없음. 예: `cell_-3_12`). 셀 좌표는 `floor(월드 좌표 / 셀 크기)`이므로 같은 셀 크기에서는 맵 경계가 바뀌어도 ID가 같다. 저장 파일 이름(`cells/<cell_id>.json`)과 월드 아이템의 `location_id`에 쓴다. 셀 크기가 바뀌면 같은 ID가 다른 영역을 가리키므로 저장을 새 격자로 다시 나눈다(docs/10 §6).
+- 셀이 메모리에서 내려가도 그 안의 엔티티 ID는 은퇴(tombstone)하지 않는다: 엔티티는 저장 안에 그대로 있고, 다시 로딩되면 같은 ID로 돌아온다. ID 순번(`next_entity_sequence`)은 world_state에 있으므로 메모리에 없는 엔티티의 ID가 새로 발급되는 일은 없다.
 
 ## 2. 공통 타임스탬프
 
@@ -45,6 +47,11 @@ source/target 순서는 의미가 있다. A→B와 B→A를 별도 레코드로 
 
 ### ItemInstance
 `item_instance_id`, `definition_id`, `quantity`, `condition`, `quality`, `freshness`, `location_type`, `location_id`, `slot_id`.
+
+P3-1 임시안: `location_type`이 `world`인 아이템의 `location_id`는 그 아이템이 놓인 위치의 `cell_id`다(P3-1 전에는 모든 아이템이 `cell_0_0`이었고, 그런 저장은 읽을 때 위치로 다시 정한다). 월드 아이템은 world_state.json이 아니라 그 셀의 문서에 저장된다.
+
+### WorldCellDocument (cells/<cell_id>.json, P3-1 임시안)
+`schema_version`(1), `cell_id`, `world_items`(`items`: 그 셀에 놓인 ItemInstance 배열, `world_item_positions`: `{item_instance_id: [x, y, z]}`. 없으면 `{}`), `systems`(`{system_id: 그 시스템의 셀 문서}`. 지금은 `zombie`: `{schema_version: 1, zombies: [ZombieState]}`). 플레이어는 셀 문서에 들어가지 않는다. 시스템이 셀에 두는 엔티티(보관함, 구조물)는 `systems` 아래에 같은 방식으로 더한다(docs/09 §15.1).
 
 ### CropInstance
 `crop_instance_id`, `crop_definition_id`, `plot_id`, `growth_progress`, `water_level`, `health`, `planted_at`, `harvest_state`.

@@ -1643,3 +1643,64 @@ row = {
 클라이언트 표시(`scripts/presentation/`): **건네기 보조 키(`hand_over_modifier_key`, 기본 Ctrl)를 누른 채 사용 키(음식 F, 물 G, 붕대 B, 치료제 V)**를 누르면, 미러 인벤토리에서 그 종류의 첫 아이템을 `hand_over_quantity`개(기본 1. 미러의 묶음 수량보다 많이는 요청하지 않는다: `ConsumeIntentPolicy.hand_over_quantity`) "남에게 쓰기"와 같은 대상 후보(`TreatTargetPolicy`, §14.27)에게 건네 달라는 의도를 보낸다. 보조 키 둘의 뜻은 순수 함수 `ConsumeIntentPolicy.use_mode(kind, treat_other_held, hand_over_held)`가 정한다: 아무것도 누르지 않으면 자기 사용, Shift면 남에게 쓰기, Ctrl이면 건네기, **둘 다 누르면 건네기**(아무것도 소비하지 않는 쪽). 네 종류 어디에도 속하지 않는 아이템(개발용 `dev_test_item`, `dev_melee_pipe`)은 서버 규칙으로는 건넬 수 있지만 **클라이언트 입력이 아직 없다**(docs/15 P2-211). HUD의 대상 줄 끝에 건네기 키가 붙는다: "줄 대상: 이름 | 음식 [Shift+F] 물 [Shift+G] 붕대 [Shift+B] 치료제 [Shift+V] | 건네기 [Ctrl+F/G/B/V]". 결과는 사용 결과 자리에 문장으로 표시하고("건네기 승인", "건네기 거부: 상대의 소지품이 가득 찼습니다" 등), 받는 쪽·제3자가 받는 알림은 이벤트 로그에 한 줄로 남긴다("영희이(가) 나에게 Development Ration x2 건넴": 아이템 이름은 정의의 표시 이름이다. "영희 → 민수 물건 건넴"). 화면 설명은 docs/11 §2.12.
 
 테스트: `tests/unit/hand_over_test.gd`(트랜잭션: 묶음 전체가 ID 그대로 옮겨 감, 일부는 새 ID의 새 인스턴스, 같은 정의 묶음에 합치기와 합쳐져 없어진 ID의 tombstone, `max_stack` 넘침이 빈 슬롯으로 가는 두 경우, 묶음을 슬롯 번호 순으로 채움, 자리가 없으면 전체 거부와 불변, `condition`·`quality`가 다른 묶음은 합치지 않음, 실패 사유마다 불변, 고정 seed로 300회 주고받으며 정의별 총수량 보존·슬롯·묶음 크기 불변식 / 규칙: 설정과 사유 코드, 일부 건네기와 그 뒤 받은 쪽이 먹기, 사용 효과가 없는 아이템·무기·치료제 건네기(건네받은 파이프가 받은 쪽의 근접 무기가 됨), 건네는 쪽과 아이템 검증(남의 것, 월드의 것, 없는 ID, 플레이어 ID, 수량 0·음수·초과·아주 큰 값, 모르는·오프라인·자는·죽은 건네는 쪽, 엎드린 건네는 쪽), 대상 검증(자기 자신, 없는 ID, 빈 ID, 좀비 ID, 인벤토리 ID, 오프라인, 사거리 경계와 설정, 사망), 캐릭터 없는 접속자, 자는·엎드린 대상과 깨우지 않음, 받는 쪽이 가득 찬 경우와 자리를 비운 뒤, 검사 순서, 거부마다 저장 문서 전체(`to_documents()`)가 그대로이고 트랜잭션·생존 이벤트 0개, 저장 → 재생성 → 로드 뒤 두 인벤토리·ID·tombstone과 이어서 건네기), `tests/integration/hand_over_net_test.gd`(서버 1 + 클라이언트 3, 실제 ENet: A가 B에게 음식 2개 → 서버와 세 미러의 인벤토리 일치, A는 자기 묶음 변화와 결과만, B는 자기 새 묶음과 대상 알림(키 목록 고정), C는 공개 알림만(키 목록 고정, 아이템·수량 단어 없음)이고 인벤토리·소유자 전용 메시지 0개, 치료 알림·생존 이벤트 0개, B가 받은 것을 먹음, 마지막 한 개가 B의 묶음에 합쳐지고 A는 묶음 삭제를 받음 / 묶음 전체·단일 아이템·넘침과 자는 받는 쪽 / 거부 11종과 불변, 알림·인벤토리 메시지 0개, 죽은 건네는 쪽 / 형식이 틀린 요청 17종과 인자를 더 붙인 호출, 형식은 맞지만 거짓인 요청(남의 아이템을 자기나 제3자에게, 다른 종류의 ID, 아주 큰 수량), 클라이언트가 보낸 서버 메시지 / join 전 요청, 빈도 초과와 내려놓기 버킷 공유·소비 버킷과의 분리 / 건네기 직후 저장, 거부는 저장하지 않음, 서버 재시작 → 재접속 뒤 두 미러 / RPC 구성·요청 검증·알림 검증 규칙), `tests/unit/hand_over_presentation_test.gd`(건네기 보조 키의 기본값·액션 등록·설정 검증(다른 모든 키와 달라야 함), 보조 키 조합의 뜻, 요청 수량, HUD 대상 줄, 결과 문장, 알림 문구). 고친 기존 테스트: 프로토콜 버전을 단언하는 통합 테스트 여섯(8 → 9), `tests/integration/inventory_net_test.gd`의 RPC 목록에 새 RPC 셋 추가, `tests/unit/treat_target_test.gd`의 HUD 대상 줄 기대값(건네기 키가 붙음. 설정을 바꿔 보는 경우의 보조 키는 Ctrl 대신 Alt).
+
+## 15. Phase 3 구현 현황
+
+Phase 3(docs/13 §5, §15) 티켓의 계약을 티켓마다 한 절씩 적는다. 결정 기록은 docs/00, 임시 수치와 확인하지 못한 것은 docs/15 §15.
+
+### 15.1 월드 셀 격자와 셀 생명주기(P3-1, docs/00 ADR-023, system id `world_cells`)
+
+서버 쪽 기반이다. 클라이언트별 복제 범위(P3-2), 건물·보관함(P3-3), 구조물(P3-4~)은 이 절의 seam을 쓴다. `PROTOCOL_VERSION`은 바꾸지 않았다(새 RPC·새 메시지 형식이 없다).
+
+**순수 도메인(`scripts/domain/world_cells/`, 노드 없음)**
+
+| 구성 요소 | 계약 |
+|---|---|
+| `WorldCellSettings` (`data/tuning/world_cell_settings.tres`) | `cell_size_m`(50), `bounds_min_m`·`bounds_max_m`(x·z, ±250 = 500m × 500m), `active_radius_cells`(2), `preload_radius_cells`(3, 활성 반경보다 커야 한다), `preload_lookahead_sec`(4), `deactivate_delay_sec`(5), `unload_delay_sec`(20), `refresh_period_sec`(0.25), `max_preload_loads_per_refresh`(4), `retry_delay_sec`(5). `validate()`, `validate_play_area(world_half_extent_m)`(플레이 영역이 경계 안에 있어야 한다. `CompositionConfig.validate`가 부른다). 시간은 모두 행동 시간(실제 초) |
+| `WorldCellGrid` | `cell_of(position) -> Vector2i`(높이 무시, 음수는 내림, 경계 위·밖은 가장자리 셀, 유한하지 않은 좌표는 0으로 본다), `cell_id_at(position)`, `id_of(cell)`/`parse_id(id)`(`cell_<cx>_<cz>`, 정확히 그 형식만), `is_valid_cell_id`, `contains_cell`, `contains_position`, `cell_min_corner`/`cell_center`, `cells_within(center, radius)`(체비쇼프 거리의 정사각형, 맵 안만, x·z 순), `ring`, `neighbours`, `distance`, `cell_count`, `min_cell`/`max_cell`, `signature()`(셀 크기와 경계: 저장이 어떤 격자로 나뉘었는지) |
+| `WorldCellLifecycle` | 상태 `UNLOADED, LOADING, PRELOADED, ACTIVE, SAVING, UNLOADING`. 허용 전이: `UNLOADED→LOADING`, `LOADING→PRELOADED`(성공)·`UNLOADED`(실패), `PRELOADED⇄ACTIVE`, `PRELOADED→SAVING`, `SAVING→UNLOADING`(성공)·`PRELOADED`(실패), `UNLOADING→UNLOADED`. `can_transition`, `is_loaded`(PRELOADED·ACTIVE·SAVING), `is_simulated`(ACTIVE만) |
+| `WorldCellIndex` | 메모리에 있는 월드 엔티티가 어느 셀에 있는지. `put(entity_id, kind, cell_id) -> 이전 셀`(이동 포함), `remove`, `remove_kind`, `cell_of`, `kind_of`, `entities_in_cell(cell_id, kind = "")`(정렬), `count_in_cell`, `occupied_cell_ids`. 종류는 지금 `item`(월드 아이템)과 `zombie` |
+| `WorldCellDocument` | 셀 저장 문서의 틀: `{schema_version: 1, cell_id, world_items, systems}`. `create`, `is_empty`, `validate` |
+
+**`ServerWorld`가 가진 것과 시스템이 묻는 창구**: `cell_grid`, `cell_index`(월드마다 하나), `cell_id_at(position)`, `cell_coords_at(position)`·`cell_id_of(cell)`(매 틱 경계 통과를 확인하는 쪽이 문자열을 만들지 않게), `is_cell_simulated(cell_id)`·`is_simulated_at(position)`(ACTIVE인가), `is_cell_loaded(cell_id)`(메모리에 있는가), `saves_cell_document(cell_id)`(지금 저장하면 그 셀의 엔티티가 셀 문서로 가는가), `cell_document(cell_id)`, `restore_cell_document(cell_id, document)`, `release_cell(cell_id)`, `notify_cell_active(cell_id, active)`, `repartition_from(cell_documents)`. 시스템은 셀 계산을 직접 하지 않고 이 함수들만 쓴다. 셀 서비스가 없는 월드(직접 만든 `ServerWorld`)는 모든 셀이 시뮬레이션되고 메모리에 있는 것으로 답하므로 P3-1 전과 같이 동작한다.
+
+**`ServerSystem` 훅 다섯(기본은 아무것도 하지 않음)**: `on_cell_activated(world, cell_id)`, `on_cell_deactivated(world, cell_id)`, `to_cell_document(cell_id) -> Dictionary`(없으면 `{}`, `schema_version` 포함), `restore_cell_document(world, cell_id, document) -> 오류`(먼저 전부 검증하고 오류가 있으면 아무것도 바꾸지 않는다), `release_cell(world, cell_id)`(ID는 `EntityRegistry.release`로 내려놓는다: tombstone 아님). 셀에 엔티티를 두는 시스템은 `cell_index`를 갱신하고 이 다섯을 구현한다. 지금 구현한 것은 `ZombieService`이고 월드 아이템은 `InventoryService`의 `cell_snapshot`/`restore_cell_snapshot`/`release_cell`/`world_item_ids_in_cell`/`reassign_world_item_cells`를 `ServerWorld`가 같은 자리에서 부른다. `EntityRegistry.release(id)`가 새로 생겼다.
+
+**`WorldCellService`(`scripts/services/world/world_cell_service.gd`)**: `ServerComposition`이 **가장 먼저** 등록한다(같은 틱의 다른 시스템이 이번 틱의 셀 상태를 보고, 플레이어가 월드에 들어올 때 다른 시스템보다 먼저 셀을 로딩한다).
+
+- 입력은 `ServerWorld.online_player_ids()`와 그 플레이어들의 서버 위치뿐이다. 클라이언트가 보낸 값은 쓰지 않는다. 접속만 하고 캐릭터가 없는 플레이어, 오프라인 플레이어는 셀을 깨우지 않는다.
+- 살펴보기(`refresh`): `refresh_period_sec`마다, 그리고 플레이어가 월드에 들어오거나 새 캐릭터를 시작할 때 즉시. 플레이어 셀에서 활성 반경 안은 ACTIVE, 사전 로딩 반경 안과 미리보기 위치 주변은 메모리에 둔다. 플레이어에게 지금 필요한 셀(활성 영역과 그 바깥 한 줄)은 그 자리에서 로딩하고, 그 밖의 원하는 셀(더 바깥 줄, 미리보기 위치 주변)은 한 번에 `max_preload_loads_per_refresh`개씩 가까운 것부터 로딩한다. 기본값(활성 2, 사전 로딩 3)에서는 필요한 셀이 사전 로딩 영역 전체다.
+- 히스테리시스: 원하지 않게 된 ACTIVE 셀은 `deactivate_delay_sec` 뒤에 PRELOADED가 되고, 원하지 않게 된 PRELOADED 셀은 `unload_delay_sec` 뒤에 해제된다. 그 사이에 다시 원하게 되면 기다림은 취소된다. ACTIVE 셀과 맞닿은 셀은 해제하지 않는다.
+- 해제는 `WorldCellStore.save_cells`가 성공한 뒤에만 한다(SAVING → UNLOADING). 실패하면 PRELOADED로 돌아가고 `retry_delay_sec` 뒤에 다시 시도한다. 저장소가 없으면 해제하지 않는다. 엔티티도 저장 문서도 없는 셀만 내릴 때는 저장소를 부르지 않는다.
+- 로딩 실패: 그 셀은 UNLOADED로 남고(활성화되지 않는다) 셀 ID와 사유를 오류 로그에 남기며 `retry_delay_sec` 뒤에 다시 시도한다. 다른 셀과 플레이어는 영향을 받지 않는다.
+- 떠돌이: 로딩되지 않은 셀에 메모리 엔티티가 있으면(P3-1 전 저장, 새 월드의 시드, 플레이어에게서 먼 스폰) 다음 살펴보기와 모든 저장 직전에 그 셀을 로딩해(저장돼 있던 내용과 합쳐서) 정상 상태로 만든다.
+- 월드 시계가 멈춰 있으면(접속자 0명) 아무 셀도 바뀌지 않는다.
+- 시그널: `cell_state_changed(cell_id, from, to)`, `cell_loaded(cell_id)`, `cell_unloading(cell_id)`(저장은 끝났고 엔티티는 아직 읽을 수 있다), `cell_unloaded(cell_id)`. 조회: `state_of`, `is_loaded`, `is_simulated`, `loaded_cell_ids`, `active_cell_ids`. 도구·테스트: `load_all_saved_cells(world)`. 진단: `load_count`, `unload_count`, `failed_load_count`, `failed_save_count`, `refresh_count`.
+
+**`WorldCellStore`(해제한 셀을 두는 곳)**: `load_cell(cell_id) -> {error, document}`(문서가 비어 있으면 "저장된 것이 없는 셀"), `save_cells(world, cell_ids) -> Error`, `saved_cell_ids()`, `document_of`, `saves_loaded_cells()`. 기본 클래스는 메모리에 문서를 두는 구현(테스트·도구용, JSON 왕복 후 보관)이고, 전용 서버는 `SaveWorldCellStore`(`scripts/services/save/`)를 쓴다. `WorldPersistence.load_or_create`가 붙인다. `ServerComposition.create_world`만으로 만든 월드에는 저장소가 없어 셀을 해제하지 않는다(시뮬레이션 정지만 한다).
+
+**시뮬레이션 정지(좀비)**: `ZombieService`는 ACTIVE 셀의 좀비만 "깨어 있는" 목록에 두고, 틱마다 그 목록만 이동·AI 판단(시야·청각·공격)·시체 제거를 처리한다(`simulated_count()`). 다른 셀의 좀비는 상태·타이머·RNG까지 그대로 멈춘다.
+
+- 활성 셀에서 사전 로딩 셀로 걸어 들어간 좀비는 경계를 넘은 틱에 색인이 새 셀로 바뀌고 멈춘다. 그 셀이 활성화되면 하던 일을 이어 간다. 메모리에 없는 셀로는 들어가지 못한다(그 걸음을 되돌린다, `blocked_move_count`).
+- 소음은 깨어 있는 좀비만 듣는다. 깨어나는 좀비는 그 전에 난 소음을 듣지 못한다(아직 남아 있는 소음이어도). 즉 비활성 셀까지 닿은 소음은 거기서 버려진다. 기본 수치에서는 가장 큰 소음이 들리는 거리(99m)가 항상 시뮬레이션되는 거리(100m)보다 짧다.
+- 멈춘 좀비도 서버 규칙으로 피해를 받을 수 있고, 깨어날 때 공격자를 알아챈다.
+- 지나간 시각(행동 시각 기준의 탐색 종료, 시체 제거 시각)은 깨어난 뒤 첫 처리에서 한꺼번에 적용된다.
+- 플레이어는 셀과 함께 내려가지 않는다. 플레이어 이동의 맵 경계 제한은 예전부터 있던 `GameplaySettings.world_half_extent_m` clamp 그대로다(새 코드 없음).
+
+**저장 배치**(docs/10 §3·§4·§6): `cells/<cell_id>.json`(WorldCellDocument, docs/14 §3), world_state.json 스키마 4, world_state `systems.world_cells = {schema_version: 1, grid: WorldCellGrid.signature()}`.
+
+- 엔티티는 셀 문서와 월드 문서 중 한 곳에만 있다. 저장된 월드(`SaveWorldCellStore`)에서는 메모리에 있는 셀의 엔티티가 전부 그 셀 문서로 가고, world_state에는 로딩되지 못한 셀의 떠돌이만 남는다(보통 없음). 메모리 저장소·저장소 없음에서는 메모리에 있는 엔티티가 world_state에 남는다(P3-1 전과 같은 모양). `ServerWorld.to_documents()`는 `{world_state, players, cells, replace_cells}`를 돌려주고 `restore_documents(world_state, players, cells = {})`의 `cells`는 메모리 저장소로 만든 문서에만 쓴다.
+- `SaveService.save_world(world_id, world_state, players, cells = {}, replace_cells = false)`, `load_cell(world_id, cell_id) -> {error, document, warnings}`, `saved_cell_ids(world_id)`, `load_world`의 결과에 `cell_ids`. 엔티티가 없는 셀 문서는 파일을 만들지 않고 있던 파일을 없앤다.
+- 셀 해제 = `WorldPersistence.save(world)` = 한 세대 전체 저장. 서버 시작은 셀을 하나도 메모리에 올리지 않는다.
+- 셀을 로딩할 때 저장본보다 메모리가 우선이다: 이미 메모리에 있는 ID(주운 아이템 등)와 은퇴한 ID(다 쓴 아이템, 치운 시체)는 건너뛰고 경고를 남긴다. 그래서 셀 파일이 오래된 백업에서 복구돼도 아이템이 둘이 되거나 되살아나지 않는다.
+- 격자가 바뀐 저장(`systems.world_cells.grid`가 지금 설정과 다름): `WorldPersistence`가 셀 파일을 전부 읽어 `ServerWorld.repartition_from`으로 메모리에 올리고 위치로 셀을 다시 정한 뒤, 셀 파일 전체를 한 세대에 바꿔 쓴다. 읽지 못하는 셀 파일이 있으면 시작을 거부하고 저장은 그대로 둔다.
+
+**클라이언트 복제**(새 RPC 없음): 서버 메모리에 있는 셀(ACTIVE와 PRELOADED)의 월드 아이템·좀비가 접속자 전원에게 간다.
+
+- 월드 아이템: 새 모듈 `WorldCellNetModule`(`WorldCellNet`, 자체 RPC 없음)이 `cell_loaded`에서 그 셀의 아이템을 기존 `InventoryNet._rpc_world_items_added`로, `cell_unloading`에서 아이템마다 기존 `NetworkService._rpc_world_item_removed`로 보낸다. 두 파일을 고치지 않으려고(하나는 동결, 하나는 다른 티켓 소유) 메시지를 이름으로 부른다.
+- 좀비: `ZombieNetModule`이 같은 두 시그널에서 그 셀의 좀비마다 기존 `zombie_spawned`/`zombie_removed` 전선 이벤트를 번호가 이어지는 이벤트 흐름에 넣는다. 월드에서 실제로 생기거나 없어진 것이 아니므로 `ZombieService`의 도메인 이벤트와 `server_events_drained`에는 들어가지 않는다. 이렇게 나타난 좀비는 다음 스냅샷(0.1초 이내)이 올 때까지 미러에서 idle·체력 100%로 보인다.
+- 나중에 접속한 클라이언트의 join 스냅샷에는 그 순간 메모리에 있는 것만 들어간다.
+
+**테스트**: `tests/unit/world_cell_grid_test.gd`(좌표·ID·음수·정확한 경계·이웃·전이 표·색인), `world_cell_service_test.gd`(서버 위치 기반 활성화, 전이 순서, 히스테리시스, 미리보기, 로딩 예산, 로딩 실패·저장 실패, 저장소 없음, 떠돌이, 해제→재로딩 동일성), `world_cell_gating_test.gd`(비활성 셀의 좀비는 이동·감지·공격하지 않고 같은 조건의 활성 셀 좀비는 한다, 소음, 경계, 처리량), `world_cell_save_test.gd`(셀 파일, v3→v4, 빈 셀, 백업, 바뀌지 않은 파일), `world_cell_measure_test.gd`(측정값 출력), `tests/integration/world_cell_persistence_test.gd`(저장→재시작→복구, 구버전 저장, 시드 아이템 재생성 없음, 해제 세대의 일관성, 격자 변경, 손상된 셀 파일), `world_cell_net_test.gd`(두 클라이언트 미러의 제거·추가·일치).
+
+**P3-2가 알아야 할 것**: (1) 클라이언트별 범위는 `WorldCellNetModule`과 `ZombieNetModule`의 `cell_loaded`/`cell_unloading` 처리와 `NetworkService._build_join_snapshot`·`ZombieNetModule.build_join_fragment`·좀비 스냅샷 전송 세 곳을 "그 접속자의 관심 셀"로 거르면 된다. 관심 셀 계산에는 `WorldCellGrid.cells_within`과 `ServerWorld.cell_index.entities_in_cell`을 쓸 수 있다. (2) 지금은 PRELOADED 셀의 엔티티도 전송된다. (3) 아이템 제거는 아이템마다 메시지 하나다. (4) `InventoryNetModule`과 `NetworkService`에 공개 함수를 두면 이름으로 RPC를 부르는 부분을 없앨 수 있다. (5) 직접 `inventory.spawn_world_item`을 부르는 서버 코드는 여전히 복제되지 않는다(docs/15 P2-119). (6) 클라이언트 쪽 바닥·경계 표시는 서버의 `WorldCellSettings.bounds`와 `world_half_extent_m`이 같은 사각형임을 전제로 하면 된다.

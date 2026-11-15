@@ -573,3 +573,32 @@ func test_entities_in_a_cell_that_is_not_loaded_get_their_cell_loaded_and_merged
 	assert_eq(((document["world_items"] as Dictionary)["items"] as Array).size(), 1)
 	assert_eq((((document["systems"] as Dictionary)["zombie"] as Dictionary)["zombies"] as Array).size(), 1)
 	assert_true(world.is_online(player_id))
+
+
+func test_releasing_empty_cells_does_not_ask_the_store_to_save() -> void:
+	var store: FailingStore = FailingStore.new()
+	var world: ServerWorld = _world(store)
+	var player: PlayerState = world.join("alice")
+	_move(world, player.player_id, Vector3(35.0, 0.0, 5.0))
+	_run(world, 8.0)
+	assert_true(_cells(world).unload_count > 0, "cells were released")
+	assert_eq(store.save_calls, 0, "nothing lay in them and nothing was saved for them: there is nothing to save")
+	# A cell with an item is saved before it is released.
+	var item_id: String = world.inventory.spawn_world_item("dev_test_item", 1, "cell_1_0", Vector3(15.0, 0.0, 5.0))
+	_move(world, player.player_id, Vector3(-35.0, 0.0, 5.0))
+	_run(world, 8.0)
+	assert_eq(_state(world, "cell_1_0"), S["unloaded"])
+	assert_true(store.save_calls >= 1)
+	assert_true(store.saved_cell_ids().has("cell_1_0"))
+	# The item is taken; the cell is empty now but still has a saved document,
+	# so releasing it must save again (or the item would come back).
+	_move(world, player.player_id, Vector3(15.0, 0.0, 5.0))
+	assert_true(world.try_pickup(player.player_id, item_id).ok)
+	var saves: int = store.save_calls
+	_move(world, player.player_id, Vector3(-35.0, 0.0, 5.0))
+	_run(world, 8.0)
+	assert_eq(_state(world, "cell_1_0"), S["unloaded"])
+	assert_true(store.save_calls > saves, "the emptied cell was saved")
+	assert_false(store.saved_cell_ids().has("cell_1_0"), "its document is gone")
+	_move(world, player.player_id, Vector3(15.0, 0.0, 5.0))
+	assert_eq(world.inventory.world_item_ids().size(), 0)

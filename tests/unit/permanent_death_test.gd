@@ -357,6 +357,8 @@ func test_a_death_wait_survives_a_save_and_restart() -> void:
 	assert_not_null(restored, "world restored from save")
 	if restored == null:
 		return
+	# P3-1: a restart brings no cell into memory; this test looks at the whole world.
+	(restored.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).load_all_saved_cells(restored)
 	var survival: SurvivalService = _survival(restored)
 	var restored_alice: PlayerState = restored.get_player(alice.player_id)
 	assert_false(survival.is_alive(alice.player_id), "still dead after the restart")

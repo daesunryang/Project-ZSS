@@ -725,7 +725,11 @@ func test_world_persistence_does_not_reseed_existing_worlds() -> void:
 	var ids: PackedStringArray = _zombies(created).zombie_ids()
 	_settings.dev_spawn_count = 20  # a later build with more dev zombies
 	var reloaded: ServerWorld = WorldPersistence.new(SaveService.new(_root), _config()).load_or_create(WORLD)
-	assert_eq(_zombies(reloaded).zombie_ids(), ids, "an existing world keeps exactly its saved zombies")
+	# P3-1: a restart brings no cell into memory; this test looks at the whole world.
+	(reloaded.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).load_all_saved_cells(reloaded)
+	var reloaded_ids: PackedStringArray = _zombies(reloaded).zombie_ids()
+	reloaded_ids.sort()  # cells are loaded one by one: not in spawn order
+	assert_eq(reloaded_ids, ids, "an existing world keeps exactly its saved zombies")
 
 	# A save written before the zombie system existed gets no zombies (docs/15 P2-3).
 	var documents: Dictionary = created.to_documents()

@@ -429,9 +429,15 @@ func _step_zombies(world: ServerWorld, action_delta: float) -> void:
 	total_ai_update_count += last_ai_update_count
 
 
+## `zombies` holds the zombies that are NOT saved with a cell document
+## (P3-1): all of them in a world without a saved cell store, and in saves
+## written before cells existed; normally none on a dedicated server.
 func to_world_document() -> Dictionary:
+	var world: ServerWorld = _world()
 	var zombies: Array[Dictionary] = []
 	for zombie_id: String in _zombies:
+		if world != null and world.saves_cell_document(world.cell_index.cell_of(zombie_id)):
+			continue
 		zombies.append(_zombies[zombie_id].to_dict())
 	return {
 		"schema_version": SCHEMA_VERSION,

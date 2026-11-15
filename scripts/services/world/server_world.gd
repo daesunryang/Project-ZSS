@@ -26,8 +26,10 @@ extends RefCounted
 ##     world) and its player creates the next one with create_character()
 ##     once the systems allow it (new_character_block_reason).
 
-const SCHEMA_VERSION: int = 3
+const SCHEMA_VERSION: int = 4
 const KEY_SYSTEMS: String = "systems"
+## Schema v4 (P3-1): world items and zombies may be saved in cell documents
+## instead of the world document (see to_documents).
 ## WorldClock calendar time and action time (docs/09 §14.16). The action
 ## time was added in schema v3 (P2-T1).
 const KEY_WORLD_TIME: String = "world_time_sec"
@@ -604,8 +606,20 @@ func clamp_to_world(position: Vector3) -> Vector3:
 	return Vector3(clampf(position.x, -limit, limit), position.y, clampf(position.z, -limit, limit))
 
 
-## Save documents: {"world_state": Dictionary, "players": {player_id: Dictionary}}.
+## Save documents of the whole world:
+##   {"world_state": Dictionary, "players": {player_id: Dictionary},
+##    "cells": {cell_id: WorldCellDocument}, "replace_cells": bool}
+## World cells (P3-1, docs/09 §15.1): the world items and zombies of a cell
+## are either in that cell's document or in the world document, never in
+## both (saves_cell_document). In a saved world (WorldPersistence) "cells"
+## are the cells that are in memory; the files of the other cells are
+## already in the save. With a memory cell store "cells" are the released
+## cells and the world document holds everything that is in memory. Without
+## a cell store "cells" is empty. "replace_cells": every other saved cell
+## file is out of date (SaveService.save_world).
 func to_documents() -> Dictionary:
+	# First: it may bring cells (and their saved entities) into memory.
+	var cell_documents: Dictionary = _cells.cell_documents_for_save(self) if _cells != null else {}
 	var keys: Dictionary = {}
 	for key: String in _player_ids_by_key:
 		keys[key] = _player_ids_by_key[key]
@@ -615,7 +629,7 @@ func to_documents() -> Dictionary:
 		"next_entity_sequence": ids.get_next_sequence(),
 		"tombstones": Array(registry.tombstones()),
 		"player_keys": keys,
-		"inventory": inventory.to_snapshot(),
+		"inventory": inventory.to_snapshot(saves_cell_document),
 		KEY_WORLD_TIME: clock.world_time_sec,
 		KEY_ACTION_TIME: clock.action_time_sec,
 	}
@@ -635,12 +649,15 @@ func to_documents() -> Dictionary:
 				fragments[system.get_system_id()] = fragment
 		player_doc[KEY_SYSTEMS] = fragments
 		players[player_id] = player_doc
-	return {"world_state": world_state, "players": players}
+	return {"world_state": world_state, "players": players, "cells": cell_documents, "replace_cells": _cells != null and _cells.replaces_saved_cells()}
 
 
 ## Restores from save documents into this (fresh) world. Returns errors;
-## when non-empty the world must be discarded.
-func restore_documents(world_state: Dictionary, players: Dictionary) -> PackedStringArray:
+## when non-empty the world must be discarded. `cells` are the cell
+## documents to_documents() returned for a world with a memory cell store;
+## a saved world leaves it empty (its cell files are read when a cell is
+## loaded).
+func restore_documents(world_state: Dictionary, players: Dictionary, cells: Dictionary = {}) -> PackedStringArray:
 	var errors: PackedStringArray = []
 	if str(world_state.get("world_id", "")) != world_id:
 		errors.append("world_id mismatch")
@@ -696,6 +713,10 @@ func restore_documents(world_state: Dictionary, players: Dictionary) -> PackedSt
 	if not (typeof(action_time) == TYPE_FLOAT or typeof(action_time) == TYPE_INT) or clock.restore_action_time(float(action_time)) != OK:
 		errors.append("invalid action_time_sec")
 	errors.append_array(_restore_systems(world_state, players))
+	if _cells != null:
+		errors.append_array(_cells.restore_cell_documents(self, cells))
+	elif not cells.is_empty():
+		errors.append("cell documents for a world without a cell service")
 	return errors
 
 
@@ -813,6 +834,32 @@ func is_simulated_at(position: Vector3) -> bool:
 ## memory.
 func is_cell_loaded(cell_id: String) -> bool:
 	return _cells == null or _cells.is_loaded(cell_id)
+
+
+## True when a save of the world made now writes the entities of this cell
+## into the cell's own document (then they are not in the world document).
+## Systems ask this in to_world_document().
+func saves_cell_document(cell_id: String) -> bool:
+	return _cells != null and _cells.saves_cell_document(cell_id)
+
+
+## Brings the entities of cell documents that were written for ANOTHER
+## cell grid into memory ({cell_id: document}) and gives every world item
+## the cell of its position (zombies are indexed by position anyway). The
+## caller then makes sure those documents are not read again. Returns errors.
+func repartition_from(cell_documents: Dictionary) -> PackedStringArray:
+	var errors: PackedStringArray = []
+	var cell_ids: PackedStringArray = []
+	for key: Variant in cell_documents:
+		cell_ids.append(str(key))
+	cell_ids.sort()
+	for cell_id: String in cell_ids:
+		if typeof(cell_documents[cell_id]) != TYPE_DICTIONARY:
+			errors.append("cell %s: document is not an object" % cell_id)
+			continue
+		errors.append_array(restore_cell_document(cell_id, cell_documents[cell_id] as Dictionary))
+	inventory.reassign_world_item_cells(cell_id_at)
+	return errors
 
 
 ## Save data of everything that lies in one cell (WorldCellDocument): the

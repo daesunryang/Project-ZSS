@@ -2,35 +2,52 @@ class_name SaveService
 extends RefCounted
 ## Versioned, atomic JSON world saves (docs/10). Server only.
 ##
-## Layout (docs/10 §3, Phase 1 subset):
+## Layout (docs/10 §3, subset):
 ##   <root>/<world_id>/manifest.json
 ##   <root>/<world_id>/world_state.json
 ##   <root>/<world_id>/players/<player_id>.json
+##   <root>/<world_id>/cells/<cell_id>.json     (P3-1: WorldCellDocument)
 ##   <root>/<world_id>/backups/gen_<N>/...      (previous generation's files)
+##
+## Cells (P3-1, docs/09 §15.1): a save writes the documents of the cells
+## that are in memory; the files of the other cells stay as they are and
+## stay listed in the manifest, so one generation is always the whole world.
+## A cell without any entity has no file. One cell is read with load_cell()
+## when the server loads it; load_world() only lists the cell ids.
 ##
 ## Save procedure (docs/10 §4): every document is written to `<file>.tmp`,
 ## read back and compared byte-for-byte; only when all temp files verify are
-## the current files copied to backups/gen_<old> and replaced by rename. The
-## manifest (new generation) is written last. Any failure before the first
-## rename leaves the previous save untouched.
+## the files this save replaces or removes copied to backups/gen_<old> and
+## replaced by rename. The manifest (new generation) is written last. Any
+## failure before the first rename leaves the previous save untouched.
+## A cell file whose content did not change since this service wrote it is
+## not written again (and so needs no new backup copy).
 ## Load: each file is parsed and migrated; a corrupt file falls back to the
 ## newest backup copy that parses (docs/10 §8).
+## Backups: the newest `backup_keep` generations are kept whole; of older
+## generations only the copies that are still the newest backup of their
+## file are kept (a cell file that is rarely rewritten keeps its one copy).
 
 const MANIFEST_FILE: String = "manifest.json"
 const WORLD_STATE_FILE: String = "world_state.json"
 const PLAYERS_DIR: String = "players"
+const CELLS_DIR: String = "cells"
 const BACKUPS_DIR: String = "backups"
 const BACKUP_PREFIX: String = "gen_"
 const TMP_SUFFIX: String = ".tmp"
 const MANIFEST_SCHEMA_VERSION: int = 1
 const CATEGORY_WORLD: String = "world"
 const CATEGORY_PLAYER: String = "player"
+const CATEGORY_CELL: String = "cell"
 const JSON_INDENT: String = "\t"
 const DEFAULT_BACKUP_KEEP: int = 3
 
 var _root: String
 var _backup_keep: int
 var _migrators: Dictionary[String, SaveMigrator] = {}
+## world_id -> {"generation": int, "hashes": {rel_path: sha256 of the text}}:
+## the cell files this service wrote (see _known_cell_hashes).
+var _cell_hashes: Dictionary = {}
 
 
 ## `root` is e.g. "user://saves". `migrators` maps CATEGORY_* to a migrator;
@@ -40,7 +57,7 @@ func _init(root: String, backup_keep: int = DEFAULT_BACKUP_KEEP, migrators: Dict
 	_backup_keep = maxi(backup_keep, 1)
 	_migrators = migrators
 	var defaults: Dictionary[String, SaveMigrator] = SaveMigrations.defaults()
-	for category: String in [CATEGORY_WORLD, CATEGORY_PLAYER]:
+	for category: String in [CATEGORY_WORLD, CATEGORY_PLAYER, CATEGORY_CELL]:
 		if not _migrators.has(category):
 			_migrators[category] = defaults[category]
 
@@ -59,9 +76,20 @@ func current_generation(world_id: String) -> int:
 	return int(manifest.get("generation", 0))
 
 
-## Saves `world_state` and `players` (player_id -> document). Every document
-## must contain `schema_version` and only JSON-safe values.
-func save_world(world_id: String, world_state: Dictionary, players: Dictionary) -> Error:
+## Relative path of a cell's file inside the world directory.
+static func cell_file(cell_id: String) -> String:
+	return CELLS_DIR.path_join(cell_id + ".json")
+
+
+## Saves `world_state`, `players` (player_id -> document) and `cells`
+## (cell_id -> WorldCellDocument: the cells that are in memory). Every
+## document must contain `schema_version` and only JSON-safe values.
+##
+## Cell files that are not in `cells` are kept and stay listed. A cell whose
+## document holds no entity gets no file, and loses the one it had.
+## `replace_cells` true: `cells` is every cell of the world; every other cell
+## file is dropped (the world was partitioned again, docs/09 §15.1).
+func save_world(world_id: String, world_state: Dictionary, players: Dictionary, cells: Dictionary = {}, replace_cells: bool = false) -> Error:
 	if not LaunchConfig.is_valid_world_id(world_id):
 		return _fail("invalid world id", world_id, ERR_INVALID_PARAMETER)
 	var documents: Dictionary[String, Dictionary] = {WORLD_STATE_FILE: world_state}
@@ -69,6 +97,15 @@ func save_world(world_id: String, world_state: Dictionary, players: Dictionary) 
 		if typeof(player_id) != TYPE_STRING or not PlayerState.is_valid_player_id(str(player_id)):
 			return _fail("invalid player id '%s'" % str(player_id), world_id, ERR_INVALID_PARAMETER)
 		documents[PLAYERS_DIR.path_join(str(player_id) + ".json")] = players[player_id]
+	# Cell files this save takes out of the manifest (cells that are empty now).
+	var dropped: PackedStringArray = []
+	for cell_id: Variant in cells:
+		if typeof(cell_id) != TYPE_STRING or WorldCellGrid.parse_id(str(cell_id)) == null or typeof(cells[cell_id]) != TYPE_DICTIONARY:
+			return _fail("invalid cell id or document '%s'" % str(cell_id), world_id, ERR_INVALID_PARAMETER)
+		if WorldCellDocument.is_empty(cells[cell_id] as Dictionary):
+			dropped.append(cell_file(str(cell_id)))
+		else:
+			documents[cell_file(str(cell_id))] = cells[cell_id]
 	for rel_path: String in documents:
 		var document: Dictionary = documents[rel_path]
 		if not document.has(SaveMigrator.KEY_SCHEMA_VERSION):
@@ -77,39 +114,64 @@ func save_world(world_id: String, world_state: Dictionary, players: Dictionary) 
 			return _fail("document contains non-JSON values: " + rel_path, world_id, ERR_INVALID_DATA)
 
 	var base: String = world_dir(world_id)
-	if DirAccess.make_dir_recursive_absolute(base.path_join(PLAYERS_DIR)) != OK:
+	if DirAccess.make_dir_recursive_absolute(base.path_join(PLAYERS_DIR)) != OK or DirAccess.make_dir_recursive_absolute(base.path_join(CELLS_DIR)) != OK:
 		return _fail("cannot create save directory", world_id, ERR_CANT_CREATE)
+	var old_generation: int = current_generation(world_id)
+	var new_generation: int = old_generation + 1
+	var old_files: PackedStringArray = _manifest_files(world_id)
+
+	# A cell file whose content would not change is left alone: not written,
+	# not backed up. Most cells in memory do not change between two saves, and
+	# every file costs several disk operations (docs/15 P3-021).
+	var texts: Dictionary[String, String] = {}
+	var known: Dictionary = _known_cell_hashes(world_id, old_generation)
+	for rel_path: String in documents:
+		var text: String = JSON.stringify(documents[rel_path], JSON_INDENT, true)
+		var is_cell: bool = rel_path.begins_with(CELLS_DIR + "/")
+		if not (is_cell and old_files.has(rel_path) and str(known.get(rel_path, "")) == text.sha256_text()):
+			texts[rel_path] = text
+	# Cell files that leave the save: cells that are empty now and, when the
+	# cells are replaced, every cell file that is not part of this save.
+	var removed: PackedStringArray = []
+	for rel_path: String in old_files:
+		if rel_path.begins_with(CELLS_DIR + "/") and (dropped.has(rel_path) or (replace_cells and not documents.has(rel_path))):
+			removed.append(rel_path)
 
 	# 1-3. write temp files and verify them.
 	var written: PackedStringArray = []
-	for rel_path: String in documents:
-		var text: String = JSON.stringify(documents[rel_path], JSON_INDENT, true)
+	for rel_path: String in texts:
 		var tmp_path: String = base.path_join(rel_path + TMP_SUFFIX)
-		if not _write_text(tmp_path, text) or _read_text(tmp_path) != text:
+		if not _write_text(tmp_path, texts[rel_path]) or _read_text(tmp_path) != texts[rel_path]:
 			_remove_files(base, written)
 			DirAccess.remove_absolute(tmp_path)
 			return _fail("temp file verification failed: " + rel_path, world_id, ERR_FILE_CANT_WRITE)
 		written.append(rel_path + TMP_SUFFIX)
 
-	# 4. back up the current generation, then swap files in.
-	var old_generation: int = current_generation(world_id)
-	var new_generation: int = old_generation + 1
-	var old_files: PackedStringArray = _manifest_files(world_id)
+	# 4. back up what this save replaces or removes (and the manifest), then
+	# swap the new files in. Files this save does not touch need no new copy.
 	if old_generation > 0:
 		var backup_dir: String = base.path_join(BACKUPS_DIR).path_join(BACKUP_PREFIX + str(old_generation))
 		for rel_path: String in old_files + PackedStringArray([MANIFEST_FILE]):
+			if rel_path != MANIFEST_FILE and not texts.has(rel_path) and not removed.has(rel_path):
+				continue
 			var source: String = base.path_join(rel_path)
 			if FileAccess.file_exists(source):
 				DirAccess.make_dir_recursive_absolute(backup_dir.path_join(rel_path).get_base_dir())
 				if DirAccess.copy_absolute(source, backup_dir.path_join(rel_path)) != OK:
 					_remove_files(base, written)
 					return _fail("backup failed: " + rel_path, world_id, ERR_FILE_CANT_WRITE)
-	for rel_path: String in documents:
+	for rel_path: String in texts:
 		if DirAccess.rename_absolute(base.path_join(rel_path + TMP_SUFFIX), base.path_join(rel_path)) != OK:
+			_cell_hashes.erase(world_id)
 			return _fail("rename failed (previous generation is in backups): " + rel_path, world_id, ERR_FILE_CANT_WRITE)
 
-	# 5. manifest last. Files of players not in this save stay listed.
-	var files: PackedStringArray = old_files.duplicate()
+	# 5. manifest last. Files of players and of cells that are not in this
+	# save stay listed; removed cell files leave the list and are deleted
+	# after the manifest no longer names them.
+	var files: PackedStringArray = []
+	for rel_path: String in old_files:
+		if not removed.has(rel_path):
+			files.append(rel_path)
 	for rel_path: String in documents:
 		if not files.has(rel_path):
 			files.append(rel_path)
@@ -125,16 +187,75 @@ func save_world(world_id: String, world_state: Dictionary, players: Dictionary) 
 	var manifest_text: String = JSON.stringify(manifest, JSON_INDENT, true)
 	var manifest_tmp: String = base.path_join(MANIFEST_FILE + TMP_SUFFIX)
 	if not _write_text(manifest_tmp, manifest_text) or DirAccess.rename_absolute(manifest_tmp, base.path_join(MANIFEST_FILE)) != OK:
+		_cell_hashes.erase(world_id)
 		return _fail("manifest write failed", world_id, ERR_FILE_CANT_WRITE)
+	_remove_files(base, removed)
 	_prune_backups(base, new_generation)
-	GameLogger.info("save", "world saved", {"world_id": world_id, "generation": new_generation, "documents": documents.size()})
+	_remember_cell_hashes(world_id, new_generation, known, texts, removed)
+	GameLogger.info("save", "world saved", {"world_id": world_id, "generation": new_generation, "documents": documents.size(), "written": texts.size()})
 	return OK
 
 
+## Content hashes of the cell files this service wrote ({rel_path: sha256}),
+## valid only while the save on disk is still the generation it wrote last
+## (another writer makes them worthless: then {}).
+func _known_cell_hashes(world_id: String, generation: int) -> Dictionary:
+	var entry: Dictionary = _cell_hashes.get(world_id, {})
+	if entry.is_empty() or int(entry["generation"]) != generation:
+		return {}
+	return entry["hashes"] as Dictionary
+
+
+func _remember_cell_hashes(world_id: String, generation: int, known: Dictionary, texts: Dictionary[String, String], removed: PackedStringArray) -> void:
+	var hashes: Dictionary = known
+	for rel_path: String in texts:
+		if rel_path.begins_with(CELLS_DIR + "/"):
+			hashes[rel_path] = texts[rel_path].sha256_text()
+	for rel_path: String in removed:
+		hashes.erase(rel_path)
+	_cell_hashes[world_id] = {"generation": generation, "hashes": hashes}
+
+
+## Ids of the cells the current save has a file for, sorted.
+func saved_cell_ids(world_id: String) -> PackedStringArray:
+	var ids: PackedStringArray = []
+	for rel_path: String in _manifest_files(world_id):
+		if rel_path.begins_with(CELLS_DIR + "/"):
+			ids.append(rel_path.get_file().get_basename())
+	ids.sort()
+	return ids
+
+
+## Loads the document of one cell (P3-1). Returns {"error": Error,
+## "document": Dictionary, "warnings": PackedStringArray}. OK with an empty
+## document = the save has no file for this cell (nothing lies there). A
+## file that cannot be read falls back to its newest backup copy;
+## ERR_FILE_CORRUPT when no copy can be read (the rest of the world is not
+## affected, docs/10 §8).
+func load_cell(world_id: String, cell_id: String) -> Dictionary:
+	var result: Dictionary = {"error": OK, "document": {}, "warnings": PackedStringArray()}
+	if WorldCellGrid.parse_id(cell_id) == null:
+		result["error"] = ERR_INVALID_PARAMETER
+		return result
+	var rel_path: String = cell_file(cell_id)
+	if not _manifest_files(world_id).has(rel_path):
+		return result
+	var warnings: PackedStringArray = []
+	var document: Dictionary = _load_document(world_dir(world_id), rel_path, CATEGORY_CELL, warnings, "load_cell")
+	result["warnings"] = warnings
+	if document.is_empty():
+		result["error"] = ERR_FILE_CORRUPT
+		return result
+	result["document"] = document
+	return result
+
+
 ## Loads a world. Returns {"error": Error, "world_state": Dictionary,
-## "players": {player_id: Dictionary}, "generation": int, "warnings": PackedStringArray}.
+## "players": {player_id: Dictionary}, "generation": int, "warnings":
+## PackedStringArray, "cell_ids": PackedStringArray (the cells that have a
+## file; their documents are read one by one with load_cell)}.
 func load_world(world_id: String) -> Dictionary:
-	var result: Dictionary = {"error": OK, "world_state": {}, "players": {}, "generation": 0, "warnings": PackedStringArray()}
+	var result: Dictionary = {"error": OK, "world_state": {}, "players": {}, "generation": 0, "warnings": PackedStringArray(), "cell_ids": PackedStringArray()}
 	if not has_save(world_id):
 		result["error"] = ERR_FILE_NOT_FOUND
 		return result
@@ -162,7 +283,8 @@ func load_world(world_id: String) -> Dictionary:
 		players[rel_path.get_file().get_basename()] = document
 	result["players"] = players
 	result["warnings"] = warnings
-	GameLogger.info("save", "world loaded", {"world_id": world_id, "generation": result["generation"], "players": players.size(), "warnings": warnings.size()})
+	result["cell_ids"] = saved_cell_ids(world_id)
+	GameLogger.info("save", "world loaded", {"world_id": world_id, "generation": result["generation"], "players": players.size(), "cells": (result["cell_ids"] as PackedStringArray).size(), "warnings": warnings.size()})
 	return result
 
 
@@ -188,7 +310,7 @@ static func is_json_safe(value: Variant) -> bool:
 			return false
 
 
-func _load_document(base: String, rel_path: String, category: String, warnings: PackedStringArray) -> Dictionary:
+func _load_document(base: String, rel_path: String, category: String, warnings: PackedStringArray, operation: String = "load_world") -> Dictionary:
 	var candidates: PackedStringArray = [base.path_join(rel_path)]
 	for backup: String in _backup_dirs_newest_first(base):
 		candidates.append(backup.path_join(rel_path))
@@ -204,9 +326,9 @@ func _load_document(base: String, rel_path: String, category: String, warnings: 
 			continue
 		if path != candidates[0]:
 			warnings.append("restored %s from backup %s" % [rel_path, path])
-			GameLogger.warning("save", "file restored from backup", {"file": rel_path, "backup": path, "operation": "load_world"})
+			GameLogger.warning("save", "file restored from backup", {"file": rel_path, "backup": path, "operation": operation})
 		return migrated
-	GameLogger.error("save", "no readable copy of save file", {"file": rel_path, "operation": "load_world"})
+	GameLogger.error("save", "no readable copy of save file", {"file": rel_path, "operation": operation})
 	return {}
 
 
@@ -235,11 +357,50 @@ func _backup_dirs_newest_first(base: String) -> PackedStringArray:
 	return dirs
 
 
+## Deletes backup copies outside the newest `_backup_keep` generations,
+## except a copy that is the newest backup of its file: since a save only
+## backs up what it replaces, a file that is rarely rewritten (the cell file
+## of a quiet area) would otherwise lose its only backup.
 func _prune_backups(base: String, newest_generation: int) -> void:
+	var has_newer_copy: Dictionary[String, bool] = {}
 	for path: String in _backup_dirs_newest_first(base):
 		var generation: int = int(path.get_file().trim_prefix(BACKUP_PREFIX))
-		if generation <= newest_generation - 1 - _backup_keep:
-			remove_tree(path)
+		var expired: bool = generation <= newest_generation - 1 - _backup_keep
+		var rel_paths: PackedStringArray = []
+		_list_files(path, "", rel_paths)
+		for rel_path: String in rel_paths:
+			if expired and has_newer_copy.has(rel_path):
+				DirAccess.remove_absolute(path.path_join(rel_path))
+			else:
+				has_newer_copy[rel_path] = true
+		if expired:
+			_remove_empty_dirs(path)
+
+
+## Collects the files under `dir_path` as paths relative to it.
+static func _list_files(dir_path: String, prefix: String, out: PackedStringArray) -> void:
+	var dir: DirAccess = DirAccess.open(dir_path)
+	if dir == null:
+		return
+	for file_name: String in dir.get_files():
+		out.append(prefix + file_name)
+	for sub_dir: String in dir.get_directories():
+		_list_files(dir_path.path_join(sub_dir), prefix + sub_dir + "/", out)
+
+
+## Deletes `path` and its sub-directories as far as they are empty. True
+## when `path` itself is gone.
+static func _remove_empty_dirs(path: String) -> bool:
+	var dir: DirAccess = DirAccess.open(path)
+	if dir == null:
+		return true
+	var empty: bool = dir.get_files().is_empty()
+	for sub_dir: String in dir.get_directories():
+		if not _remove_empty_dirs(path.path_join(sub_dir)):
+			empty = false
+	if empty:
+		DirAccess.remove_absolute(path)
+	return empty
 
 
 ## Recursively deletes a directory (used for backup pruning and tests).
