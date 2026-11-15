@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="MeleeWeaponDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/combat/melee_weapon_definition.gd" id="1_weapon"]
+
+[resource]
+script = ExtResource("1_weapon")
+weapon_id = "dev_melee_pipe"
+display_name = "Development Pipe"
+category = 1
+item_definition_id = "dev_melee_pipe"
+base_damage = 25.0
+range_m = 2.0
+arc_angle_deg = 100.0
+cooldown_sec = 1.2
+stamina_cost = 12.0
+noise_loudness = 12.0
+noise_frequency_profile = "broadband"

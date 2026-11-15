@@ -24,6 +24,10 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# Phase 2-A: zombies (A2). After survival and noise, which they use.
 	if world.register_system(ZombieService.new(config.zombie, world.ids, world.registry, world.clock)) != OK:
 		return null
+	# Phase 2-C: melee combat (C1). After survival, noise and zombies, which
+	# it uses. It acts on requests (request_melee_attack), not in step().
+	if world.register_system(CombatService.new(config.combat, config.melee_weapons, world.clock)) != OK:
+		return null
 	return world
 
 

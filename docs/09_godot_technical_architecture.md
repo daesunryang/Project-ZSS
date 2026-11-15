@@ -272,7 +272,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 - 세기 모델과 수치는 docs/15 P2-20. 시간 감쇠·만료는 월드 시간 기준이라 월드 시계가 멈춘 동안(접속자 0명)에는 줄지도 사라지지도 않는다. 만료된 소음은 정리 전이라도 조회에 나오지 않는다.
 - 공간 조회: 소음은 XZ 평면 해시 격자(기본 16m)의 한 칸에 들어간다. 조회는 듣는 쪽 칸에서 "지금 가장 큰 소음이 들릴 수 있는 거리"만큼의 이웃 칸만 훑고, 그 후보 목록을 (칸, 범위)별로 캐시한다. 같은 칸에 있는 다른 청취자는 소음이 추가·삭제되기 전까지 캐시를 다시 쓴다(무리 지은 좀비 N마리가 칸 훑기 1번을 공유, docs/02 §6.3). 점유 칸 수가 이웃 칸 수보다 적으면 점유 칸만 훑는다. `query_audible_brute_force`는 격자 없이 전부 검사하는 기준 구현이며 테스트가 두 결과가 같은지 비교한다.
 - 저장하지 않는다(`to_world_document()`는 빈 문서). 이유와 ID 형식은 docs/15 P2-23. 다른 시스템이 저장 문서에 `noise_id`를 넣으면 안 되고, 필요하면 위치·시간을 복사해 저장한다.
-- 아직 소음을 내는 호출자는 없다. 플레이어 이동·전투가 `emit`을 호출하는 것은 후속 티켓(C1/N1)이다.
+- 소음을 내는 호출자: 근접 공격(`CombatService`, §14.10)이 휘두를 때마다 `emit`을 호출한다.
 
 ### 14.9 좀비 계약(P2-A2, system id `zombie`)
 
@@ -306,3 +306,58 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 - 결정론: 좀비마다 RNG(seed = hash("<rng_seed>:<zombie_id>"))를 갖고 배회·수색 지점·공격 굴림에 쓴다. 같은 seed와 같은 입력이면 좀비 문서·이벤트·플레이어 피해가 같다(테스트로 확인).
 - 저장: world_state.json `systems.zombie` = `{schema_version: 1, rng_seed, rng_state, zombies: [ZombieState.to_dict()]}`(64비트 RNG 값은 문자열). 불러올 때 ID 형식·중복·tombstone·수치 범위를 검사하고 하나라도 틀리면 월드 복구를 실패시킨다. `seed_new_world`는 새 월드에만 개발용 좀비를 놓는다. 저장하지 않는 것은 docs/15 P2-31.
 - 테스트: `tests/unit/zombie_perception_test.gd`, `tests/unit/zombie_service_test.gd`(고정 seed 시나리오, 시야/소리 구분, 수색 복귀, 사망·오프라인 대상 제외, 저장→재생성→로드, 결정론, 월드 3시간 가속 soak, 잘못된 입력).
+
+### 14.10 근접 전투 계약(P2-C1, system id `combat`)
+
+`scripts/domain/combat/`: `MeleeWeaponDefinition`(무기 한 종류의 정적 정의 Resource), `MeleeWeaponCatalog`(무기 ID·아이템 ID로 찾는 읽기 전용 목록, `resources/definitions/melee_weapons/*.tres`를 읽음), `MeleeHitRules`(노드 없는 판정 규칙: 호 안 여부, 대상 선택, 피해 계산), `CombatSettings`(`data/tuning/combat_settings.tres`), `CombatService`(ServerSystem). 네트워크 코드는 없다. 등록 순서는 `survival` → `noise` → `zombie` → `combat`이며 전투는 앞의 셋을 `world.get_system`으로 얻어 쓴다. `CompositionConfig`에 `combat`, `melee_weapons` 필드가 추가됐고 `validate()`가 무기 목록을 아이템 목록·소음 설정과 대조한다. 임시 가정은 docs/15 P2-40~P2-47.
+
+클라이언트가 보낼 수 있는 것은 "누가(`player_id`, 네트워크 계층이 peer에서 구함) 어느 방향으로(`aim_yaw`) 휘둘렀다"뿐이다. 위치·대상·무기·피해·명중 여부·사망은 모두 서버 상태에서 정한다(docs/02 §5.2).
+
+| API | 계약 |
+|---|---|
+| `request_melee_attack(world, player_id, aim_yaw) -> ActionResult` | N1의 RPC 핸들러가 부르는 진입점. 아래 순서로 검증하고 하나라도 실패하면 아무것도 바뀌지 않는다(스태미나·쿨다운·RNG·소음·이벤트 모두). 성공하면 `melee_attack` 이벤트를 돌려주고 같은 이벤트를 큐에 넣는다 |
+| `weapon_for(world, player_id) -> MeleeWeaponDefinition` | 지금 공격하면 쓰일 무기(없는 플레이어는 null). 표시용 조회 |
+| `cooldown_remaining(player_id) -> float` | 다음 공격까지 남은 월드초(0 = 가능) |
+| `drain_events() -> Array[Dictionary]` | 네트워크용 읽기 전용. 지난 호출 이후의 이벤트를 오래된 순으로 돌려주고 비운다. 최대 `max_pending_events`(256)개 보관, 넘으면 오래된 것부터 버리고 `dropped_event_count`를 올린다(좀비 이벤트 큐와 같은 방식) |
+
+검증 순서와 실패 사유 코드(먼저 걸린 것 하나만 반환):
+
+| 사유 | 조건 |
+|---|---|
+| `combat_unavailable` | `world`가 null이거나 `survival`/`zombie` 시스템이 등록되지 않음(조립 오류) |
+| `bad_aim_yaw` | NaN·무한, 또는 `\|aim_yaw\|` > `max_abs_aim_yaw`(기본 2π, 이동 의도의 yaw와 같은 범위) |
+| `unknown_player` | 이 월드의 플레이어가 아님(빈 ID, 좀비 ID 포함) |
+| `not_online` | 접속 중이 아님 |
+| `player_dead` | 사망 상태 |
+| `no_weapon` | 쓸 무기 정의가 없음(맨손 정의 누락 = 설정 오류, 시작 시 `validate()`가 먼저 잡는다) |
+| `attack_on_cooldown` | 직전 공격의 쿨다운(월드 시간)이 남음 |
+| `not_enough_stamina` | 스태미나가 무기 비용보다 적음(`SurvivalService.try_spend_stamina`가 마지막 검사이자 차감) |
+
+승인된 공격의 처리:
+
+- 무기: `CombatSettings.inventory_weapon_rule`에 따라 플레이어 인벤토리의 아이템 중 `MeleeWeaponDefinition.item_definition_id`와 일치하는 것을 찾는다. `HIGHEST_DAMAGE`(기본, 기본 피해가 가장 큰 무기·같으면 무기 ID가 작은 것), `FIRST_SLOT`(슬롯 번호가 가장 작은 무기 아이템), `UNARMED_ONLY`(항상 맨손). 해당 아이템이 없으면 `unarmed_weapon_id`(맨손)이다. 장비 슬롯은 아직 없다.
+- 대상: 서버가 가진 플레이어 위치와 `aim_yaw`(플레이어에 저장된 `yaw`는 쓰지도 바꾸지도 않는다)를 기준으로, 무기 사거리(`range_m`) 안이고 조준 방향을 중심으로 한 호(`arc_angle_deg`, 전체 각) 안에 있는 **살아 있는 좀비 중 가장 가까운 1마리**. 거리가 같으면 좀비 ID가 작은 쪽. XZ 평면에서만 계산하며 yaw 규약은 플레이어·좀비와 같다(0 = −Z). 플레이어는 대상이 되지 않는다(PvP 비활성, docs/00).
+- 피해: `무기 base_damage × SurvivalService.handling_multiplier(player) × uniform(damage_roll_min, damage_roll_max)`. 난수는 전투 RNG(seed = `CombatSettings.rng_seed`, 상태 저장)이고 **대상이 있는 공격에서만** 한 번 뽑는다. 적용은 `ZombieService.apply_damage_to_zombie(target, damage, player_id)`이므로 맞은 좀비는 좀비 계약(§14.9)대로 공격자를 인지한다.
+- 빗나가도(대상 없음) 스태미나를 쓰고 쿨다운이 시작되며 소음이 난다. 소음은 `NoiseService.emit(player_id, 플레이어 위치, 무기 noise_loudness, 무기 noise_frequency_profile)`이고 `noise_loudness`가 0이면 내지 않는다.
+- 쿨다운은 플레이어별 "다음 공격 가능 월드 시각"으로 기억한다. 접속을 끊었다 다시 들어와도 초기화되지 않는다.
+
+이벤트 `melee_attack`(`ActionResult.event`와 `drain_events()`가 같은 형식, JSON-safe):
+
+| 필드 | 내용 |
+|---|---|
+| `event_type` | `"melee_attack"` |
+| `attacker_id` | 공격한 플레이어 ID |
+| `weapon_id` | 쓰인 무기 정의 ID(`unarmed` 등) |
+| `aim_yaw` | 조준 방향, [−π, π]로 정규화한 값 |
+| `position` | 공격 순간 공격자의 서버 위치 `[x, y, z]` |
+| `hit` | 대상에게 피해가 들어갔는지 |
+| `target_id` | 맞은 좀비 ID, 빗나가면 `""` |
+| `damage` | 들어간 피해, 빗나가면 0 |
+| `target_health_after` | 맞은 뒤 좀비 체력, 빗나가면 0 |
+| `target_died` | 이 공격으로 좀비가 죽었는지 |
+| `world_time` | 월드 시각 |
+
+- 저장: world_state.json `systems.combat` = `{schema_version: 1, rng_seed, rng_state}`(64비트 값은 문자열). 형식이 틀리면 월드 복구를 실패시키고 아무것도 바꾸지 않는다. 쿨다운과 아직 전달하지 않은 이벤트는 저장하지 않는다(이유는 docs/15 P2-44).
+- 결정론: 같은 seed와 같은 요청 순서면 이벤트가 같고, 저장→재생성→로드 뒤에도 피해 굴림이 이어진다(테스트로 확인). 전투는 `step`에서 하는 일이 없어 좀비와 달리 저장을 사이에 두어도 결과가 달라지지 않는다.
+- 무기 정의 데이터: `unarmed`(맨손), `dev_melee_pipe`(둔기, 아이템 `dev_melee_pipe`가 인벤토리에 있을 때). 개발용 파이프 아이템은 정의만 있고 월드에는 놓지 않았다(docs/15 P2-47).
+- 테스트: `tests/unit/combat_rules_test.gd`(순수 규칙·정의·설정 검증), `tests/unit/combat_service_test.gd`(사거리·호, 가장 가까운 대상, 쿨다운, 스태미나, 사망·오프라인·없는 플레이어, 잘못된 aim_yaw, 팔 부상 피해 감소, 연속 공격으로 좀비 사망, 인벤토리 무기 규칙, 공격 소음에 다른 좀비가 조사 상태로, 이벤트 큐 상한, 같은 seed 재현, 저장→로드 후 RNG 이어짐, 손상 문서 거부).

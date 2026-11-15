@@ -152,7 +152,11 @@ func test_default_settings_and_composition() -> void:
 	broken.ai_period_sec = 0.0
 	assert_true(broken.validate().size() >= 4, "; ".join(broken.validate()))
 	var world: ServerWorld = ServerComposition.create_world(WORLD, CompositionConfig.from_defaults())
-	assert_eq(world.system_ids(), PackedStringArray([SurvivalService.SYSTEM_ID, NoiseService.SYSTEM_ID, ZombieService.SYSTEM_ID]), "zombies step after survival and noise")
+	# Later bundles register more systems (combat, ...); only the order of
+	# the systems the zombies depend on is asserted here.
+	var ids: PackedStringArray = world.system_ids()
+	assert_true(ids.find(SurvivalService.SYSTEM_ID) >= 0 and ids.find(SurvivalService.SYSTEM_ID) < ids.find(NoiseService.SYSTEM_ID), "noise steps after survival")
+	assert_true(ids.find(NoiseService.SYSTEM_ID) < ids.find(ZombieService.SYSTEM_ID), "zombies step after survival and noise")
 
 
 func test_dev_seed_is_deterministic_and_uses_stable_entity_ids() -> void:
