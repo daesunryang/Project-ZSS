@@ -56,3 +56,28 @@
 - 제품 정책과 밸런스를 하드코딩하지 않는다.
 - 추후 변경 비용이 큰 항목은 ADR로 결정한다.
 - 가정으로 진행한 경우 코드 주석과 문서에 `PROVISIONAL`을 표시한다.
+
+## 4. Phase 0 부트스트랩 임시 가정 (PROVISIONAL)
+
+Phase 0 구현 중 문서에 근거가 없어 개발을 막지 않는 범위에서 임시로 정한 사항이다. 모두 **확정이 아니며**, 변경 비용이 커지기 전에 검토/ADR이 필요하다.
+
+| # | 항목 | 임시 가정(현재 구현) | 결정 필요 사항 |
+|---|---|---|---|
+| P0-1 | 테스트 프레임워크 | 외부 의존성 없는 자체 headless 러너(`tests/run_tests.gd`, `TestCase`). GUT 등은 Godot 4.7.2 호환성을 검증하지 못해 도입하지 않음. | 자체 러너 유지 vs GUT/GdUnit4 도입. 도입 시 4.7.2 호환 버전 고정과 기존 테스트 이전 방법. |
+| P0-2 | 서버/클라이언트 역할 선택 | 같은 메인 씬에서 `-- --server`/`-- --client` 인자, 없으면 `dedicated_server` feature tag면 서버, 그 외 클라이언트. `--headless`만으로는 서버로 간주하지 않음. | 역할 선택 방식과 전용 서버 전용 진입 씬 분리 여부. |
+| P0-3 | 전용 서버 export 플랫폼 | `export_presets.cfg`에 "Linux Dedicated Server"(x86_64) 프리셋을 둠. | 서버 공식 지원 OS(Linux/Windows), 배포 방식(docs/00 §8의 "전용 서버 배포 방식"과 연동). |
+| P0-4 | 클라이언트 export 플랫폼 | "Windows Client"(x86_64) 프리셋만 둠(docs/00 "Windows PC 우선" 임시값 반영). | Linux/macOS 클라이언트 지원 여부. |
+| P0-5 | 개발용 월드 ID와 형식 | 기본 `dev_empty_world`(`data/tuning/app_settings.tres`). world_id는 소문자/숫자/`_`, 최대 64자로 검증(저장 경로 `user://saves/<world_id>/` 안전성 목적). | world_id 생성 규칙(UUID? 사용자 지정 이름?)과 표시 이름 분리 여부. docs/10, docs/14와 정합 필요. |
+| P0-6 | 게임 버전 체계 | `application/config/version` = `0.0.1`, `MAJOR.MINOR.PATCH`. 네트워크 프로토콜 버전과 저장 `schema_version`은 아직 정의하지 않음. | 게임/프로토콜/저장 스키마 버전의 관계와 호환성 정책(Phase 1 접속 핸드셰이크 전에 결정). |
+| P0-7 | 로그 형식/출력 | `<UTC ISO8601>Z [LEVEL] [subsystem] message \| key=value ...` 형식으로 stdout(ERROR/FATAL은 stderr). 키 이름에 password/token/secret/auth/credential이 포함되면 값을 마스킹. 파일 로깅은 Godot 기본 설정을 그대로 사용. | 서버 로그 파일 위치/로테이션/보존 기간, 구조화(JSON) 로그 필요 여부. |
+| P0-8 | 렌더러 | Forward+ (`rendering/renderer/rendering_method`). | 저사양 PC 대상 여부(Mobile/Compatibility 렌더러 병행) — 세미 리얼리즘 목표와 최소 사양 결정 필요. |
+| P0-9 | 정적 타입 강제 수준 | `debug/gdscript/warnings/untyped_declaration`=Error. `unsafe_*` 경고는 기본값. | `unsafe_method_access` 등 추가 경고를 Error로 올릴지. |
+| P0-10 | CI | 원격 저장소/CI 없음. `tools/check.sh`를 로컬 CI로 사용. | CI 서비스 선택과 CI에서 사용할 Godot 바이너리 확보 방법(공식 사이트 접근 불가 환경 고려). |
+| P0-11 | 종료 코드 | 0=정상, 1=부트스트랩/설정 실패, 2=잘못된 실행 인자. | 서버 운영 도구(감시/재시작)와의 계약으로 확정할지. |
+
+### 4.1 Phase 0에서 검증하지 못한 항목
+
+- 실제 GPU 렌더링 창에서 클라이언트 실행(검증 환경에 디스플레이 없음; 클라이언트는 headless 디스플레이 드라이버로만 실행 확인).
+- export template를 사용한 실제 실행 파일 export(템플릿 미설치). `--export-pack`으로 만든 `.pck`를 에디터 바이너리로 실행하는 것까지만 확인.
+- dedicated server export 시 `dedicated_server` feature tag에 의한 자동 서버 역할 선택(단위 테스트로 파서 로직만 검증).
+- Windows 환경에서의 실행.

@@ -160,3 +160,36 @@ res://
 - 서버에서 UI/카메라/오디오 의존 없이 세계 시뮬레이션이 실행된다.
 - 핵심 게임 규칙이 씬 노드 외부에서 테스트 가능하다.
 - 모든 서비스의 권한과 수명 주기가 문서화되어 있다.
+
+## 14. Phase 0 구현 현황 (2026-11-15)
+
+이 절은 현재 구현을 기록한다. 위 명세와 충돌하면 위 명세가 기준이다. 임시 가정은 `docs/15` §4(PROVISIONAL)를 참조한다.
+
+### 14.1 실행 경로
+
+| 용도 | 명령 |
+|---|---|
+| 전체 로컬 검사(테스트 + 스모크) | `tools/check.sh` |
+| 테스트만 | `tools/run_tests.sh [--filter=<부분문자열>]` |
+| 서버/클라이언트 스모크 | `tools/smoke_test.sh` (`SMOKE_FRAMES`로 프레임 수 조정) |
+| headless 전용 서버 | `tools/run_server.sh [--log-level=DEBUG] [--run-frames=N]` |
+| 클라이언트(창, 디스플레이 필요) | `tools/run_client.sh` |
+
+Godot 바이너리 경로는 환경 변수 `GODOT`로 지정한다(기본값은 개발 환경 경로). 스크립트는 4.7.2.stable이 아니면 실패한다.
+
+게임 인자(`--` 뒤): `--server`, `--client`, `--log-level=<LEVEL>`, `--world-id=<id>`, `--run-frames=<N>`(N 프레임 후 정상 종료, 0=무한). 알 수 없는 인자는 오류(종료 코드 2).
+
+### 14.2 서비스/노드 수명 주기와 권한
+
+| 구성 요소 | 파일 | 수명 주기 | 실행 역할 |
+|---|---|---|---|
+| `Main` | `scenes/main/main.tscn`, `scripts/core/main.gd` | 프로세스 전체. 인자 파싱, 설정 로드, 로그 레벨 적용, 종료 코드 관리. | 공통 |
+| `GameBootstrap` | `scripts/core/game_bootstrap.gd` | `Main`이 생성, `start()` 1회 호출(2회째는 `ERR_ALREADY_IN_USE`). 세션 동안 유지. | 공통 |
+| `GameWorld` | `scenes/world/game_world.tscn`, `scripts/services/world/game_world.gd` | `GameBootstrap`이 `setup(world_id)` 후 트리에 추가. 현재 빈 월드(셀 0개). | 공통(서버 권한 상태는 아직 없음) |
+| `ClientView` | `scenes/main/client_view.tscn`, `scripts/presentation/client_view.gd` | 클라이언트 역할에서만 지연 로드. 카메라/조명/환경/버전 라벨. | 클라이언트 전용 |
+| `GameLogger`, `BuildInfo`, `LaunchConfig`, `AppSettings` | `scripts/core/` | 정적 유틸리티/Resource. Autoload 없음. | 공통 |
+
+### 14.3 테스트
+
+- `tests/run_tests.gd`: `tests/{unit,integration,scenarios}/**/*_test.gd`의 `test_*` 메서드를 실행. 단언이 없는 테스트는 실패 처리.
+- GDScript 런타임 오류는 함수만 중단되고 예외가 없으므로, `tools/run_tests.sh`가 출력에서 `SCRIPT ERROR`/`ERROR:`/`[ERROR]`/`[FATAL]`을 발견하면 실패 처리한다.
