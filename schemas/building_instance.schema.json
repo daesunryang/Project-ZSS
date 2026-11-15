@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lasthaven.local/schemas/building_instance.schema.json",
+  "title": "BuildingInstance",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "structure_instance_id",
+    "definition_id",
+    "cell_id",
+    "transform",
+    "state",
+    "health"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "structure_instance_id": {
+      "type": "string"
+    },
+    "definition_id": {
+      "type": "string"
+    },
+    "shelter_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cell_id": {
+      "type": "string"
+    },
+    "transform": {
+      "type": "object",
+      "required": [
+        "position",
+        "rotation"
+      ],
+      "properties": {
+        "position": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "rotation": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      }
+    },
+    "state": {
+      "enum": [
+        "blueprint",
+        "constructing",
+        "completed",
+        "damaged",
+        "destroyed"
+      ]
+    },
+    "health": {
+      "type": "number",
+      "minimum": 0
+    },
+    "construction_progress": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "owner_permissions": {
+      "type": "object"
+    },
+    "connections": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

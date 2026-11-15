@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lasthaven.local/schemas/npc_state.schema.json",
+  "title": "NPCState",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "npc_id",
+    "definition_id",
+    "personality",
+    "needs",
+    "emotions",
+    "health",
+    "relationships",
+    "location",
+    "rng_state"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "npc_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "definition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "personality": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    "needs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    "emotions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    "health": {
+      "type": "object"
+    },
+    "memories": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/relationship"
+      }
+    },
+    "goals": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "job": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "knowledge": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "location": {
+      "type": "object",
+      "required": [
+        "cell_id",
+        "position"
+      ],
+      "properties": {
+        "cell_id": {
+          "type": "string"
+        },
+        "position": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      }
+    },
+    "rng_state": {
+      "type": "integer"
+    },
+    "simulation_tier": {
+      "enum": [
+        "near",
+        "mid",
+        "far"
+      ]
+    }
+  },
+  "$defs": {
+    "relationship": {
+      "type": "object",
+      "required": [
+        "target_entity_id",
+        "trust",
+        "liking"
+      ],
+      "properties": {
+        "target_entity_id": {
+          "type": "string"
+        },
+        "trust": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "liking": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "respect": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "fear": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "resentment": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "attraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "jealousy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "dependence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "status": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

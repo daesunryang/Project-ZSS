@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lasthaven.local/schemas/item_instance.schema.json",
+  "title": "ItemInstance",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "item_instance_id",
+    "definition_id",
+    "quantity",
+    "location_type",
+    "location_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "item_instance_id": {
+      "type": "string"
+    },
+    "definition_id": {
+      "type": "string"
+    },
+    "quantity": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "condition": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "quality": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "freshness": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "location_type": {
+      "enum": [
+        "world",
+        "inventory",
+        "container",
+        "equipment",
+        "work_order"
+      ]
+    },
+    "location_id": {
+      "type": "string"
+    },
+    "slot_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

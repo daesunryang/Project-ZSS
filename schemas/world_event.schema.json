@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lasthaven.local/schemas/world_event.schema.json",
+  "title": "WorldEvent",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_type",
+    "world_time",
+    "participants",
+    "visibility",
+    "sequence_number"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "event_type": {
+      "type": "string"
+    },
+    "world_time": {
+      "type": "number"
+    },
+    "location": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "witnesses": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "cause_event_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "visibility": {
+      "enum": [
+        "public",
+        "witnesses_only",
+        "participants_only",
+        "secret"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    },
+    "seed": {
+      "type": "integer"
+    },
+    "sequence_number": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "package": "LAST HAVEN Claude Code Specification",
+  "version": "0.1.0",
+  "created": "2026-11-15",
+  "engine": {
+    "name": "Godot",
+    "version": "4.7.2-stable",
+    "language": "GDScript 2.0"
+  },
+  "files": [
+    "CLAUDE.md",
+    "README.md",
+    "docs/00_scope_and_decisions.md",
+    "docs/01_game_design_document.md",
+    "docs/02_survival_combat_infection.md",
+    "docs/03_world_streaming_environment.md",
+    "docs/04_building_shelter.md",
+    "docs/05_npc_ai_system.md",
+    "docs/06_relationship_events_crime.md",
+    "docs/07_farming_livestock.md",
+    "docs/08_multiplayer_network.md",
+    "docs/09_godot_technical_architecture.md",
+    "docs/10_save_persistence.md",
+    "docs/11_ui_art_audio.md",
+    "docs/12_testing_acceptance.md",
+    "docs/13_implementation_roadmap.md",
+    "docs/14_data_contracts.md",
+    "docs/15_risks_and_open_questions.md",
+    "docs/16_npc_ai_deep_dive_backlog.md",
+    "schemas/building_instance.schema.json",
+    "schemas/item_instance.schema.json",
+    "schemas/npc_state.schema.json",
+    "schemas/world_event.schema.json",
+    "templates/ADR_TEMPLATE.md",
+    "templates/FEATURE_SPEC_TEMPLATE.md"
+  ]
+}
