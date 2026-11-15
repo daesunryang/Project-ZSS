@@ -12,10 +12,16 @@ extends ServerSystem
 ##   apply_damage(player_id, DamageInput) -> ActionResult
 ##   apply_infection_exposure(player_id, InfectionState.Exposure, source_id) -> ActionResult
 ##
+##   need_category(player_id, NeedKind.Kind) -> NeedKind.Category
+##   worst_need_category(player_id) -> NeedKind.Category
+##
 ## B1 scope: state, damage/wounds, death flag, stamina spend/regen,
-## multipliers, infection exposure roll (NONE -> LATENT). Needs progression
-## (B2), bleeding/healing/respawn (B3), infection stage progression (B4) and
-## replication (B5) come later.
+## multipliers, infection exposure roll (NONE -> LATENT).
+## B2 scope: hunger/thirst/fatigue grow with world time for online, living
+## players; the worst need category slows stamina regen and movement.
+## Not yet: eating/drinking/sleeping to lower needs (B6/P2-10), starvation
+## damage and bleeding/healing/respawn (B3), infection stage progression (B4)
+## and replication (B5).
 
 const SYSTEM_ID: String = "survival"
 const ENTITY_KIND_WOUND: String = "wound"
@@ -82,9 +88,30 @@ func handling_multiplier(player_id: String) -> float:
 	return _wound_multiplier(player_id, true, _settings.handling_penalty_per_severity, _settings.min_handling_multiplier)
 
 
-## Movement speed factor from leg/foot wounds (1.0 = unhurt, 0 if dead).
+## Movement speed factor from leg/foot wounds and the worst need category
+## (1.0 = unhurt and well fed, 0 if dead, never below the configured floor).
 func movement_speed_multiplier(player_id: String) -> float:
-	return _wound_multiplier(player_id, false, _settings.movement_penalty_per_severity, _settings.min_movement_multiplier)
+	var wound_factor: float = _wound_multiplier(player_id, false, _settings.movement_penalty_per_severity, _settings.min_movement_multiplier)
+	if wound_factor <= DEAD_MULTIPLIER:
+		return wound_factor
+	var need_factor: float = _settings.need_movement_multiplier(worst_need_category(player_id))
+	return clampf(wound_factor * need_factor, _settings.min_movement_multiplier, FULL_MULTIPLIER)
+
+
+## Display category of one need (GOOD for unknown players or needs).
+func need_category(player_id: String, kind: NeedKind.Kind) -> NeedKind.Category:
+	var vitals: PlayerVitals = _vitals.get(player_id, null)
+	if vitals == null or not NeedKind.is_valid_kind(kind):
+		return NeedKind.Category.GOOD
+	return NeedKind.category_for(_need_value(vitals, kind), _settings.need_caution_threshold, _settings.need_danger_threshold)
+
+
+## Worst category across hunger, thirst and fatigue.
+func worst_need_category(player_id: String) -> NeedKind.Category:
+	var worst: NeedKind.Category = NeedKind.Category.GOOD
+	for kind_index: int in NeedKind.KIND_NAMES.size():
+		worst = maxi(worst, need_category(player_id, kind_index as NeedKind.Kind)) as NeedKind.Category
+	return worst
 
 
 ## Applies server-computed damage: records a wound, reduces health and marks
@@ -175,12 +202,16 @@ func on_player_offline(_world: ServerWorld, player_id: String) -> void:
 
 
 func step(_world: ServerWorld, _real_delta: float, world_delta: float) -> void:
-	if world_delta <= 0.0 or _settings.stamina_regen_per_world_sec <= 0.0:
+	if world_delta <= 0.0:
 		return
 	for player_id: String in _online:
 		var vitals: PlayerVitals = _vitals.get(player_id, null)
-		if vitals != null and vitals.is_alive():
-			vitals.stamina = minf(vitals.stamina + _settings.stamina_regen_per_world_sec * world_delta, _settings.max_stamina)
+		if vitals == null or not vitals.is_alive():
+			continue
+		_advance_needs(player_id, vitals, world_delta)
+		var regen: float = _settings.stamina_regen_per_world_sec * _settings.stamina_regen_multiplier(worst_need_category(player_id))
+		if regen > 0.0:
+			vitals.stamina = minf(vitals.stamina + regen * world_delta, _settings.max_stamina)
 
 
 func to_player_fragment(player_id: String) -> Dictionary:
@@ -204,6 +235,26 @@ func restore_player_fragment(player_id: String, fragment: Dictionary) -> PackedS
 
 
 # ------------------------------------------------------------ internals
+
+## Raises each need by rate * world_delta (clamped to need_max) and logs
+## category changes so balance problems are visible in server logs.
+func _advance_needs(player_id: String, vitals: PlayerVitals, world_delta: float) -> void:
+	for kind_index: int in NeedKind.KIND_NAMES.size():
+		var kind: NeedKind.Kind = kind_index as NeedKind.Kind
+		var before: NeedKind.Category = need_category(player_id, kind)
+		var raised: float = minf(_need_value(vitals, kind) + _settings.need_rate_per_world_sec(kind) * world_delta, _settings.need_max)
+		vitals.set(NeedKind.kind_name(kind), raised)
+		var after: NeedKind.Category = need_category(player_id, kind)
+		if after != before:
+			GameLogger.info("survival", "need category changed", {
+				"player_id": player_id, "need": NeedKind.kind_name(kind),
+				"category": NeedKind.category_name(after), "value": raised,
+			})
+
+
+func _need_value(vitals: PlayerVitals, kind: NeedKind.Kind) -> float:
+	return float(vitals.get(NeedKind.kind_name(kind)))
+
 
 func _check_living(player_id: String) -> String:
 	var vitals: PlayerVitals = _vitals.get(player_id, null)
