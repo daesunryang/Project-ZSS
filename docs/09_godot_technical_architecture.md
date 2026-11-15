@@ -233,7 +233,7 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
 | 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), player v1→v2(`systems` 추가). `SaveService` 기본 마이그레이터 |
 
-채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 3(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3).
+채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 4(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4. §14.17).
 
 ### 14.6 생존 계약(B1, system id `survival`)
 
@@ -558,3 +558,106 @@ HUD는 owner 미러가 존재할 때만 체력·스태미나 수치, 세 욕구 
 `ClientInputActions`는 공격 액션을 중복 없이 등록한다. `AttackIntentPolicy`는 연결된 클라이언트에서 설정된 최소 간격만 지났는지 판단하는 노드 없는 로컬 flood guard이며, 쿨다운·스태미나·명중·피해는 판단하지 않는다. 통과하면 `CombatNetModule.request_melee_attack(_yaw)`만 호출한다(yaw 0 = −Z). 마지막 `melee_result`의 승인 또는 서버 사유 코드를 설정 시간 동안 HUD에 표시한다.
 
 `ClientPresentationFormatter`, `AttackIntentPolicy`는 노드 없는 `RefCounted`이며 상태→색, 생존 HUD 문구, 공개 이벤트/공격 결과 문구, 최소 전송 간격을 단위 테스트한다. 임시 결정은 docs/15 §8 P2-90~P2-93에 기록한다.
+
+### 14.17 인벤토리 변화 복제 기반(P2-T2, 모듈 `InventoryNet`)
+
+Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절은 반대 방향(아이템이 인벤토리에서 월드로 가거나 인벤토리에서 없어지는 변화)의 서버 트랜잭션과 복제를 정한다. 먹기(P2-T3)와 영구 사망(P2-T4)은 이 절의 서버 API를 호출하는 후속 티켓이며 여기에는 구현하지 않았다. 임시 가정은 docs/15 §10 P2-110~P2-119.
+
+구성: `InventoryService`(트랜잭션 3개와 `transaction_committed` 시그널 추가), `ServerWorld`(줍기 옆의 래퍼 3개), `InventoryNetModule`(NetModule, 노드 이름 `InventoryNet`: 내려놓기 의도 RPC, 결과 응답, 변화 복제, 클라이언트 표면), `InventoryNetSettings`(`data/tuning/inventory_net_settings.tres`), `ClientWorldState`(미러 적용 메서드 추가). 조립은 `ServerComposition.install_net_modules`에서만 하고 `CompositionConfig`에 `inventory_net` 필드가 추가됐다(`validate()`에 포함). `network_service.gd`는 수정하지 않았고 §14.5의 공개 헬퍼만 쓴다.
+
+**프로토콜 변경 있음**: 아래 RPC 5개가 새로 생겨 `BuildInfo.PROTOCOL_VERSION`을 4로 올렸다. join 스냅샷 형식은 그대로다(`modules.InventoryNet` 조각은 빈 객체).
+
+#### 서버 트랜잭션(`InventoryService`, 서버 전용)
+
+모두 `ActionResult`를 돌려준다. 실패하면 사유 코드만 있고 상태는 아무것도 바뀌지 않는다(검사를 전부 마친 뒤에만 반영). 성공하면 `event`에 확정된 사실이 들어 있다.
+
+| 메서드 | 동작 | 성공 이벤트(`event`) | 실패 사유 |
+|---|---|---|---|
+| `drop_item(inventory_id, item_instance_id, cell_id, position: Vector3)` | 들고 있는 아이템 하나(스택 전체)를 월드의 `position`에 놓는다. `location_type` = `world`, `location_id` = `cell_id`, `slot_id` 비움 | `items_dropped` | `unknown_inventory`, `unknown_item`, `item_not_in_inventory`, `bad_cell`, `bad_position` |
+| `drop_all_items(inventory_id, cell_id, position: Vector3)` | 그 인벤토리의 모든 아이템을 한 위치에 놓는다(전부 또는 전무). 빈 인벤토리는 성공이고 이벤트 목록이 비며 시그널을 내지 않는다 | `items_dropped` | `unknown_inventory`, `bad_cell`, `bad_position` |
+| `remove_item(inventory_id, item_instance_id, quantity: int)` | 들고 있는 아이템에서 `quantity`개를 게임에서 없앤다. 남으면 수량만 줄고, 0이 되면 인스턴스를 지우고 `EntityRegistry.remove`로 ID를 tombstone 처리한다(재사용 불가, docs/14 §1) | `item_removed` | `unknown_inventory`, `unknown_item`, `item_not_in_inventory`, `bad_quantity` |
+
+- `item_not_in_inventory`: 아이템은 있지만 그 인벤토리에 들어 있지 않다(월드에 놓여 있거나 다른 인벤토리에 있다). `bad_quantity`: 1 미만이거나 스택 수량 초과. `bad_position`: 유한값이 아니거나 `|x|`, `|z|`가 월드 반폭을 넘는다(반폭은 생성자 5번째 인자 `world_half_extent_m`, 기본값 무제한. `ServerWorld`가 `GameplaySettings.world_half_extent_m`을 넘긴다). `bad_cell`: 빈 셀 ID.
+- 이벤트 형식(JSON-safe): `items_dropped` = `{event_type, inventory_id, item_instance_ids: Array[String](슬롯 순서), cell_id, position: [x, y, z]}`, `item_removed` = `{event_type, inventory_id, item_instance_id, definition_id, removed_quantity, remaining_quantity}`(`remaining_quantity` 0 = 인스턴스 삭제됨).
+- `signal transaction_committed(event: Dictionary)`: 확정된 트랜잭션마다(줍기 `item_picked_up` 포함) 상태 반영이 끝난 직후, 확정 순서대로, 동기적으로 한 번 나온다. 인자는 이벤트의 사본이다. 실패한 요청은 내지 않는다.
+- 보조: `item_count()`(존재하는 인스턴스 수). 저장 형식은 바뀌지 않았다: 내려놓은 아이템의 좌표는 기존대로 world_state `inventory.world_item_positions`(docs/15 P1-7)에, 삭제된 ID는 world_state `tombstones`에, 다음 순번은 `next_entity_sequence`에 들어간다.
+
+`ServerWorld` 래퍼(위치·셀·인벤토리 ID는 서버 상태에서 채운다. 셀은 `DevWorldSeed.DEV_CELL_ID`, 위치는 `clamp_to_world(플레이어 위치)`):
+
+| 메서드 | 대상 | 추가 실패 사유 |
+|---|---|---|
+| `try_drop_item(player_id, item_instance_id)` | 접속 중인 플레이어(의도 처리용) | `not_online` |
+| `drop_all_player_items(player_id)` | 알려진 플레이어(오프라인 포함, 서버 규칙용) | `unknown_player` |
+| `remove_player_item(player_id, item_instance_id, quantity)` | 알려진 플레이어(오프라인 포함, 서버 규칙용) | `unknown_player` |
+
+#### 네트워크 메시지
+
+| 방향 | RPC | 채널/모드 | 받는 쪽 검증 |
+|---|---|---|---|
+| C→S | `_rpc_request_drop(request_id: int, item_instance_id: String)` | 0 reliable | 아래 "요청 검증" 표 |
+| S→요청자 | `_rpc_drop_result(request_id: int, ok: bool, reason: String)` | 0 reliable | 서버 발신만 수용, 타입, `request_id` ≥ 0, `reason` 길이 ≤ 64, `ok`일 때만 `reason`이 빈 문자열 |
+| S→전체 | `_rpc_world_items_added(items: Array[Dictionary])` | 0 reliable | 서버 발신만 수용, 배열·항목 수 ≤ 64, 항목마다 `{item_instance_id: String 1~64자, definition_id: snake_case String ≤ 64자, quantity: int ≥ 1, position: Vector3(유한값)}`(join 스냅샷 `world_items` 항목과 같은 형식) |
+| S→소유자 | `_rpc_inventory_items_removed(item_instance_ids: Array[String])` | 0 reliable | 서버 발신만 수용, 배열·항목 수 ≤ 64, 항목마다 String 1~64자 |
+| S→소유자 | `_rpc_inventory_item_changed(item: Dictionary)` | 0 reliable | 서버 발신만 수용, `ItemInstance.validate_dict` 통과, ID ≤ 64자, `location_type` = `inventory` |
+
+요청: 클라이언트는 의도만 보낸다(자신이 붙인 요청 번호와 아이템 인스턴스 ID). 위치·소유자·수량 인자는 없다. 행위자는 보낸 peer의 플레이어(`NetworkService.sender_player_id()`)이고 놓이는 위치는 서버가 아는 그 플레이어의 위치다. 인자를 더 붙여 보낸 호출은 엔진이 거부해 핸들러에 닿지 않는다(테스트로 고정).
+
+요청 검증(순서대로, 먼저 걸린 것 하나. 거부되면 서버 상태는 아무것도 바뀌지 않고 `NetworkService.rejected_intent_count(reason)`이 1 오른다):
+
+| 순서 | 사유 코드(카운터) | 조건 | 요청자에게 결과 전송 |
+|---|---|---|---|
+| 1 | `not_joined` | join 핸드셰이크를 마치지 않은 peer | 보내지 않음 |
+| 2 | `bad_type` | `request_id`가 int가 아니거나 `item_instance_id`가 String이 아님 | `request_id`가 0 이상 int일 때만 |
+| 3 | `bad_sequence` | `request_id` < 0 | 보내지 않음 |
+| 4 | `bad_item_id` | ID가 비었거나 64자 초과(줍기와 같은 규칙, `IntentValidator.validate_pickup`) | 보냄 |
+| 5 | `rate_limited` | peer별 토큰 버킷(`InventoryNetSettings.drop_intent_rate_per_sec`/`drop_intent_burst`, 기본 4/s·버스트 4) 초과. 형식이 틀린 요청은 토큰을 쓰지 않는다 | 보냄 |
+| 6 | `player_dead` | 생존 시스템이 있고 요청자가 살아 있지 않음(`SurvivalService.is_alive`). 생존 시스템이 없는 월드에서는 검사하지 않는다 | 보냄 |
+| 7 | 트랜잭션 사유(`item_not_in_inventory`, `unknown_item`, `not_online`, `bad_position` 등) | `ServerWorld.try_drop_item`이 거부 | 보냄. 단 `unknown_item`은 요청자에게 `item_not_in_inventory`로 알린다 |
+
+- 1~5는 `reject_intent`(횟수 + 경고 로그), 6~7은 정상 플레이에서 생길 수 있어 `count_rejection`(횟수만)으로 기록한다. 카운터에는 서버 내부 사유(`unknown_item` 포함)가 그대로 남는다.
+- 정보 공개: 요청자는 자기가 들고 있지 않은 ID에 대해 "없는 ID"와 "남이 들고 있거나 월드에 있는 ID"를 구별할 수 없다(`InventoryNetModule.public_reason`).
+- 결과는 요청자에게만 간다. 승인되면 `(request_id, true, "")`, 거부되면 `(request_id, false, 사유 코드)`.
+
+복제: 모듈은 서버에서 `InventoryService.transaction_committed`를 듣고 **확정되는 그 자리에서** 보낸다(큐에 모았다가 틱 끝에 보내지 않는다). 그래서 이 모듈의 메시지와 `NetworkService`가 직접 보내는 줍기 메시지(`_rpc_world_item_removed`, `_rpc_inventory_item`)가 같은 채널 0에서 서버가 확정한 순서 그대로 나간다. A가 내려놓은 아이템을 B가 같은 틱에 주워도 모든 클라이언트는 "월드에 추가 → 월드에서 제거" 순서로 받는다. 누가 트랜잭션을 불렀는지는 상관없다: 이 모듈의 내려놓기 의도, 서버 규칙이 부른 `ServerWorld.drop_all_player_items`/`remove_player_item`, `InventoryService` 직접 호출이 모두 같은 경로로 복제된다.
+
+| 서버에서 확정된 사실 | 소유자(그 인벤토리의 접속 중인 플레이어)에게 | 접속 중인 모든 peer에게 |
+|---|---|---|
+| `items_dropped` | `_rpc_inventory_items_removed`(빠진 ID) 먼저 | 이어서 `_rpc_world_items_added`(정의 ID, 수량, 위치) |
+| `item_removed`, 수량이 남음 | `_rpc_inventory_item_changed`(줄어든 `ItemInstance`) | 보내지 않음 |
+| `item_removed`, 0이 됨 | `_rpc_inventory_items_removed`(그 ID) | 보내지 않음 |
+| `item_picked_up` | (이 모듈은 보내지 않는다. RPC 줍기는 `NetworkService`가 복제한다) | — |
+
+- 다른 플레이어의 인벤토리 내용은 어떤 메시지로도 가지 않는다. 월드 아이템 메시지에는 누가 내려놓았는지가 없다.
+- 소유자가 접속 중이 아니면 소유자 메시지는 없다(다음 join 스냅샷의 `inventory`가 최신 상태다). join 도중에 일어난 변화는 join 스냅샷에 들어가므로 따로 보내지 않는다.
+- 한 메시지에 `max_items_per_message`(기본 32, 프로토콜 상한 `InventoryNetModule.MAX_ITEMS_PER_MESSAGE` = 64)개까지 담고 넘으면 순서대로 여러 메시지로 나눈다. 서버는 보내기 전에 자기 항목을 클라이언트와 같은 검증에 통과시킨다.
+- 늦게 접속한 클라이언트: 내려놓인 아이템은 일반 월드 아이템이므로 기존 join 스냅샷(`world_items`, 본인 `inventory`)으로 충분하다. 모듈의 join 조각은 없다.
+- 거리 필터가 없다: 접속 중인 모든 클라이언트가 월드 어디에 놓인 아이템이든 받는다(줍기와 같다).
+
+저장: 내려놓기 의도가 승인되면 결과를 보내기 전에 월드 전체를 저장한다(줍기와 같은 "주요 트랜잭션", docs/10 §5). 서버 규칙이 부른 변화는 그 서버 틱의 끝(`server_physics`)에 한 번 저장한다.
+
+클라이언트 표면(`network.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule`):
+
+| API | 계약 |
+|---|---|
+| `request_drop(item_instance_id: String) -> int` | 요청을 보내고 요청 번호(1부터)를 돌려준다. join 전이거나 클라이언트가 아니면 아무것도 보내지 않고 `InventoryNetModule.NO_REQUEST`(0). 클라이언트에서 미리 판단하지 않는다 |
+| `signal drop_result(request_id: int, ok: bool, reason: String)` | 자기 요청의 결과 |
+| `signal world_items_added(item_instance_ids: PackedStringArray)` | 월드에 아이템이 놓였다(미러 반영 뒤) |
+| `signal inventory_items_removed(item_instance_ids: PackedStringArray)` | 자기 인벤토리에서 빠졌다(미러 반영 뒤) |
+| `signal inventory_item_changed(item_instance_id: String)` | 자기 인벤토리의 아이템이 추가되거나 바뀌었다(수량) |
+| `rejected_payload_count`, `owner_message_count` | 형식이 틀려 버린 서버 페이로드 수, 받은 소유자 전용 메시지 수(진단) |
+| `send_raw_drop_request(request_id, item_instance_id)` | 클라이언트 쪽 검사 없이 그대로 보낸다(테스트 전용) |
+
+미러(`NetworkService.client_state`, `ClientWorldState`에 추가된 것. 권한 없음):
+
+| API | 계약 |
+|---|---|
+| `apply_world_item_added(entry: Dictionary) -> bool` | 검증 뒤 `world_items[id]`를 추가/교체한다(아는 필드 4개만 보관). 형식이 틀리면 false이고 바뀌지 않는다 |
+| `static is_valid_world_item(entry: Variant) -> bool` | 위 표의 월드 아이템 형식 검사 |
+| `apply_inventory_item_removed(item_instance_id: String) -> bool` | `inventory`에서 그 항목을 지운다. 없으면 false이고 바뀌지 않는다 |
+| `get_inventory_item(item_instance_id: String) -> Dictionary` | 미러의 인벤토리 항목(`ItemInstance` 사전)의 사본 또는 `{}` |
+| `apply_inventory_item(item)`(기존) | 수량이 바뀐 항목의 교체에도 쓴다 |
+
+- 서버 전용 RPC를 클라이언트가 보내는 경우: 결과·복제 RPC 4개는 `@rpc("authority")`라 엔진이 서버 아닌 발신자를 거부하고, 핸들러도 `network.is_from_server()`를 다시 확인한다. 요청 RPC 핸들러는 서버가 아니면 아무것도 하지 않는다.
+- 알려진 한계: 서버 코드가 `ServerWorld.try_pickup`을 직접 부르면(줍기 RPC를 거치지 않으면) 복제되지 않는다. 줍기 복제는 동결된 `NetworkService`의 RPC 핸들러 안에만 있기 때문이다. 아이템을 인벤토리에 바로 만들어 주는 트랜잭션(지급)도 아직 없다(docs/15 P2-119).
+- 클라이언트 표시(`scripts/presentation/**`)는 이 티켓에서 바꾸지 않았다. 내려놓기 입력과 인벤토리 화면은 없다.
+- 테스트: `tests/unit/inventory_transactions_test.gd`(트랜잭션 3개의 성공·실패·원자성, 시그널, ID 미재사용, `ServerWorld` 래퍼와 저장 문서 왕복, 미러 메서드), `tests/integration/inventory_net_test.gd`(서버 1 + 클라이언트 2~3, 실제 ENet: 줍기 → 내려놓기 → 다른 플레이어가 줍기와 총수 보존, 한 번의 서버 poll 안에서 처리되는 내려놓기·줍기·중복 내려놓기, 조작된 요청과 거부 카운터, join 전 요청, 빈도 초과, 죽은 플레이어, 클라이언트가 보낸 서버 전용 RPC, 서버가 보낸 형식 오류 페이로드, 늦은 접속, 서버 직접 호출의 제거·전부 내려놓기와 메시지 분할·소유자 한정, 저장 → 서버 재시작 → 재접속, 기본 설정·조립·RPC 설정).

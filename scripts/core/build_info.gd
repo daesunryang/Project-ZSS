@@ -18,7 +18,9 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ## 2: Phase 2 P2-0 (third ENet channel, join snapshot "modules").
 ## 3: Phase 2 N1 (ZombieNet, SurvivalNet, CombatNet modules: zombie
 ##    snapshots/events, survival replication, melee attack intent).
-const PROTOCOL_VERSION: int = 3
+## 4: P2-T2 (InventoryNet module: drop intent and its result, world items
+##    added, owner inventory items removed/changed).
+const PROTOCOL_VERSION: int = 4
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

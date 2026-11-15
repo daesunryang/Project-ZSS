@@ -19,6 +19,7 @@ const SYSTEM_ID_PATTERN: String = "^[a-z][a-z0-9_]*$"
 const ENTITY_KIND_PLAYER: String = "player"
 const REASON_NOT_ONLINE: String = "not_online"
 const REASON_STALE_SEQUENCE: String = "stale_sequence"
+const REASON_UNKNOWN_PLAYER: String = "unknown_player"
 
 var world_id: String
 var gameplay: GameplaySettings
@@ -42,7 +43,7 @@ var _system_order: Array[ServerSystem] = []
 func _init(id: String, gameplay_settings: GameplaySettings, catalog: ItemCatalog) -> void:
 	world_id = id
 	gameplay = gameplay_settings
-	inventory = InventoryService.new(catalog, ids, registry, gameplay.pickup_range_m)
+	inventory = InventoryService.new(catalog, ids, registry, gameplay.pickup_range_m, gameplay.world_half_extent_m)
 
 
 ## Populates a brand-new world from the development seed.
@@ -208,6 +209,34 @@ func try_pickup(player_id: String, item_instance_id: String) -> ActionResult:
 		return ActionResult.failure(REASON_NOT_ONLINE)
 	var state: PlayerState = _players[player_id]
 	return inventory.try_pickup(state.inventory_id, item_instance_id, state.position)
+
+
+## Drop by an online player (P2-T2): the item goes to the world where the
+## server knows the player to be. The client supplies neither a position nor
+## an owner. Returns the InventoryService result.
+func try_drop_item(player_id: String, item_instance_id: String) -> ActionResult:
+	if not _online.has(player_id):
+		return ActionResult.failure(REASON_NOT_ONLINE)
+	var state: PlayerState = _players[player_id]
+	return inventory.drop_item(state.inventory_id, item_instance_id, DevWorldSeed.DEV_CELL_ID, clamp_to_world(state.position))
+
+
+## Server rule entry (P2-T2, e.g. death): everything a known player carries
+## goes to the world at the player's position. The player may be offline.
+func drop_all_player_items(player_id: String) -> ActionResult:
+	var state: PlayerState = _players.get(player_id, null)
+	if state == null:
+		return ActionResult.failure(REASON_UNKNOWN_PLAYER)
+	return inventory.drop_all_items(state.inventory_id, DevWorldSeed.DEV_CELL_ID, clamp_to_world(state.position))
+
+
+## Server rule entry (P2-T2, e.g. eating): `quantity` of an item a known
+## player carries leaves the game. The player may be offline.
+func remove_player_item(player_id: String, item_instance_id: String, quantity: int) -> ActionResult:
+	var state: PlayerState = _players.get(player_id, null)
+	if state == null:
+		return ActionResult.failure(REASON_UNKNOWN_PLAYER)
+	return inventory.remove_item(state.inventory_id, item_instance_id, quantity)
 
 
 ## Clamps a position into the playable square.

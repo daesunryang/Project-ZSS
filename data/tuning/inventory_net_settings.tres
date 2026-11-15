@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="InventoryNetSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/services/multiplayer/inventory_net_settings.gd" id="1_inventory_net"]
+
+[resource]
+script = ExtResource("1_inventory_net")
+drop_intent_rate_per_sec = 4.0
+drop_intent_burst = 4
+max_items_per_message = 32

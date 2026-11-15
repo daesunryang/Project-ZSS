@@ -5,6 +5,14 @@ extends RefCounted
 
 signal changed
 
+## Keys of a world item entry (same as InventoryService.describe_world_item).
+const KEY_ITEM_ID: String = "item_instance_id"
+const KEY_DEFINITION_ID: String = "definition_id"
+const KEY_QUANTITY: String = "quantity"
+const KEY_POSITION: String = "position"
+## Longest item / definition id accepted from the server.
+const ITEM_ID_MAX_LENGTH: int = IntentValidator.ENTITY_ID_MAX_LENGTH
+
 var local_player_id: String = ""
 ## player_id -> {"position": Vector3, "yaw": float}
 var players: Dictionary[String, Dictionary] = {}
@@ -71,6 +79,42 @@ func apply_world_item_removed(item_instance_id: String) -> void:
 	changed.emit()
 
 
+## True when `entry` is a world item as the server describes it:
+## {item_instance_id: String 1..64, definition_id: snake_case String,
+##  quantity: int >= 1, position: finite Vector3}.
+static func is_valid_world_item(entry: Variant) -> bool:
+	if typeof(entry) != TYPE_DICTIONARY:
+		return false
+	var data: Dictionary = entry
+	var item_id: Variant = data.get(KEY_ITEM_ID, null)
+	var definition_id: Variant = data.get(KEY_DEFINITION_ID, null)
+	var quantity: Variant = data.get(KEY_QUANTITY, null)
+	var position: Variant = data.get(KEY_POSITION, null)
+	if typeof(item_id) != TYPE_STRING or typeof(definition_id) != TYPE_STRING or typeof(quantity) != TYPE_INT or typeof(position) != TYPE_VECTOR3:
+		return false
+	if str(item_id).is_empty() or str(item_id).length() > ITEM_ID_MAX_LENGTH:
+		return false
+	if str(definition_id).length() > ITEM_ID_MAX_LENGTH or not ItemInstance.is_valid_definition_id(str(definition_id)):
+		return false
+	return int(quantity) >= 1 and (position as Vector3).is_finite()
+
+
+## Adds/replaces an item lying in the world (P2-T2: an item was put down).
+## Only the known fields are kept. Returns false (no change) when malformed.
+func apply_world_item_added(entry: Dictionary) -> bool:
+	if not is_valid_world_item(entry):
+		return false
+	var item_id: String = str(entry[KEY_ITEM_ID])
+	world_items[item_id] = {
+		KEY_ITEM_ID: item_id,
+		KEY_DEFINITION_ID: str(entry[KEY_DEFINITION_ID]),
+		KEY_QUANTITY: int(entry[KEY_QUANTITY]),
+		KEY_POSITION: entry[KEY_POSITION],
+	}
+	changed.emit()
+	return true
+
+
 ## Adds/replaces an item in the local inventory mirror (validated dict).
 func apply_inventory_item(item: Dictionary) -> bool:
 	if not ItemInstance.validate_dict(item).is_empty():
@@ -85,8 +129,28 @@ func apply_inventory_item(item: Dictionary) -> bool:
 	return true
 
 
+## Removes an item from the local inventory mirror (P2-T2: it was put down,
+## used up or taken away). Returns false (no change) when it is not there.
+func apply_inventory_item_removed(item_instance_id: String) -> bool:
+	for index: int in range(inventory.size()):
+		if str(inventory[index]["item_instance_id"]) == item_instance_id:
+			inventory.remove_at(index)
+			changed.emit()
+			return true
+	return false
+
+
 func has_inventory_item(item_instance_id: String) -> bool:
 	for entry: Dictionary in inventory:
 		if str(entry["item_instance_id"]) == item_instance_id:
 			return true
 	return false
+
+
+## A copy of the mirrored inventory entry (ItemInstance dictionary), or {}
+## when the item is not in the local inventory.
+func get_inventory_item(item_instance_id: String) -> Dictionary:
+	for entry: Dictionary in inventory:
+		if str(entry["item_instance_id"]) == item_instance_id:
+			return entry.duplicate()
+	return {}

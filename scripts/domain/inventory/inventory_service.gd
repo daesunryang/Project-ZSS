@@ -7,11 +7,32 @@ extends RefCounted
 ## all-or-nothing: a failed command changes nothing. Requests are processed
 ## in call order, so of two concurrent pickups of the same item only the
 ## first one succeeds. No Node references; fully unit-testable.
+##
+## Transactions (server only; each returns an ActionResult whose `event` is
+## the committed fact, or a REASON_* code and no change):
+##   try_pickup      world -> inventory
+##   drop_item       inventory -> world, the whole stack (P2-T2)
+##   drop_all_items  every item of one inventory -> world (P2-T2)
+##   remove_item     a quantity leaves the game; at 0 the instance is deleted
+##                   and its id is retired for good (P2-T2)
+## Every committed transaction is also announced through
+## `transaction_committed`, synchronously and in commit order, once the state
+## is final. InventoryNetModule replicates from it (docs/09 §14.17), so
+## clients see changes in the order the server committed them.
+
+## A transaction was committed. `event` is a copy of the ActionResult event.
+signal transaction_committed(event: Dictionary)
 
 const ENTITY_KIND_ITEM: String = "item"
 const ENTITY_KIND_INVENTORY: String = "inventory"
 const SLOT_PREFIX: String = "slot_"
 const EVENT_ITEM_PICKED_UP: String = "item_picked_up"
+## {inventory_id, item_instance_ids: Array of String (slot order), cell_id,
+##  position: [x, y, z]}. Used by drop_item and by drop_all_items.
+const EVENT_ITEMS_DROPPED: String = "items_dropped"
+## {inventory_id, item_instance_id, definition_id, removed_quantity,
+##  remaining_quantity}. remaining_quantity 0 = the instance no longer exists.
+const EVENT_ITEM_REMOVED: String = "item_removed"
 
 ## Failure reason codes (stable, sent to clients).
 const REASON_UNKNOWN_INVENTORY: String = "unknown_inventory"
@@ -19,6 +40,14 @@ const REASON_UNKNOWN_ITEM: String = "unknown_item"
 const REASON_NOT_IN_WORLD: String = "item_not_in_world"
 const REASON_TOO_FAR: String = "too_far"
 const REASON_INVENTORY_FULL: String = "inventory_full"
+## The item exists but is not carried in the given inventory (it lies in the
+## world or is in another inventory).
+const REASON_NOT_IN_INVENTORY: String = "item_not_in_inventory"
+## Quantity below 1 or above what the stack holds.
+const REASON_BAD_QUANTITY: String = "bad_quantity"
+## Position not finite or outside the play area.
+const REASON_BAD_POSITION: String = "bad_position"
+const REASON_BAD_CELL: String = "bad_cell"
 
 const SNAPSHOT_ITEMS: String = "items"
 const SNAPSHOT_POSITIONS: String = "world_item_positions"
@@ -28,17 +57,22 @@ var _catalog: ItemCatalog
 var _ids: EntityIdGenerator
 var _registry: EntityRegistry
 var _pickup_range_m: float
+## Half size of the square play area; nothing can be dropped outside it.
+var _world_half_extent_m: float
 var _items: Dictionary[String, ItemInstance] = {}
 var _world_positions: Dictionary[String, Vector3] = {}
 ## inventory_id -> slot capacity
 var _inventories: Dictionary[String, int] = {}
 
 
-func _init(catalog: ItemCatalog, ids: EntityIdGenerator, registry: EntityRegistry, pickup_range_m: float) -> void:
+## `world_half_extent_m` bounds drop positions (ServerWorld passes
+## GameplaySettings.world_half_extent_m); the default is unbounded.
+func _init(catalog: ItemCatalog, ids: EntityIdGenerator, registry: EntityRegistry, pickup_range_m: float, world_half_extent_m: float = INF) -> void:
 	_catalog = catalog
 	_ids = ids
 	_registry = registry
 	_pickup_range_m = pickup_range_m
+	_world_half_extent_m = world_half_extent_m
 
 
 ## Creates an empty inventory and returns its id ("" on failure).
@@ -98,12 +132,89 @@ func try_pickup(inventory_id: String, item_instance_id: String, actor_position: 
 	item.slot_id = slot_id
 	_world_positions.erase(item_instance_id)
 	GameLogger.info("inventory", "item picked up", {"entity_id": item_instance_id, "inventory_id": inventory_id, "slot_id": slot_id})
-	return ActionResult.success({
+	return _commit({
 		"event_type": EVENT_ITEM_PICKED_UP,
 		"item_instance_id": item_instance_id,
 		"inventory_id": inventory_id,
 		"slot_id": slot_id,
 		"from_cell_id": from_cell,
+	})
+
+
+## Moves one carried item (the whole stack) from `inventory_id` to the world
+## at `position` in `cell_id`. The caller supplies a server-known position.
+func drop_item(inventory_id: String, item_instance_id: String, cell_id: String, position: Vector3) -> ActionResult:
+	const OPERATION: String = "drop_item"
+	if not _inventories.has(inventory_id):
+		return _reject(REASON_UNKNOWN_INVENTORY, inventory_id, item_instance_id, OPERATION)
+	var item: ItemInstance = _items.get(item_instance_id, null)
+	if item == null:
+		return _reject(REASON_UNKNOWN_ITEM, inventory_id, item_instance_id, OPERATION)
+	if not _is_carried_in(item, inventory_id):
+		return _reject(REASON_NOT_IN_INVENTORY, inventory_id, item_instance_id, OPERATION)
+	var place_error: String = _validate_world_place(cell_id, position)
+	if not place_error.is_empty():
+		return _reject(place_error, inventory_id, item_instance_id, OPERATION)
+
+	# Commit: every check passed.
+	_move_to_world(item, cell_id, position)
+	GameLogger.info("inventory", "item dropped", {"entity_id": item_instance_id, "inventory_id": inventory_id, "cell_id": cell_id})
+	return _commit(_dropped_event(inventory_id, [item_instance_id], cell_id, position))
+
+
+## Moves every item carried in `inventory_id` to the world at `position`
+## (all or nothing). An empty inventory succeeds and announces nothing.
+func drop_all_items(inventory_id: String, cell_id: String, position: Vector3) -> ActionResult:
+	const OPERATION: String = "drop_all_items"
+	if not _inventories.has(inventory_id):
+		return _reject(REASON_UNKNOWN_INVENTORY, inventory_id, "", OPERATION)
+	var place_error: String = _validate_world_place(cell_id, position)
+	if not place_error.is_empty():
+		return _reject(place_error, inventory_id, "", OPERATION)
+
+	# Commit: nothing below can fail.
+	var dropped_ids: Array = []
+	for item: ItemInstance in items_in_inventory(inventory_id):
+		_move_to_world(item, cell_id, position)
+		dropped_ids.append(item.item_instance_id)
+	var event: Dictionary = _dropped_event(inventory_id, dropped_ids, cell_id, position)
+	if dropped_ids.is_empty():
+		return ActionResult.success(event)
+	GameLogger.info("inventory", "inventory dropped", {"inventory_id": inventory_id, "items": dropped_ids.size(), "cell_id": cell_id})
+	return _commit(event)
+
+
+## Takes `quantity` (1..stack size) of a carried item out of the game. A
+## stack that still holds something only gets smaller; at 0 the instance is
+## deleted and its id is tombstoned, so it is never used again (docs/14 §1).
+func remove_item(inventory_id: String, item_instance_id: String, quantity: int) -> ActionResult:
+	const OPERATION: String = "remove_item"
+	if not _inventories.has(inventory_id):
+		return _reject(REASON_UNKNOWN_INVENTORY, inventory_id, item_instance_id, OPERATION)
+	var item: ItemInstance = _items.get(item_instance_id, null)
+	if item == null:
+		return _reject(REASON_UNKNOWN_ITEM, inventory_id, item_instance_id, OPERATION)
+	if not _is_carried_in(item, inventory_id):
+		return _reject(REASON_NOT_IN_INVENTORY, inventory_id, item_instance_id, OPERATION)
+	if quantity < 1 or quantity > item.quantity:
+		return _reject(REASON_BAD_QUANTITY, inventory_id, item_instance_id, OPERATION)
+
+	# Commit: every check passed.
+	var remaining: int = item.quantity - quantity
+	if remaining > 0:
+		item.quantity = remaining
+	else:
+		_items.erase(item_instance_id)
+		if _registry.remove(item_instance_id) != OK:
+			GameLogger.error("inventory", "removed item was not registered", {"entity_id": item_instance_id, "inventory_id": inventory_id, "operation": OPERATION})
+	GameLogger.info("inventory", "item removed", {"entity_id": item_instance_id, "inventory_id": inventory_id, "removed": quantity, "remaining": remaining})
+	return _commit({
+		"event_type": EVENT_ITEM_REMOVED,
+		"inventory_id": inventory_id,
+		"item_instance_id": item_instance_id,
+		"definition_id": item.definition_id,
+		"removed_quantity": quantity,
+		"remaining_quantity": remaining,
 	})
 
 
@@ -113,6 +224,11 @@ func get_item(item_instance_id: String) -> ItemInstance:
 
 func has_inventory(inventory_id: String) -> bool:
 	return _inventories.has(inventory_id)
+
+
+## Number of item instances that exist (lying in the world or carried).
+func item_count() -> int:
+	return _items.size()
 
 
 ## Items held in an inventory, sorted by slot.
@@ -245,6 +361,44 @@ func _first_free_slot(inventory_id: String) -> String:
 	return ""
 
 
-func _reject(reason: String, inventory_id: String, item_instance_id: String) -> ActionResult:
-	GameLogger.info("inventory", "pickup rejected", {"entity_id": item_instance_id, "inventory_id": inventory_id, "reason": reason, "operation": "try_pickup"})
+func _is_carried_in(item: ItemInstance, inventory_id: String) -> bool:
+	return item.location_type == ItemInstance.LOCATION_INVENTORY and item.location_id == inventory_id
+
+
+## "" when an item may be put down at `position` in `cell_id`, else a reason.
+func _validate_world_place(cell_id: String, position: Vector3) -> String:
+	if cell_id.is_empty():
+		return REASON_BAD_CELL
+	if not position.is_finite() or absf(position.x) > _world_half_extent_m or absf(position.z) > _world_half_extent_m:
+		return REASON_BAD_POSITION
+	return ""
+
+
+func _move_to_world(item: ItemInstance, cell_id: String, position: Vector3) -> void:
+	item.location_type = ItemInstance.LOCATION_WORLD
+	item.location_id = cell_id
+	item.slot_id = ""
+	_world_positions[item.item_instance_id] = position
+
+
+func _dropped_event(inventory_id: String, item_instance_ids: Array, cell_id: String, position: Vector3) -> Dictionary:
+	return {
+		"event_type": EVENT_ITEMS_DROPPED,
+		"inventory_id": inventory_id,
+		"item_instance_ids": item_instance_ids,
+		"cell_id": cell_id,
+		"position": [position.x, position.y, position.z],
+	}
+
+
+## Announces a committed transaction and wraps it as the command result.
+## Listeners get their own copy, so they cannot alter the caller's result.
+func _commit(event: Dictionary) -> ActionResult:
+	transaction_committed.emit(event.duplicate(true))
+	return ActionResult.success(event)
+
+
+func _reject(reason: String, inventory_id: String, item_instance_id: String, operation: String = "try_pickup") -> ActionResult:
+	var message: String = "pickup rejected" if operation == "try_pickup" else "item transaction rejected"
+	GameLogger.info("inventory", message, {"entity_id": item_instance_id, "inventory_id": inventory_id, "reason": reason, "operation": operation})
 	return ActionResult.failure(reason)

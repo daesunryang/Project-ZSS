@@ -58,4 +58,11 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	if combat_net_error != OK:
 		combat_net.free()
 		return combat_net_error
+	# P2-T2: drop intent + replication of inventory changes (items put down
+	# in the world, items leaving an inventory).
+	var inventory_net: InventoryNetModule = InventoryNetModule.new(config.inventory_net)
+	var inventory_net_error: Error = service.register_module(inventory_net)
+	if inventory_net_error != OK:
+		inventory_net.free()
+		return inventory_net_error
 	return OK
