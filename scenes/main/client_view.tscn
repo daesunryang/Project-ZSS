@@ -23,6 +23,9 @@ transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 
 [node name="Players" type="Node3D" parent="."]
 unique_name_in_owner = true
 
+[node name="Zombies" type="Node3D" parent="."]
+unique_name_in_owner = true
+
 [node name="Camera" type="Camera3D" parent="."]
 unique_name_in_owner = true
 current = true
@@ -34,3 +37,43 @@ unique_name_in_owner = true
 offset_left = 8.0
 offset_top = 8.0
 text = "LAST HAVEN"
+
+[node name="SurvivalLabel" type="Label" parent="Hud"]
+unique_name_in_owner = true
+visible = false
+offset_left = 8.0
+offset_top = 36.0
+offset_right = 420.0
+offset_bottom = 150.0
+text = "생존 상태"
+
+[node name="EventLogLabel" type="Label" parent="Hud"]
+unique_name_in_owner = true
+visible = false
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -520.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = 180.0
+grow_horizontal = 0
+horizontal_alignment = 2
+text = "최근 이벤트"
+
+[node name="AttackResultLabel" type="Label" parent="Hud"]
+unique_name_in_owner = true
+visible = false
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -220.0
+offset_top = -64.0
+offset_right = 220.0
+offset_bottom = -24.0
+grow_horizontal = 2
+grow_vertical = 0
+horizontal_alignment = 1
+text = "공격 요청 결과"

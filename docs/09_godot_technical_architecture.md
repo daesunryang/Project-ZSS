@@ -537,3 +537,23 @@ owner snapshot = {
 
 - 서버 전용 RPC를 클라이언트가 보내는 경우: 결과·이벤트 RPC는 `@rpc("authority")`라 엔진이 서버 아닌 발신자를 거부하고, 핸들러도 `network.is_from_server()`를 다시 확인한다. 클라이언트끼리는 직접 닿지 않는다(서버 relay 비활성). 요청 RPC 핸들러는 서버가 아니면 아무것도 하지 않는다.
 - 테스트: `tests/integration/combat_net_test.gd`(서버 1 + 클라이언트 2~3, 실제 ENet. 공격 → 서버 좀비 체력 감소·요청자만 결과·두 클라이언트와 서버 기록이 같은 이벤트, 좀비가 죽을 때까지의 이벤트 열 일치, 쿨다운·스태미나·사망 거부, 조작된 요청 13종과 거부 카운터·서버 상태 불변, join 전 요청, 빈도 초과와 peer별 버킷, 클라이언트가 보낸 서버 전용 RPC 무시, 사칭 불가, 늦은 접속, 한 틱의 이벤트 분할 전송과 피해 수치 비공개 설정, 서버가 보낸 형식 오류 페이로드를 클라이언트가 버림, 기본 설정·조립·RPC 설정, 공개 형식 변환과 검증 규칙).
+
+### 14.15 클라이언트 좀비·생존 표시와 공격 입력(P2-N2)
+
+`ClientView`는 클라이언트 역할에서만 지연 로드되는 `client_view.tscn` 안에서 실행된다. 서버 bootstrap은 이 씬과 `scripts/presentation/**`, `ClientPresentationSettings`를 로드하지 않는다. 오프라인 클라이언트에서는 `GameBootstrap.get_network()`가 null이므로 빈 월드와 버전 라벨만 표시하며 미러 접근이나 RPC를 하지 않는다.
+
+표시 계층은 `NetworkService.get_module()` 공개 seam으로 다음 읽기/전송 표면만 연결한다.
+
+| 모듈/미러 | 사용 표면 | 클라이언트 동작 |
+|---|---|---|
+| `ZombieNetModule.client_state` | `zombie_added`, `zombie_removed`, `changed`, `event_received`, `zombie_ids/get_zombie/recent_events` | 캡슐 생성·제거·위치/yaw/상태 색 갱신, 좀비 공격 로그 |
+| `SurvivalNetModule.client_state` | `changed`, `health/stamina/need_category/wounds/infection_stage/is_alive` | 플레이어 생존/사망 캡슐과 본인 HUD 갱신 |
+| `CombatNetModule` / `ClientCombatState` | `request_melee_attack`, `melee_result`, `combat_event`, `recent_events` | 카메라 yaw 의도 전송, 서버 결과와 공개 전투 이벤트 표시 |
+
+좀비와 플레이어 캡슐은 미러의 가장 최근 위치를 그대로 사용한다. 프레젠테이션 보간·외삽·예측은 없고, 시체는 X축으로 기울여 눕힌다. 좀비의 `idle/investigate/chase/attack/search/dormant/dead` 색과 임시 크기, 사망 플레이어 색은 `data/tuning/client_presentation_settings.tres`에 있다. 플레이어의 살아 있는 로컬/원격 색과 크기는 기존 `camera_settings.tres`를 유지한다.
+
+HUD는 owner 미러가 존재할 때만 체력·스태미나 수치, 세 욕구 범주, 감염 단계, 상처 수/출혈, 사망 문구를 만든다. 다른 플레이어의 owner 상태를 추론하거나 표시하지 않는다. 최근 이벤트 로그는 `ClientCombatState`와 `ClientZombieState`가 보관한 서버 이벤트만 사용하며, 좀비 공격의 `infection`은 `target_id == local_player_id`이고 해당 필드가 있을 때만 문자열로 만든다.
+
+`ClientInputActions`는 공격 액션을 중복 없이 등록한다. `AttackIntentPolicy`는 연결된 클라이언트에서 설정된 최소 간격만 지났는지 판단하는 노드 없는 로컬 flood guard이며, 쿨다운·스태미나·명중·피해는 판단하지 않는다. 통과하면 `CombatNetModule.request_melee_attack(_yaw)`만 호출한다(yaw 0 = −Z). 마지막 `melee_result`의 승인 또는 서버 사유 코드를 설정 시간 동안 HUD에 표시한다.
+
+`ClientPresentationFormatter`, `AttackIntentPolicy`는 노드 없는 `RefCounted`이며 상태→색, 생존 HUD 문구, 공개 이벤트/공격 결과 문구, 최소 전송 간격을 단위 테스트한다. 임시 결정은 docs/15 §8 P2-90~P2-93에 기록한다.
