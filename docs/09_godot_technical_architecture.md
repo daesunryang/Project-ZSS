@@ -230,7 +230,7 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 | `ServerWorld` seam | `scripts/services/world/server_world.gd` | `register_system(system) -> Error`, `get_system(id)`, `system_ids()`, `clock`, `step_systems(real_delta) -> world_delta`(시계를 진행하고 각 시스템에 두 증분을 넘긴다). 저장: world_state 스키마 v3(`world_time_sec`, `action_time_sec`), world_state `systems.{id}`, players/<id>.json 스키마 v3(`character_generation`, P2-T4)과 `systems.{id}`. 저장에 없는 시스템은 기본값 유지, 등록되지 않은 시스템 데이터는 경고 후 무시. P2-T4에서 `start_new_character(player_id)`(예전 `respawn_player_at_spawn`을 대체), `player_action_block_reason(player_id)`가 추가됐다(§14.19) |
 | `NetModule` | `scripts/services/multiplayer/net_module.gd` | `NetworkService`의 자식 노드(모든 peer에서 같은 `name`). 훅: `on_server_started(world)`, `on_player_joined/left(peer_id, player_id)`, `server_physics(delta)`, `build_join_fragment(player_id)`(서버), `apply_join_fragment(fragment)`(클라이언트). 자체 `@rpc` 메서드 사용 |
 | `NetworkService` 공개 헬퍼 | `scripts/services/multiplayer/network_service.gd` | `register_module(module)`(시작 전만), `get_module(name)`, `is_server()`, `is_client()`, `is_from_server()`, `sender_player_id()`, `joined_peers()`, `peer_of_player(id)`, `player_of_peer(peer)`, `can_send_to(peer)`, `reject_intent(peer, intent, reason, player_id)`, `count_rejection(reason)`, `rejected_intent_count(reason)`, `persist(reason)`, `get_world()`, `get_settings()` |
-| `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
+| `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. 시스템 사이의 시그널 연결도 여기서 한다(P2-T5: `SurvivalService.player_died` → `ZombieService.on_player_died`, §14.20). `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
 | 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가), player v2→v3(`character_generation` 추가, 값은 1. P2-T4). `SaveService` 기본 마이그레이터 |
 
 채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 5(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18)).
@@ -243,7 +243,7 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 
 B3에서 `Wound.is_bleeding`과 `PlayerVitals.died_at_world_time`을 저장 상태로 추가하고 생존 fragment 스키마를 v2로 올렸다(v1은 새 필드 기본값으로 읽음). `step`은 접속 중인 플레이어에게만 월드 시간을 적용한다. 생존 중에는 욕구 증가, 출혈 피해, 허기/갈증 최대치 피해, 조건부 체력·상처 회복을 처리하고, 사망 중에는 욕구/피해/회복을 멈춘 채 리스폰 시각만 판정한다. 모든 욕구가 `GOOD`이고 출혈이 없을 때만 체력과 상처 severity가 회복되며 severity 0 상처는 제거된다. 체력 0은 사망 시각을 남기고 `player_died`를 로그에 기록하며(`apply_damage` 결과는 B1 계약대로 `player_wounded` + `died: true`) 설정 지연 뒤 `ServerWorld.respawn_player_at_spawn`으로 설정 스폰 위치를 복원하면서 이전 이동 입력을 제거한다. 인벤토리/RNG는 유지하고 vitals·욕구·상처·감염은 설정값으로 초기화한다. 연속 구간을 욕구 임계·사망·리스폰 경계에서 적분하므로 틱 크기와 무관하다(허용 오차 1e-3). B3 임시 수치는 docs/15 P2-13~P2-17에 기록한다.
 
-B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragment 스키마를 v3으로 올렸다(v1/v2는 경과 시간 0으로 읽음). 서버는 접속 중이고 생존한 플레이어의 활성 월드 시간만 누적해 `LATENT → EARLY → PROGRESSING → SEVERE → TERMINAL → ZOMBIFIED`를 진행한다. 각 단계 시간과 감염 경로별 시간 배율은 `SurvivalSettings`에서 읽으며 감염 단계 경계를 B3의 구간 적분 경계에 포함한다. `ZOMBIFIED` 진입 즉시 원인 `infection`으로 사망시키고 플레이어 좀비는 만들지 않으며, 기존 리스폰이 감염을 해제한다. 단계 변화는 `player_infection_stage_changed` 로그(`player_id`, `from`, `to`, `world_time`)로 남긴다.
+B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragment 스키마를 v3으로 올렸다(v1/v2는 경과 시간 0으로 읽음). 서버는 접속 중이고 생존한 플레이어의 활성 월드 시간만 누적해 `LATENT → EARLY → PROGRESSING → SEVERE → TERMINAL → ZOMBIFIED`를 진행한다. 각 단계 시간과 감염 경로별 시간 배율은 `SurvivalSettings`에서 읽으며 감염 단계 경계를 B3의 구간 적분 경계에 포함한다. `ZOMBIFIED` 진입 즉시 원인 `infection`으로 사망시키고 플레이어 좀비는 만들지 않으며, 기존 리스폰이 감염을 해제한다(P2-T5부터는 감염으로 죽은 자리에 좀비가 생긴다, §14.20. 새 캐릭터는 감염 없이 시작한다, §14.19). 단계 변화는 `player_infection_stage_changed` 로그(`player_id`, `from`, `to`, `world_time`)로 남긴다.
 
 단계별 스태미나 회복 배율은 기존 욕구 배율과 곱하고, 단계별 체력 감소율은 출혈·굶주림·탈수 피해와 합산한다. 양수인 감염 체력 감소가 적용되는 동안에는 자연 회복을 허용하지 않는다. 치료 seam `apply_infection_treatment(player_id, source_id)`는 설정된 최대 단계 이하에서 감염을 해제하고 `player_infection_cured`를 반환·기록하며, 아이템·품질·의료 능력 판정은 후속 티켓 소유다. 읽기 전용 `infection_stage(player_id)`는 현재 단계를 반환한다. 임시 수치는 docs/15 P2-7/P2-8/P2-18/P2-19에 기록한다. 감염 복제는 §14.14(P2-N1c), 섭취는 §14.18(P2-T3: `reduce_needs`, `check_reduce_needs`)에서 추가됐다. 수면은 아직 없다.
 
@@ -294,6 +294,7 @@ P2-T4부터 위 B3·B4의 "리스폰"은 **영구 사망 뒤 새 캐릭터 시�
 | `snapshot_rows() -> Array[Dictionary]` | 네트워크용 읽기 전용. 스폰 순서로 `{id: String, position: Vector3, yaw: float, state: String, health_fraction: float(0~1)}`. 시체는 제거 전까지 `state: "dead"`로 포함 |
 | `drain_events() -> Array[Dictionary]` | 네트워크용 읽기 전용. 지난 호출 이후 쌓인 이벤트를 오래된 순으로 돌려주고 비운다(최대 `max_pending_events`개 보관) |
 | `has_zombie`, `get_zombie(id) -> ZombieState`(읽기 전용), `zombie_ids()`, `zombie_count()`, `living_count()` | 조회 |
+| `on_player_died(world, player_id, cause, infection_stage)` | `SurvivalService.player_died` 시그널의 수신부(P2-T5, §14.20). 설정된 규칙에 맞는 사망이면 그 플레이어의 위치·방향에 좀비 하나를 `spawn_zombie`로 만든다. 상한이면 생략하고 경고 로그와 `skipped_player_zombie_count`를 남긴다 |
 
 이벤트(모두 `event_type`, `zombie_id`, `world_time` 포함, 위치는 `[x, y, z]`, JSON-safe. `world_time`은 달력 시각이다, §14.16):
 
@@ -765,7 +766,7 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 
 #### 사망 순간
 
-`SurvivalService._mark_dead`(전투 피해 `apply_damage`, 생존 규칙의 시간 피해, 감염 좀비화 모두 이 한 곳을 지난다)가 순서대로 한다: 체력 0과 사망 시각(달력·행동) 기록 → 아직 내보내지 않은 시간 피해 이벤트 → **소지품 전부를 그 플레이어의 서버 위치에 내려놓기**(`ServerWorld.drop_all_player_items`, §14.17의 `drop_all_items` 트랜잭션 한 번) → `player_died` 이벤트.
+`SurvivalService._mark_dead`(전투 피해 `apply_damage`, 생존 규칙의 시간 피해, 감염 좀비화 모두 이 한 곳을 지난다)가 순서대로 한다: 체력 0과 사망 시각(달력·행동) 기록 → 아직 내보내지 않은 시간 피해 이벤트 → **소지품 전부를 그 플레이어의 서버 위치에 내려놓기**(`ServerWorld.drop_all_player_items`, §14.17의 `drop_all_items` 트랜잭션 한 번) → `player_died` 이벤트 → 다른 시스템용 시그널 `player_died`(P2-T5, §14.20).
 
 - 내려놓는 시점은 **사망 즉시**다(새 캐릭터가 시작될 때가 아니다). 이유: (1) 대기 시간 동안에도 다른 플레이어가 그 자리의 아이템을 보고 주울 수 있다. (2) "죽은 캐릭터는 아무것도 들고 있지 않다"가 사망 순간부터 성립하므로, 죽은 채 접속을 끊거나 서버가 저장·재시작되어도 소지품이 두 번 떨어지거나 사라질 중간 상태가 없다.
 - 위치는 `clamp_to_world(플레이어 위치)`, 셀은 `DevWorldSeed.DEV_CELL_ID`(§14.17과 같다). 한 점에 겹쳐 놓인다. 묶음은 나뉘지 않고, 아이템 수는 보존된다(생성·삭제 없음).
@@ -808,3 +809,40 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 클라이언트 표시: 생존 HUD 첫 줄에 "캐릭터 #N"(본인 미러가 세대 번호를 받은 뒤에만), 사망 안내 문구를 "캐릭터가 끝났고 새 캐릭터로 시작한다"는 내용으로 바꿨다(`ClientPresentationSettings.death_message`).
 
 테스트: `tests/unit/permanent_death_test.gd`(사망 즉시 소지품이 죽은 위치에·총수 보존·한 트랜잭션, 생존 규칙 사망과 오프라인 사망, 월드 경계, 새 캐릭터의 위치·빈 인벤토리·초기 상태·세대 증가·이벤트, 죽은 캐릭터의 줍기·내려놓기 거부와 다른 플레이어의 줍기, 사망 중 퇴장·재접속, 사망 대기 중 저장 → 재시작, 이전 규칙 저장, 세대 번호 저장·마이그레이션·검증, v1 fragment 결함, 본인 미러의 세대 번호), `tests/integration/permanent_death_net_test.gd`(서버 1 + 클라이언트 2, 실제 ENet: 사망 → 두 클라이언트가 같은 위치의 월드 아이템을 봄·소유자만 인벤토리 메시지를 받음·죽은 플레이어의 줍기 거부 → 새 캐릭터(본인만 세대 2를 앎) → 다른 플레이어와 새 캐릭터가 각각 줍기, 사망 중 퇴장 → 재접속, 사망 상태 저장 → 서버 재시작 → 재접속), `tests/unit/client_presentation_test.gd`(HUD 세대 줄과 사망 안내).
+
+### 14.20 감염 사망 자리의 좀비(P2-T5, docs/00 ADR-008)
+
+감염으로 죽은 플레이어의 자리에 좀비가 하나 생긴다. 좀비를 만들지 않던 임시안(§14.6의 B4 서술, docs/15 P2-8)을 대체한다. 임시 가정은 docs/15 §11.3 P2-132~P2-136.
+
+구성: `SurvivalService`(시그널 `player_died`, 정적 함수 `is_infection_death`), `ZombieService.on_player_died`(규칙 판단과 생성), `ZombieSettings.player_death_zombie_rule`, `ServerComposition.create_world`(둘을 연결). 새 RPC·새 저장 필드·프로토콜 변경은 없다. `network_service.gd`는 수정하지 않았다.
+
+#### 결합 방식
+
+- `SurvivalService`는 좀비 시스템을 모른다. 사망을 알리는 시그널만 낸다: `signal player_died(world: ServerWorld, player_id: String, cause: String, infection_stage: InfectionState.Stage)`. 모든 사망 경로가 지나는 `_mark_dead`에서, 소지품을 내려놓고(§14.19) `player_died` 이벤트를 큐에 넣은 직후, 사망마다 한 번, 동기적으로 낸다. `cause`는 그 이벤트의 원인 문자열, `infection_stage`는 사망 순간의 단계(`NONE` = 비감염), `world`는 그 시스템이 등록된 월드다(플레이어 위치는 아직 죽은 자리). 월드에 등록되지 않은 시스템은 내지 않는다.
+- `ServerComposition.create_world`가 `survival.player_died.connect(zombies.on_player_died)`로 잇는다(조립의 유일한 장소, §14.5). 월드가 두 시스템을 소유하고 연결은 어느 쪽도 참조로 붙잡지 않는다. 좀비 시스템이 없는 월드에서는 아무도 듣지 않을 뿐이다.
+- 좀비 쪽이 읽는 것은 원인 문자열과 감염 단계뿐이다(`ZombieService`는 이미 `SurvivalService`의 피해·감염 API를 쓰고 있어 새 의존 방향이 생기지 않는다).
+
+#### 규칙
+
+`ZombieService.on_player_died(world, player_id, cause, infection_stage)`가 `ZombieSettings.player_death_zombie_rule`에 따라 판단한다.
+
+| 값(`ZombieSettings.PlayerDeathZombieRule`) | 좀비가 생기는 사망 |
+|---|---|
+| `NEVER`(0) | 없음 |
+| `INFECTION_DEATH`(1, 기본) | 감염이 사망 원인인 경우: `SurvivalService.is_infection_death(cause)`가 참. 말기가 끝나 `ZOMBIFIED`가 된 사망(원인 `infection`)과, 감염 단계의 체력 감소로 죽은 사망(원인 `infection`, 또는 출혈·굶주림·탈수와 함께 죽어 원인이 `..._infection`으로 끝나는 경우)이다 |
+| `INFECTED_AT_DEATH`(2) | 위에 더해, 감염된 상태(단계가 `NONE`이 아님)에서 일어난 모든 사망(전투 피해 포함) |
+
+- 기본 규칙에서 전투 피해(`combat`), 출혈, 굶주림, 탈수만으로 죽으면 감염된 플레이어라도 좀비가 생기지 않는다. 물려서 그 자리에서 죽은 비감염 플레이어도 마찬가지다(치명타에는 감염 판정이 적용되지 않는다, §14.9).
+- 생성: 기존 `spawn_zombie(world, 플레이어 위치, 플레이어 yaw)` 그대로다. 일반 좀비와 같은 ID 계열·체력·AI·수치이고 상태는 `idle`, 배회 기준점은 죽은 자리다. 좀비 상태에도 이벤트에도 어느 플레이어였는지는 없다(서버 로그 `player zombie spawned`에만 `player_id`가 남는다).
+- 상한: 좀비 수가 `max_active_zombies`(시체 포함)에 이르렀으면 생성하지 않는다. `spawn_zombie`가 `zombie_limit`로 거부하고, 경고 로그(`player zombie not spawned`, `player_id`, 사유)와 `skipped_player_zombie_count`를 남긴다. 나중에 자리가 나도 다시 시도하지 않는다. 플레이어의 사망 처리 자체는 영향받지 않는다.
+- 시점: 사망과 같은 서버 틱이다. 생존 규칙의 사망(좀비화, 감염 체력 감소)은 생존 시스템의 `step` 안에서 일어나고 좀비 시스템이 그 뒤에 도므로 즉시 생성된다. 좀비 시스템이 자기 `step`을 도는 중에 알림이 오면(좀비의 공격으로 플레이어가 죽는 경우, `INFECTED_AT_DEATH`에서만 해당) 요청을 모아 두었다가 그 `step`이 끝날 때 생성한다(처리 중인 좀비 집합을 바꾸지 않기 위해서다).
+- 진단: `ZombieService.player_zombie_count`, `skipped_player_zombie_count`(서버 시작 후 누계, 저장하지 않음).
+- 새 캐릭터(§14.19)는 감염이 없는 상태로 시작하므로 같은 사망이 좀비를 두 번 만들지 않는다. 죽은 채 저장된 플레이어를 다시 로드하거나 그 플레이어가 다시 접속해도 사망이 다시 일어나지 않는다.
+
+#### 복제와 저장
+
+- 복제: 기존 `ZombieNet`(§14.12)이 그대로 한다. 생성 틱의 `zombie_spawned` 이벤트(채널 0)로 모든 클라이언트 미러에 추가되고 이후 스냅샷으로 갱신되며, 늦게 접속한 클라이언트는 접속 조각으로 받는다. 이벤트·행 형식은 바뀌지 않았다.
+- 정보 공개(ADR-009): 다른 플레이어가 받는 것은 기존 그대로 `player_died`(원인 없음)와 좀비의 등장뿐이다. "이 좀비가 누구였는지"를 알리는 필드는 어디에도 없다. 다만 죽은 플레이어의 캡슐이 있는 자리에 같은 틱에 좀비가 나타나므로, 그 자리를 보고 있는 플레이어는 그 죽음이 감염 때문이었음을 알 수 있다. ADR-008이 요구하는 관찰 가능한 사실로 보고 숨기지 않았다(docs/15 P2-135).
+- 저장: 일반 좀비와 같이 world_state `systems.zombie`에 들어간다(스키마 변경 없음). 죽은 플레이어가 소지품을 들고 있었으면 그 틱 끝의 저장(§14.19)에 좀비도 함께 들어가고, 빈손이었으면 다음 저장에 들어간다. 그 전에 서버가 비정상 종료하면 플레이어는 감염된 채 살아 있던 마지막 저장으로 돌아가 다시 죽고 좀비도 다시 생긴다(하나).
+
+테스트: `tests/unit/player_zombie_test.gd`(감염 사망 → 그 위치·방향에 좀비 1마리와 이벤트 형식, 새 캐릭터가 좀비를 더 만들지 않음, 전투·감염자의 전투 사망·탈수·출혈은 생성 없음, 원인 문자열 판정, 감염 체력 감소 사망, 규칙 설정 3값과 검증, 상한에서 생략·로그·재시도 없음, 좀비 `step` 안에서 일어난 사망, 좀비 시스템 없는 월드, 저장 → 재생성 → 로드), `tests/integration/player_zombie_net_test.gd`(서버 1 + 클라이언트 2~3, 실제 ENet: 두 클라이언트 미러에 같은 ID의 좀비가 죽은 위치·방향으로 나타남, 같은 이벤트·순번, 이벤트와 미러에 플레이어 ID 없음, 다른 플레이어는 사망 원인을 받지 않음, 새 캐릭터와 감염 아닌 사망은 좀비를 늘리지 않음, 늦은 접속, 저장 → 서버 재시작 → 재접속).

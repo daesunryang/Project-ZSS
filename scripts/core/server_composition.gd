@@ -15,7 +15,8 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	world.clock = config.clock.create_clock()
 	# --- systems (registration order = step order = save order) ---
 	# Phase 2-B: survival (B1). Registered first so later systems can use it.
-	if world.register_system(SurvivalService.new(config.survival, world.ids, world.clock)) != OK:
+	var survival: SurvivalService = SurvivalService.new(config.survival, world.ids, world.clock)
+	if world.register_system(survival) != OK:
 		return null
 	# Phase 2-A: noise (A1). Before its listeners (zombies) so expired noise
 	# is gone before they query it in the same tick.
@@ -26,8 +27,13 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	if world.register_system(PlayerNoiseService.new(config.player_noise)) != OK:
 		return null
 	# Phase 2-A: zombies (A2). After survival and noise, which they use.
-	if world.register_system(ZombieService.new(config.zombie, world.ids, world.registry, world.clock)) != OK:
+	var zombies: ZombieService = ZombieService.new(config.zombie, world.ids, world.registry, world.clock)
+	if world.register_system(zombies) != OK:
 		return null
+	# P2-T5 (docs/00 ADR-008): a player who dies of infection leaves a zombie.
+	# Survival only announces deaths; the zombie system decides. The world
+	# owns both systems, and the connection holds no reference to either.
+	survival.player_died.connect(zombies.on_player_died)
 	# Phase 2-C: melee combat (C1). After survival, noise and zombies, which
 	# it uses. It acts on requests (request_melee_attack), not in step().
 	if world.register_system(CombatService.new(config.combat, config.melee_weapons, world.clock)) != OK:

@@ -8,6 +8,17 @@ extends Resource
 
 const DEFAULT_PATH: String = "res://data/tuning/zombie_settings.tres"
 
+## Which player deaths leave a zombie where the player died (docs/00
+## ADR-008, docs/15 P2-132).
+##   NEVER              no player death leaves a zombie.
+##   INFECTION_DEATH    the death was caused by the infection: the player
+##                      turned at the end of the terminal stage, or the
+##                      health loss of the infection killed (alone or
+##                      together with bleeding / starvation / dehydration).
+##   INFECTED_AT_DEATH  any death of a player who was infected at that
+##                      moment, whatever killed it (also a hit).
+enum PlayerDeathZombieRule { NEVER = 0, INFECTION_DEATH = 1, INFECTED_AT_DEATH = 2 }
+
 @export_group("Population")
 ## Zombies (alive or corpses) that may exist at once; spawns beyond fail.
 @export_range(1, 100000) var max_active_zombies: int = 64
@@ -19,6 +30,9 @@ const DEFAULT_PATH: String = "res://data/tuning/zombie_settings.tres"
 @export_range(0.0, 100000.0) var dev_spawn_max_radius_m: float = 90.0
 ## Base seed: placement RNG and per-zombie RNG (hash("<seed>:<zombie_id>")).
 @export var rng_seed: int = 0
+## PlayerDeathZombieRule: which player deaths leave a zombie (P2-T5). The
+## zombie counts against max_active_zombies; at the limit it is skipped.
+@export_enum("Never:0", "Death by infection:1", "Any death while infected:2") var player_death_zombie_rule: int = PlayerDeathZombieRule.INFECTION_DEATH
 
 @export_group("Health")
 @export_range(1.0, 100000.0) var max_health: float = 100.0
@@ -84,6 +98,8 @@ func validate() -> PackedStringArray:
 		errors.append("zombie dev_spawn_count must be within [0, max_active_zombies]")
 	if not dev_spawn_center.is_finite():
 		errors.append("zombie dev_spawn_center must be finite")
+	if player_death_zombie_rule < PlayerDeathZombieRule.NEVER or player_death_zombie_rule > PlayerDeathZombieRule.INFECTED_AT_DEATH:
+		errors.append("zombie player_death_zombie_rule must be a PlayerDeathZombieRule value")
 	if dev_spawn_min_radius_m < 0.0 or dev_spawn_max_radius_m < dev_spawn_min_radius_m:
 		errors.append("zombie dev spawn radii must satisfy 0 <= min <= max")
 	if max_health <= 0.0:

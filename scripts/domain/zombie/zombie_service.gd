@@ -11,6 +11,18 @@ extends ServerSystem
 ##   zombie_count(), living_count()
 ##   snapshot_rows() -> Array[Dictionary]   (network read surface)
 ##   drain_events() -> Array[Dictionary]    (network read surface)
+##   on_player_died(world, player_id, cause, infection_stage)
+##       hook for SurvivalService.player_died, connected by ServerComposition
+##
+## Player zombies (P2-T5, docs/00 ADR-008, docs/09 §14.20): a player whose
+## death matches ZombieSettings.player_death_zombie_rule (default: the
+## infection killed it) leaves one ordinary zombie at the place and facing
+## of the death. It is spawned like any other zombie (same id series, same
+## "zombie_spawned" event, saved with the others) and nothing in its state or
+## events says which player it was. At `max_active_zombies` the spawn is
+## skipped, logged and counted; it is not retried. A death reported while
+## this system is inside its own step (a zombie killed the player) is
+## spawned at the end of that step.
 ##
 ## Cadence (CLAUDE.md §6): movement is integrated for every living zombie
 ## each server tick; the AI decision (sensing, state changes, attacks) runs
@@ -100,6 +112,10 @@ const TIME_EPSILON_SEC: float = 0.000001
 var last_ai_update_count: int = 0
 var total_ai_update_count: int = 0
 var dropped_event_count: int = 0
+## Zombies spawned where a player died / such spawns skipped (zombie limit
+## or another spawn failure). Since the server started; not saved.
+var player_zombie_count: int = 0
+var skipped_player_zombie_count: int = 0
 
 var _settings: ZombieSettings
 var _ids: EntityIdGenerator
@@ -114,6 +130,11 @@ var _ai_queued: Dictionary[String, bool] = {}
 var _events: Array[Dictionary] = []
 ## Placement RNG (dev seeding, future spawners). State is saved.
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
+## True while step() runs: a player zombie requested then waits in
+## `_pending_player_zombies` ({player_id, position, yaw}) until the step is
+## over, so the step never changes the zombie set it is working on.
+var _stepping: bool = false
+var _pending_player_zombies: Array[Dictionary] = []
 
 
 func _init(settings: ZombieSettings, ids: EntityIdGenerator, registry: EntityRegistry, clock: WorldClock) -> void:
@@ -262,6 +283,67 @@ func seed_new_world(world: ServerWorld) -> Error:
 
 func step(world: ServerWorld, action_delta: float, _world_delta: float) -> void:
 	last_ai_update_count = 0
+	_stepping = true
+	_step_zombies(world, action_delta)
+	_stepping = false
+	_spawn_pending_player_zombies(world)
+
+
+## Hook for SurvivalService.player_died (ServerComposition connects it;
+## docs/00 ADR-008). Leaves one zombie where the player died when the death
+## matches ZombieSettings.player_death_zombie_rule. Survival does not know
+## this system; this system reads only the cause and the infection stage.
+func on_player_died(world: ServerWorld, player_id: String, cause: String, infection_stage: InfectionState.Stage) -> void:
+	if not _death_leaves_zombie(cause, infection_stage):
+		return
+	var player: PlayerState = world.get_player(player_id) if world != null else null
+	if player == null:
+		GameLogger.warning("zombie", "player zombie not spawned", {"player_id": player_id, "reason": ServerWorld.REASON_UNKNOWN_PLAYER, "operation": "on_player_died"})
+		skipped_player_zombie_count += 1
+		return
+	var request: Dictionary = {"player_id": player_id, "position": player.position, "yaw": player.yaw}
+	if _stepping:
+		_pending_player_zombies.append(request)
+		return
+	_spawn_player_zombie(world, request)
+
+
+## True when a death with this cause / infection stage leaves a zombie under
+## the configured rule.
+func _death_leaves_zombie(cause: String, infection_stage: InfectionState.Stage) -> bool:
+	match _settings.player_death_zombie_rule:
+		ZombieSettings.PlayerDeathZombieRule.INFECTION_DEATH:
+			return SurvivalService.is_infection_death(cause)
+		ZombieSettings.PlayerDeathZombieRule.INFECTED_AT_DEATH:
+			return infection_stage != InfectionState.Stage.NONE or SurvivalService.is_infection_death(cause)
+	return false
+
+
+func _spawn_pending_player_zombies(world: ServerWorld) -> void:
+	if _pending_player_zombies.is_empty():
+		return
+	var requests: Array[Dictionary] = _pending_player_zombies
+	_pending_player_zombies = []
+	for request: Dictionary in requests:
+		_spawn_player_zombie(world, request)
+
+
+## Spawns the zombie of one dead player. A refused spawn (zombie limit) is
+## skipped for good: logged and counted, never retried.
+func _spawn_player_zombie(world: ServerWorld, request: Dictionary) -> void:
+	var player_id: String = str(request["player_id"])
+	var result: ActionResult = spawn_zombie(world, request["position"] as Vector3, float(request["yaw"]))
+	if not result.ok:
+		skipped_player_zombie_count += 1
+		GameLogger.warning("zombie", "player zombie not spawned", {"player_id": player_id, "reason": result.reason, "operation": "spawn_player_zombie"})
+		return
+	player_zombie_count += 1
+	# Server log only: clients are never told which player a zombie was.
+	GameLogger.info("zombie", "player zombie spawned", {"entity_id": str(result.event.get("zombie_id", "")), "player_id": player_id})
+
+
+## One tick of movement and AI decisions for the existing zombies.
+func _step_zombies(world: ServerWorld, action_delta: float) -> void:
 	if action_delta <= 0.0 or _zombies.is_empty():
 		return
 	var now: float = _clock.action_time_sec

@@ -48,6 +48,18 @@ extends ServerSystem
 ## size. The `world_time` of every event and the `*_world_time` fields of
 ## wounds and infection are calendar time.
 
+## A player died (P2-T5). Server-side hook for other systems, connected by
+## ServerComposition; this system does not know who listens. Emitted once per
+## death, after the belongings were put down and the "player_died" event was
+## queued, synchronously, from wherever the death happens (the survival
+## step, or apply_damage called by another system). `world` is the world
+## this system is registered in; the dead player's position is still where
+## it died. `cause` is the cause of the "player_died" event (is_infection_death
+## tells whether the infection killed); `infection_stage` is the stage at the
+## moment of death (NONE = not infected). Not emitted while this system is
+## not registered in a world.
+signal player_died(world: ServerWorld, player_id: String, cause: String, infection_stage: InfectionState.Stage)
+
 const SYSTEM_ID: String = "survival"
 const ENTITY_KIND_WOUND: String = "wound"
 
@@ -81,6 +93,8 @@ const CAUSE_STARVATION: String = "starvation"
 const CAUSE_DEHYDRATION: String = "dehydration"
 const CAUSE_STARVATION_DEHYDRATION: String = "starvation_dehydration"
 const CAUSE_INFECTION: String = "infection"
+## Separator of combined causes ("bleeding_infection").
+const CAUSE_SEPARATOR: String = "_"
 const DEATH_SEARCH_ITERATIONS: int = 48
 ## Action time is a sum of tick lengths; a report interval that is due within
 ## this tolerance counts as elapsed.
@@ -147,6 +161,15 @@ func drain_events() -> Array[Dictionary]:
 func is_alive(player_id: String) -> bool:
 	var vitals: PlayerVitals = _vitals.get(player_id, null)
 	return vitals != null and vitals.is_alive()
+
+
+## True when `cause` (the cause of a "player_died" event) says the infection
+## killed the player: turning at the end of the terminal stage, or health
+## lost to the infection alone or together with other time-based damage
+## ("bleeding_infection", ...; infection is always the last part). A hit
+## ("combat") and bleeding / starvation / dehydration alone are not.
+static func is_infection_death(cause: String) -> bool:
+	return cause == CAUSE_INFECTION or cause.ends_with(CAUSE_SEPARATOR + CAUSE_INFECTION)
 
 
 ## Current server-authoritative infection stage; NONE for an unknown player.
@@ -769,13 +792,23 @@ func _mark_dead(player_id: String, vitals: PlayerVitals, world_time: float, acti
 	}
 	_push_event(event)
 	GameLogger.info("survival", "player died", event)
+	# Hook for other systems (P2-T5: a zombie where an infected player died).
+	var world: ServerWorld = _registered_world()
+	if world != null:
+		player_died.emit(world, player_id, cause, vitals.infection.stage)
+
+
+## The world this system is registered in (null before on_registered or
+## after the world is gone).
+func _registered_world() -> ServerWorld:
+	return (_world_ref.get_ref() as ServerWorld) if _world_ref != null else null
 
 
 ## Everything the (dead) player carries goes to the world where it is. A
 ## failure is logged and left to ServerWorld.start_new_character, which
 ## drops again before the new character starts, so nothing is carried over.
 func _leave_belongings(player_id: String) -> void:
-	var world: ServerWorld = (_world_ref.get_ref() as ServerWorld) if _world_ref != null else null
+	var world: ServerWorld = _registered_world()
 	if world == null:
 		GameLogger.error("survival", "dead player's items not dropped: system is not registered in a world", {"player_id": player_id, "operation": "leave_belongings"})
 		return
