@@ -40,6 +40,17 @@ func remove(entity_id: String) -> Error:
 	return OK
 
 
+## Takes an id out of the registry WITHOUT tombstoning it (P3-1): the entity
+## still exists, but it left memory with its cell (docs/03 §3.2) and is
+## registered again when that cell is loaded. `entity_removed` is not
+## emitted: nothing was removed from the world.
+func release(entity_id: String) -> Error:
+	if not _kinds.has(entity_id):
+		return ERR_DOES_NOT_EXIST
+	_kinds.erase(entity_id)
+	return OK
+
+
 func has(entity_id: String) -> bool:
 	return _kinds.has(entity_id)
 

@@ -75,7 +75,16 @@ var clock: WorldClock = WorldClock.new()
 var character_rules: CharacterRules = CharacterRules.new(CharacterSettings.new(), AppearanceCatalog.new())
 ## See the header: true = players create their characters themselves.
 var require_character_creation: bool = false
+## World cells (P3-1, docs/09 §15.1): the cell grid and the index of which
+## cell every world entity in memory is in. ServerComposition replaces the
+## grid with one built from WorldCellSettings (before anything is placed);
+## this default is the default grid. See the "world cells" block below.
+var cell_grid: WorldCellGrid = WorldCellGrid.new()
+var cell_index: WorldCellIndex = WorldCellIndex.new()
 
+## The registered WorldCellService, or null: a world without one keeps every
+## cell in memory and simulates everything, as before P3-1.
+var _cells: WorldCellService = null
 var _players: Dictionary[String, PlayerState] = {}
 var _player_ids_by_key: Dictionary[String, String] = {}
 ## Players in the world (connected and with a character).
@@ -92,7 +101,7 @@ var _system_order: Array[ServerSystem] = []
 func _init(id: String, gameplay_settings: GameplaySettings, catalog: ItemCatalog) -> void:
 	world_id = id
 	gameplay = gameplay_settings
-	inventory = InventoryService.new(catalog, ids, registry, gameplay.pickup_range_m, gameplay.world_half_extent_m)
+	inventory = InventoryService.new(catalog, ids, registry, gameplay.pickup_range_m, gameplay.world_half_extent_m, cell_index)
 
 
 ## Populates a brand-new world from the development seed.
@@ -102,7 +111,7 @@ func seed_new_world(seed: DevWorldSeed) -> Error:
 		GameLogger.error("world", "invalid world seed", {"world_id": world_id, "errors": "; ".join(errors), "operation": "seed_world"})
 		return ERR_INVALID_DATA
 	for index: int in range(seed.item_definition_ids.size()):
-		var item_id: String = inventory.spawn_world_item(seed.item_definition_ids[index], seed.quantity_at(index), DevWorldSeed.DEV_CELL_ID, seed.item_positions[index])
+		var item_id: String = inventory.spawn_world_item(seed.item_definition_ids[index], seed.quantity_at(index), cell_id_at(seed.item_positions[index]), seed.item_positions[index])
 		if item_id.is_empty():
 			return ERR_INVALID_DATA
 	for system: ServerSystem in _system_order:
@@ -126,6 +135,8 @@ func register_system(system: ServerSystem) -> Error:
 		return ERR_ALREADY_EXISTS
 	_systems[system_id] = system
 	_system_order.append(system)
+	if system is WorldCellService:
+		_cells = system as WorldCellService
 	system.on_registered(self)
 	return OK
 
@@ -476,7 +487,8 @@ func try_drop_item(player_id: String, item_instance_id: String) -> ActionResult:
 	if not blocked.is_empty():
 		return ActionResult.failure(blocked)
 	var state: PlayerState = _players[player_id]
-	return inventory.drop_item(state.inventory_id, item_instance_id, DevWorldSeed.DEV_CELL_ID, clamp_to_world(state.position))
+	var position: Vector3 = clamp_to_world(state.position)
+	return inventory.drop_item(state.inventory_id, item_instance_id, cell_id_at(position), position)
 
 
 ## Server rule entry (P2-T2, e.g. death): everything a known player carries
@@ -485,7 +497,8 @@ func drop_all_player_items(player_id: String) -> ActionResult:
 	var state: PlayerState = _players.get(player_id, null)
 	if state == null:
 		return ActionResult.failure(REASON_UNKNOWN_PLAYER)
-	return inventory.drop_all_items(state.inventory_id, DevWorldSeed.DEV_CELL_ID, clamp_to_world(state.position))
+	var position: Vector3 = clamp_to_world(state.position)
+	return inventory.drop_all_items(state.inventory_id, cell_id_at(position), position)
 
 
 ## Server rule entry (P2-T2, e.g. eating): `quantity` of an item a known
@@ -641,6 +654,10 @@ func restore_documents(world_state: Dictionary, players: Dictionary) -> PackedSt
 		errors.append("inventory must be an object")
 		return errors
 	errors.append_array(inventory.restore_snapshot(inventory_snapshot as Dictionary))
+	# P3-1: a world item of the world document lies in the cell of its
+	# position, whatever cell id was saved with it (saves written before
+	# cells existed put "cell_0_0" on every item).
+	inventory.reassign_world_item_cells(cell_id_at)
 	for raw: Variant in players.values():
 		if typeof(raw) != TYPE_DICTIONARY:
 			errors.append("player document is not an object")
@@ -754,3 +771,107 @@ func _create_player(player_key: String) -> PlayerState:
 	_player_ids_by_key[player_key] = state.player_id
 	GameLogger.info("world", "player created", {"world_id": world_id, "player_id": state.player_id, "inventory_id": inventory_id})
 	return state
+
+
+# ------------------------------------------------------------ world cells
+# P3-1 (docs/03 §3, docs/00 ADR-023, docs/09 §15.1). The world is cut into
+# square cells. Every world entity that is in memory is in `cell_index`
+# under the id of its cell; a cell's entities can be simulated (ACTIVE), kept
+# in memory without being simulated (PRELOADED) or saved and released
+# (UNLOADED). WorldCellService decides which, from the server positions of
+# the online players. Systems ask the functions below and never do cell math
+# of their own. Players are not part of a cell: they never leave memory.
+
+## Id of the cell a world position is in.
+func cell_id_at(position: Vector3) -> String:
+	return cell_grid.cell_id_at(position)
+
+
+## Cell coordinates of a world position: cheap to compare, for callers that
+## check every tick whether an entity crossed a border (then: cell_id_of).
+func cell_coords_at(position: Vector3) -> Vector2i:
+	return cell_grid.cell_of(position)
+
+
+func cell_id_of(cell: Vector2i) -> String:
+	return WorldCellGrid.id_of(cell)
+
+
+## True when the entities of this cell are simulated now (AI, senses,
+## attacks). A world without a cell service simulates everything.
+func is_cell_simulated(cell_id: String) -> bool:
+	return _cells == null or _cells.is_simulated(cell_id)
+
+
+## True when an entity at this position is simulated now.
+func is_simulated_at(position: Vector3) -> bool:
+	return _cells == null or _cells.is_simulated(cell_id_at(position))
+
+
+## True when the entities of this cell are in memory, so an entity may be
+## in it or move into it. A world without a cell service keeps everything in
+## memory.
+func is_cell_loaded(cell_id: String) -> bool:
+	return _cells == null or _cells.is_loaded(cell_id)
+
+
+## Save data of everything that lies in one cell (WorldCellDocument): the
+## world items and what every system keeps there.
+func cell_document(cell_id: String) -> Dictionary:
+	var system_docs: Dictionary = {}
+	for system: ServerSystem in _system_order:
+		var document: Dictionary = system.to_cell_document(cell_id)
+		if not document.is_empty():
+			system_docs[system.get_system_id()] = document
+	return WorldCellDocument.create(cell_id, inventory.cell_snapshot(cell_id), system_docs)
+
+
+## Brings the saved entities of a cell back into memory ({} = nothing was
+## saved for it). Returns errors; when non-empty the cell is not loaded.
+## Each part (world items, each system) validates before it changes
+## anything; a part restored before another part failed stays in memory and
+## is skipped when the cell is loaded again, so nothing is lost or doubled.
+func restore_cell_document(cell_id: String, document: Dictionary) -> PackedStringArray:
+	if document.is_empty():
+		return PackedStringArray()
+	var errors: PackedStringArray = WorldCellDocument.validate(document, cell_id)
+	if not errors.is_empty():
+		return errors
+	var world_items: Dictionary = document[WorldCellDocument.KEY_WORLD_ITEMS]
+	if not world_items.is_empty():
+		errors = inventory.restore_cell_snapshot(cell_id, world_items)
+		if not errors.is_empty():
+			return errors
+	var system_docs: Dictionary = document[WorldCellDocument.KEY_SYSTEMS]
+	for key: Variant in system_docs:
+		if not _systems.has(str(key)):
+			GameLogger.warning("world", "cell has data for an unregistered system (ignored)", {"world_id": world_id, "cell_id": cell_id, "system": str(key), "operation": "restore_cell"})
+	for system: ServerSystem in _system_order:
+		var system_doc: Variant = system_docs.get(system.get_system_id(), null)
+		if system_doc == null:
+			continue
+		if typeof(system_doc) != TYPE_DICTIONARY:
+			errors.append("cell %s: system document %s is not an object" % [cell_id, system.get_system_id()])
+			return errors
+		errors = system.restore_cell_document(self, cell_id, system_doc as Dictionary)
+		if not errors.is_empty():
+			return errors
+	return errors
+
+
+## Takes the entities of a cell out of memory. Only WorldCellService calls
+## this, after the cell was saved (docs/03 §3.2).
+func release_cell(cell_id: String) -> void:
+	for system: ServerSystem in _system_order:
+		system.release_cell(self, cell_id)
+	inventory.release_cell(cell_id)
+
+
+## Tells every system that a cell became ACTIVE (`active` true) or stopped
+## being ACTIVE. Only WorldCellService calls this.
+func notify_cell_active(cell_id: String, active: bool) -> void:
+	for system: ServerSystem in _system_order:
+		if active:
+			system.on_cell_activated(self, cell_id)
+		else:
+			system.on_cell_deactivated(self, cell_id)

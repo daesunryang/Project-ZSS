@@ -132,6 +132,45 @@ func on_character_started(_world: ServerWorld, _player_id: String) -> void:
 	return
 
 
+## World cells (P3-1, docs/09 §15.1). A system whose entities have a place
+## in the world keeps them in ServerWorld.cell_index and implements the five
+## hooks below, so the world can stop simulating a cell and take it out of
+## memory. WorldCellService calls them through ServerWorld; a system without
+## such entities ignores them.
+
+## The cell became ACTIVE: its entities are simulated from now on.
+func on_cell_activated(_world: ServerWorld, _cell_id: String) -> void:
+	return
+
+
+## The cell is no longer ACTIVE (it stays in memory): stop simulating its
+## entities. They keep their state as it is.
+func on_cell_deactivated(_world: ServerWorld, _cell_id: String) -> void:
+	return
+
+
+## This system's entities in one cell as save data ({} = none). JSON-safe,
+## with "schema_version". Saved under `systems.{system_id}` of the cell
+## document.
+func to_cell_document(_cell_id: String) -> Dictionary:
+	return {}
+
+
+## Brings this system's saved entities of a cell back into memory, exactly
+## as they were saved. Must validate everything first: on any error nothing
+## changes and the errors are returned (the cell is then not loaded). Not
+## called when the cell document has nothing for this system.
+func restore_cell_document(_world: ServerWorld, _cell_id: String, _document: Dictionary) -> PackedStringArray:
+	return PackedStringArray()
+
+
+## Forgets this system's entities of a cell. Called only after the cell was
+## saved (CLAUDE.md §6). Ids are released (EntityRegistry.release), never
+## retired: the entities still exist.
+func release_cell(_world: ServerWorld, _cell_id: String) -> void:
+	return
+
+
 ## World-level save document ({} = nothing to save).
 func to_world_document() -> Dictionary:
 	return {}

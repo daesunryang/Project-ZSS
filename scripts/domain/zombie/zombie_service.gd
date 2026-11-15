@@ -69,13 +69,38 @@ extends ServerSystem
 ## Failure reasons: bad_zombie_position, zombie_limit, zombie_id_failed,
 ## unknown_zombie, zombie_dead, bad_damage_amount, bad_damage_source.
 ##
+## World cells (P3-1, docs/03 §3.2, docs/09 §15.1). Every zombie in memory
+## is in ServerWorld.cell_index (kind "zombie") under the cell of its
+## position; the index follows a zombie that crosses a border. Only zombies
+## in ACTIVE cells are "awake": movement, AI decisions (sight, hearing,
+## attacks) and corpse removal run for them alone, so the cost of a tick
+## follows the active area, not the world. A zombie in a cell that is only
+## in memory is frozen exactly as it is and goes on when its cell becomes
+## active. In a world without a cell service every zombie is awake.
+##   - A zombie that walks from an active cell into a cell that is in
+##     memory but not active crosses the border and freezes there. It never
+##     enters a cell that is not in memory: that step is refused and it
+##     stays where it is (`blocked_move_count`).
+##   - Noise is heard by awake zombies only. A zombie that wakes does not
+##     hear what rang before it woke, even if that noise is still audible:
+##     a noise that reaches into a non-active cell is lost there.
+##   - Server rules can still damage a frozen zombie; it notices its
+##     attacker when it wakes.
+##   - A cell's zombies leave memory and come back unchanged through
+##     to_cell_document / restore_cell_document / release_cell. No event is
+##     recorded for that (ZombieNetModule tells clients).
+##
 ## Save: world_state.json `systems.zombie` =
-##   {schema_version, rng_seed, rng_state, zombies: [ZombieState.to_dict()]}.
+##   {schema_version, rng_seed, rng_state, zombies: [ZombieState.to_dict()]}
+## and, per cell document, `systems.zombie` =
+##   {schema_version, zombies: [ZombieState.to_dict()]}.
 ## Not saved: the AI queue and scheduler phase (after a load every zombie
 ## decides again within one AI period) and undrained events.
 
 const SYSTEM_ID: String = "zombie"
 const SCHEMA_VERSION: int = 1
+## Version of this system's part of a cell document (P3-1).
+const CELL_SCHEMA_VERSION: int = 1
 const ENTITY_KIND_ZOMBIE: String = "zombie"
 
 const EVENT_SPAWNED: String = "zombie_spawned"
@@ -120,13 +145,27 @@ var dropped_event_count: int = 0
 ## or another spawn failure). Since the server started; not saved.
 var player_zombie_count: int = 0
 var skipped_player_zombie_count: int = 0
+## Steps refused because the zombie would have entered a cell that is not
+## in memory (P3-1). Since the server started; not saved.
+var blocked_move_count: int = 0
 
 var _settings: ZombieSettings
 var _ids: EntityIdGenerator
 var _registry: EntityRegistry
 var _clock: WorldClock
-## Insertion order = spawn order = save order (deterministic iteration).
+## The world this system is registered with (weak: the world owns it).
+var _world_ref: WeakRef = null
+## Zombies in memory. Insertion order = the order they were spawned or
+## loaded = save order (deterministic iteration).
 var _zombies: Dictionary[String, ZombieState] = {}
+## Zombies in ACTIVE cells (alive or corpses): the only ones that are
+## stepped (P3-1).
+var _awake: Dictionary[String, bool] = {}
+## zombie_id -> cell coordinates of its position (to notice a border
+## crossing without building a cell id every tick).
+var _zombie_cells: Dictionary[String, Vector2i] = {}
+## Zombies that walked into a non-active cell during this step.
+var _falling_asleep: PackedStringArray = []
 var _scheduler: BucketScheduler
 ## Zombies waiting for their AI decision, in due order.
 var _ai_queue: Array[String] = []
@@ -178,7 +217,7 @@ func spawn_zombie(world: ServerWorld, position: Vector3, yaw: float = 0.0) -> Ac
 	zombie.rng.seed = ("%d:%s" % [_settings.rng_seed, zombie_id]).hash()
 	zombie.next_wander_at = _clock.action_time_sec + _wander_pause(zombie)
 	_zombies[zombie_id] = zombie
-	_scheduler.add(zombie_id)
+	_place(world, zombie)
 	GameLogger.debug("zombie", "zombie spawned", {"entity_id": zombie_id, "x": zombie.position.x, "z": zombie.position.z})
 	return ActionResult.success(_push_event(EVENT_SPAWNED, zombie_id, {
 		"position": _to_array(zombie.position), "yaw": zombie.yaw,
@@ -210,7 +249,9 @@ func apply_damage_to_zombie(zombie_id: String, amount: float, source_id: String)
 		_kill(zombie, source_id)
 	else:
 		zombie.alerted_by = source_id
-		_queue_ai(zombie_id, true)
+		# A frozen zombie notices its attacker when its cell is simulated.
+		if _awake.has(zombie_id):
+			_queue_ai(zombie_id, true)
 	GameLogger.info("zombie", "zombie damaged", {"entity_id": zombie_id, "source_id": source_id, "damage": amount, "health": zombie.health, "died": died})
 	return ActionResult.success(event)
 
@@ -231,6 +272,11 @@ func zombie_ids() -> PackedStringArray:
 
 func zombie_count() -> int:
 	return _zombies.size()
+
+
+## Zombies that are stepped now: those in ACTIVE cells (P3-1).
+func simulated_count() -> int:
+	return _awake.size()
 
 
 func living_count() -> int:
@@ -268,6 +314,10 @@ func drain_events() -> Array[Dictionary]:
 
 
 # ------------------------------------------------------------ ServerSystem
+
+func on_registered(world: ServerWorld) -> void:
+	_world_ref = weakref(world)
+
 
 ## Places the development zombies deterministically (same settings seed ->
 ## same positions). Only runs for brand-new worlds (docs/15 P2-3).
@@ -346,14 +396,18 @@ func _spawn_player_zombie(world: ServerWorld, request: Dictionary) -> void:
 	GameLogger.info("zombie", "player zombie spawned", {"entity_id": str(result.event.get("zombie_id", "")), "player_id": player_id})
 
 
-## One tick of movement and AI decisions for the existing zombies.
+## One tick of movement and AI decisions for the zombies in ACTIVE cells
+## (P3-1): zombies in other cells are not looked at.
 func _step_zombies(world: ServerWorld, action_delta: float) -> void:
-	if action_delta <= 0.0 or _zombies.is_empty():
+	if action_delta <= 0.0 or _awake.is_empty():
 		return
 	var now: float = _clock.action_time_sec
 	_remove_old_corpses(now)
-	for zombie_id: String in _zombies:
+	for zombie_id: String in _awake:
 		_move(world, _zombies[zombie_id], action_delta)
+	for zombie_id: String in _falling_asleep:
+		_sleep(zombie_id)
+	_falling_asleep.clear()
 	for zombie_id: String in _scheduler.advance(action_delta):
 		_queue_ai(zombie_id, false)
 	if _ai_queue.is_empty():
@@ -368,7 +422,7 @@ func _step_zombies(world: ServerWorld, action_delta: float) -> void:
 		var zombie_id: String = _ai_queue.pop_front()
 		_ai_queued.erase(zombie_id)
 		var zombie: ZombieState = _zombies.get(zombie_id, null)
-		if zombie == null or not zombie.is_alive() or zombie.state == ZombieState.State.DORMANT:
+		if zombie == null or not zombie.is_alive() or zombie.state == ZombieState.State.DORMANT or not _awake.has(zombie_id):
 			continue
 		_think(context, zombie)
 		last_ai_update_count += 1
@@ -417,13 +471,153 @@ func restore_world_document(document: Dictionary) -> PackedStringArray:
 		return errors
 	_rng.seed = seed_text.to_int()
 	_rng.state = state_text.to_int()
+	var world: ServerWorld = _world()
 	for zombie: ZombieState in restored:
 		_registry.register(zombie.zombie_id, ENTITY_KIND_ZOMBIE)
 		_ids.reserve_existing_id(zombie.zombie_id)
 		_zombies[zombie.zombie_id] = zombie
-		if zombie.is_alive():
-			_scheduler.add(zombie.zombie_id)
+		_place(world, zombie)
 	return errors
+
+
+# ------------------------------------------------------------ world cells
+
+## The cell became ACTIVE: its zombies are stepped from now on. They do not
+## hear what rang before they woke (see the header).
+func on_cell_activated(world: ServerWorld, cell_id: String) -> void:
+	for zombie_id: String in world.cell_index.entities_in_cell(cell_id, ENTITY_KIND_ZOMBIE):
+		var zombie: ZombieState = _zombies.get(zombie_id, null)
+		if zombie == null:
+			continue
+		zombie.last_noise_time = maxf(zombie.last_noise_time, _clock.action_time_sec)
+		_wake(zombie)
+
+
+## The cell is no longer ACTIVE: its zombies freeze as they are.
+func on_cell_deactivated(world: ServerWorld, cell_id: String) -> void:
+	for zombie_id: String in world.cell_index.entities_in_cell(cell_id, ENTITY_KIND_ZOMBIE):
+		_sleep(zombie_id)
+
+
+## The zombies of one cell as save data ({} = none), sorted by id.
+func to_cell_document(cell_id: String) -> Dictionary:
+	var world: ServerWorld = _world()
+	if world == null:
+		return {}
+	var zombies: Array[Dictionary] = []
+	for zombie_id: String in world.cell_index.entities_in_cell(cell_id, ENTITY_KIND_ZOMBIE):
+		if _zombies.has(zombie_id):
+			zombies.append(_zombies[zombie_id].to_dict())
+	if zombies.is_empty():
+		return {}
+	return {"schema_version": CELL_SCHEMA_VERSION, "zombies": zombies}
+
+
+## Brings the saved zombies of a cell back, exactly as they were saved (ids,
+## positions, state, health, timers, RNG). Validates first: on any error
+## nothing changes. A zombie that is already in memory wins over its saved
+## copy, and a zombie whose id was retired stays gone (both are skipped and
+## logged; this only happens when a cell file is older than the rest of the
+## save).
+func restore_cell_document(world: ServerWorld, cell_id: String, document: Dictionary) -> PackedStringArray:
+	var errors: PackedStringArray = []
+	if not ItemInstance.is_integer_value(document.get("schema_version", null)) or int(document["schema_version"]) != CELL_SCHEMA_VERSION:
+		errors.append("zombie: cell %s: unsupported schema_version" % cell_id)
+		return errors
+	var entries: Variant = document.get("zombies", null)
+	if typeof(entries) != TYPE_ARRAY:
+		errors.append("zombie: cell %s: zombies must be an array" % cell_id)
+		return errors
+	var restored: Array[ZombieState] = []
+	var seen: Dictionary[String, bool] = {}
+	var skipped: PackedStringArray = []
+	for entry: Variant in (entries as Array):
+		var zombie: ZombieState = ZombieState.from_dict(entry as Dictionary, _settings.max_health) if typeof(entry) == TYPE_DICTIONARY else null
+		if zombie == null:
+			errors.append("zombie: cell %s: invalid zombie entry" % cell_id)
+			continue
+		if seen.has(zombie.zombie_id):
+			errors.append("zombie: cell %s: duplicate id %s" % [cell_id, zombie.zombie_id])
+			continue
+		seen[zombie.zombie_id] = true
+		if _zombies.has(zombie.zombie_id) or _registry.has(zombie.zombie_id) or _registry.is_tombstoned(zombie.zombie_id):
+			skipped.append(zombie.zombie_id)
+			continue
+		restored.append(zombie)
+	if not errors.is_empty():
+		return errors
+	if not skipped.is_empty():
+		GameLogger.warning("zombie", "saved zombies skipped: already in memory or removed", {"cell_id": cell_id, "zombies": ", ".join(skipped), "operation": "restore_cell"})
+	for zombie: ZombieState in restored:
+		_registry.register(zombie.zombie_id, ENTITY_KIND_ZOMBIE)
+		_ids.reserve_existing_id(zombie.zombie_id)
+		_zombies[zombie.zombie_id] = zombie
+		_place(world, zombie)
+	return errors
+
+
+## Forgets the zombies of a cell (it was saved). Their ids are released,
+## not retired: they still exist.
+func release_cell(world: ServerWorld, cell_id: String) -> void:
+	for zombie_id: String in world.cell_index.entities_in_cell(cell_id, ENTITY_KIND_ZOMBIE):
+		_sleep(zombie_id)
+		_zombies.erase(zombie_id)
+		_zombie_cells.erase(zombie_id)
+		world.cell_index.remove(zombie_id)
+		_registry.release(zombie_id)
+
+
+func _world() -> ServerWorld:
+	return _world_ref.get_ref() as ServerWorld if _world_ref != null else null
+
+
+## Records which cell a zombie that just came into memory is in and wakes
+## it when that cell is simulated. Without a world (a service used on its
+## own) every zombie is awake.
+func _place(world: ServerWorld, zombie: ZombieState) -> void:
+	if world == null:
+		_wake(zombie)
+		return
+	var cell: Vector2i = world.cell_coords_at(zombie.position)
+	var cell_id: String = world.cell_id_of(cell)
+	_zombie_cells[zombie.zombie_id] = cell
+	world.cell_index.put(zombie.zombie_id, ENTITY_KIND_ZOMBIE, cell_id)
+	if world.is_cell_simulated(cell_id):
+		_wake(zombie)
+	else:
+		_sleep(zombie.zombie_id)
+
+
+## The zombie is stepped from now on; a living one decides once per period.
+func _wake(zombie: ZombieState) -> void:
+	_awake[zombie.zombie_id] = true
+	if zombie.is_alive():
+		_scheduler.add(zombie.zombie_id)
+
+
+## The zombie is no longer stepped (frozen as it is).
+func _sleep(zombie_id: String) -> void:
+	_awake.erase(zombie_id)
+	_scheduler.remove(zombie_id)
+	if _ai_queued.erase(zombie_id):
+		_ai_queue.erase(zombie_id)
+
+
+## The zombie's position left the cell it was in. It may walk on into a cell
+## that is in memory (it is frozen after this step when that cell is not
+## active), but never into one that is not: then the step is undone.
+func _cross_border(world: ServerWorld, zombie: ZombieState, previous: Vector3, cell: Vector2i) -> void:
+	var cell_id: String = world.cell_id_of(cell)
+	if not world.is_cell_loaded(cell_id):
+		zombie.position = previous
+		if zombie.state == ZombieState.State.IDLE or zombie.state == ZombieState.State.SEARCH:
+			zombie.has_move_target = false
+		blocked_move_count += 1
+		return
+	_zombie_cells[zombie.zombie_id] = cell
+	world.cell_index.put(zombie.zombie_id, ENTITY_KIND_ZOMBIE, cell_id)
+	if not world.is_cell_simulated(cell_id):
+		_falling_asleep.append(zombie.zombie_id)
 
 
 # ------------------------------------------------------------ AI decision
@@ -675,8 +869,12 @@ func _move(world: ServerWorld, zombie: ZombieState, action_delta: float) -> void
 		return
 	var direction: Vector3 = offset / distance
 	var travel: float = minf(speed * action_delta, distance - stop_distance)
+	var previous: Vector3 = zombie.position
 	zombie.position = world.clamp_to_world(zombie.position + direction * travel)
 	zombie.yaw = ZombiePerception.yaw_towards(direction, zombie.yaw)
+	var cell: Vector2i = world.cell_coords_at(zombie.position)
+	if cell != _zombie_cells.get(zombie.zombie_id, cell):
+		_cross_border(world, zombie, previous, cell)
 
 
 ## Live position of a target that was visible at the last AI decision,
@@ -707,16 +905,21 @@ func _kill(zombie: ZombieState, source_id: String) -> void:
 
 
 ## Removes corpses older than corpse_remove_delay_sec and tombstones
-## their ids (never reused).
+## their ids (never reused). Only corpses in ACTIVE cells are looked at: one
+## in a frozen cell goes as soon as its cell is simulated again.
 func _remove_old_corpses(now: float) -> void:
 	var expired: PackedStringArray = []
-	for zombie_id: String in _zombies:
+	for zombie_id: String in _awake:
 		var zombie: ZombieState = _zombies[zombie_id]
 		if not zombie.is_alive() and now - zombie.died_at >= _settings.corpse_remove_delay_sec:
 			expired.append(zombie_id)
+	var world: ServerWorld = _world()
 	for zombie_id: String in expired:
+		_sleep(zombie_id)
 		_zombies.erase(zombie_id)
-		_scheduler.remove(zombie_id)
+		_zombie_cells.erase(zombie_id)
+		if world != null:
+			world.cell_index.remove(zombie_id)
 		_registry.remove(zombie_id)
 		_push_event(EVENT_REMOVED, zombie_id, {})
 		GameLogger.debug("zombie", "corpse removed", {"entity_id": zombie_id})

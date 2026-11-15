@@ -43,6 +43,8 @@ var posture_net: PostureNetSettings
 ## character starts by itself after the delay. A dedicated server sets this
 ## from CharacterSettings.server_requires_character_creation (GameBootstrap).
 var require_character_creation: bool = false
+## P3-1 (world cells, docs/09 §15.1): the cell grid and the cell lifecycle.
+var world_cells: WorldCellSettings
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -66,6 +68,7 @@ static func from_defaults() -> CompositionConfig:
 	config.appearance = AppearanceCatalog.load_directory()
 	config.posture = PostureSettings.load_or_default()
 	config.posture_net = PostureNetSettings.load_or_default()
+	config.world_cells = WorldCellSettings.load_or_default()
 	return config
 
 
@@ -93,6 +96,9 @@ func validate() -> PackedStringArray:
 	if posture == null or posture_net == null:
 		errors.append("composition config is incomplete (posture)")
 		return errors
+	if world_cells == null:
+		errors.append("composition config is incomplete (world_cells)")
+		return errors
 	errors.append_array(gameplay.validate())
 	errors.append_array(clock.validate())
 	errors.append_array(dev_seed.validate())
@@ -111,4 +117,6 @@ func validate() -> PackedStringArray:
 	errors.append_array(appearance.validate())
 	errors.append_array(posture.validate())
 	errors.append_array(posture_net.validate())
+	errors.append_array(world_cells.validate())
+	errors.append_array(world_cells.validate_play_area(gameplay.world_half_extent_m))
 	return errors

@@ -18,7 +18,14 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	world.character_rules = CharacterRules.new(config.character, config.appearance)
 	world.require_character_creation = config.require_character_creation
 	# --- systems (registration order = step order = save order) ---
-	# Phase 2-B: survival (B1). Registered first so later systems can use it.
+	# P3-1 (docs/09 §15.1): world cells. The grid is set before anything is
+	# placed in the world; the cell service is registered first, so every
+	# other system sees this tick's active cells and a player entering the
+	# world has its cells loaded before the other systems hear of it.
+	world.cell_grid = WorldCellGrid.new(config.world_cells)
+	if world.register_system(WorldCellService.new(config.world_cells)) != OK:
+		return null
+	# Phase 2-B: survival (B1). Registered before the systems that use it.
 	var survival: SurvivalService = SurvivalService.new(config.survival, world.ids, world.clock)
 	if world.register_system(survival) != OK:
 		return null

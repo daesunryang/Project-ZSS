@@ -14,6 +14,10 @@ var _survival_settings: SurvivalSettings = null
 var _noise_settings: NoiseSettings = null
 var _clock_settings: WorldClockSettings = null
 var _root: String = ""
+## P3-1: zombies are simulated only in active world cells. A test that puts
+## a zombie more than 100 m from every player to isolate a zombie rule
+## turns this on: the whole map is active, as it was before cells existed.
+var _whole_map_active: bool = false
 
 
 func before_each() -> void:
@@ -31,6 +35,7 @@ func before_each() -> void:
 	_noise_settings = NoiseSettings.new()
 	_clock_settings = WorldClockSettings.new()
 	_root = "user://test_saves/zombie_%d" % Time.get_ticks_usec()
+	_whole_map_active = false
 
 
 func after_each() -> void:
@@ -45,6 +50,10 @@ func _config() -> CompositionConfig:
 	config.survival = _survival_settings
 	config.noise = _noise_settings
 	config.zombie = _settings
+	if _whole_map_active:
+		config.world_cells = WorldCellSettings.new()
+		config.world_cells.active_radius_cells = config.world_cells.preload_radius_cells + 60
+		config.world_cells.preload_radius_cells = config.world_cells.active_radius_cells + 1
 	return config
 
 
@@ -362,6 +371,7 @@ func test_quiet_or_distant_noise_is_not_heard() -> void:
 
 
 func test_lost_target_is_searched_then_zombie_returns_to_idle() -> void:
+	_whole_map_active = true  # alice goes 280 m away to be lost
 	var world: ServerWorld = _world()
 	var alice: PlayerState = world.join("alice")
 	var zombie_id: String = _spawn(world, Vector3(0, 0, 12), 0.0)
@@ -472,6 +482,7 @@ func test_dead_and_offline_players_are_not_targets() -> void:
 # ------------------------------------------------------------ zombie damage
 
 func test_zombie_takes_damage_dies_and_corpse_is_removed() -> void:
+	_whole_map_active = true  # the only player stands 300 m from the zombie
 	var world: ServerWorld = _world()
 	var service: ZombieService = _zombies(world)
 	world.join("alice").position = Vector3(-200, 0, -200)

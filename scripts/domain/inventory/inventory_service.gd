@@ -21,6 +21,17 @@ extends RefCounted
 ## `transaction_committed`, synchronously and in commit order, once the state
 ## is final. InventoryNetModule replicates from it (docs/09 §14.17), so
 ## clients see changes in the order the server committed them.
+##
+## World cells (P3-1, docs/09 §15.1). A world item's `location_id` is the id
+## of the cell it lies in, and every world item in memory is in the world's
+## WorldCellIndex (kind "item"). The items of one cell can be taken out of
+## memory and brought back unchanged:
+##   cell_snapshot          the world items of one cell, as save data
+##   restore_cell_snapshot  brings the saved world items of a cell back
+##   release_cell           forgets the world items of a cell (after they
+##                          were saved); their ids are NOT retired
+## Carried items never leave memory with a cell. These three announce
+## nothing through `transaction_committed`: no item changed hands.
 
 ## A transaction was committed. `event` is a copy of the ActionResult event.
 signal transaction_committed(event: Dictionary)
@@ -75,16 +86,21 @@ var _items: Dictionary[String, ItemInstance] = {}
 var _world_positions: Dictionary[String, Vector3] = {}
 ## inventory_id -> slot capacity
 var _inventories: Dictionary[String, int] = {}
+## Which cell every world item in memory is in (kind ENTITY_KIND_ITEM).
+var _cell_index: WorldCellIndex
 
 
 ## `world_half_extent_m` bounds drop positions (ServerWorld passes
 ## GameplaySettings.world_half_extent_m); the default is unbounded.
-func _init(catalog: ItemCatalog, ids: EntityIdGenerator, registry: EntityRegistry, pickup_range_m: float, world_half_extent_m: float = INF) -> void:
+## `cell_index` is the world's entity index (ServerWorld.cell_index); a
+## service built without one keeps its own.
+func _init(catalog: ItemCatalog, ids: EntityIdGenerator, registry: EntityRegistry, pickup_range_m: float, world_half_extent_m: float = INF, cell_index: WorldCellIndex = null) -> void:
 	_catalog = catalog
 	_ids = ids
 	_registry = registry
 	_pickup_range_m = pickup_range_m
 	_world_half_extent_m = world_half_extent_m
+	_cell_index = cell_index if cell_index != null else WorldCellIndex.new()
 
 
 ## Creates an empty inventory and returns its id ("" on failure).
@@ -118,6 +134,7 @@ func spawn_world_item(definition_id: String, quantity: int, cell_id: String, pos
 		return ""
 	_items[item.item_instance_id] = item
 	_world_positions[item.item_instance_id] = position
+	_index_world_item(item)
 	return item.item_instance_id
 
 
@@ -143,6 +160,7 @@ func try_pickup(inventory_id: String, item_instance_id: String, actor_position: 
 	item.location_id = inventory_id
 	item.slot_id = slot_id
 	_world_positions.erase(item_instance_id)
+	_cell_index.remove(item_instance_id)
 	GameLogger.info("inventory", "item picked up", {"entity_id": item_instance_id, "inventory_id": inventory_id, "slot_id": slot_id})
 	return _commit({
 		"event_type": EVENT_ITEM_PICKED_UP,
@@ -400,17 +418,137 @@ func describe_world_item(item_instance_id: String) -> Dictionary:
 	}
 
 
-## Plain-data snapshot for saving (sorted, deterministic).
-func to_snapshot() -> Dictionary:
+## Ids of the world items in memory that lie in one cell, sorted.
+func world_item_ids_in_cell(cell_id: String) -> PackedStringArray:
+	return _cell_index.entities_in_cell(cell_id, ENTITY_KIND_ITEM)
+
+
+## Save data of the world items of one cell: {items: [ItemInstance.to_dict()],
+## world_item_positions: {id: [x, y, z]}}, sorted by id. {} for a cell
+## without world items.
+func cell_snapshot(cell_id: String) -> Dictionary:
+	var item_ids: PackedStringArray = world_item_ids_in_cell(cell_id)
+	if item_ids.is_empty():
+		return {}
+	var items: Array[Dictionary] = []
+	var positions: Dictionary = {}
+	for item_id: String in item_ids:
+		items.append(_items[item_id].to_dict())
+		var p: Vector3 = _world_positions[item_id]
+		positions[item_id] = [p.x, p.y, p.z]
+	return {SNAPSHOT_ITEMS: items, SNAPSHOT_POSITIONS: positions}
+
+
+## Brings the saved world items of a cell (cell_snapshot) back into memory:
+## the same ids, definitions, stacks and positions. Everything is validated
+## first; on any error nothing changes and the errors are returned.
+##
+## The item in memory wins over its saved copy (docs/03 §6: loading a cell
+## never creates an item a second time): an entry whose id is already in
+## memory (it was picked up, or it is a world item that never left memory)
+## or whose id was retired (the item was used up) is skipped and logged. This
+## only happens when a cell file is older than the rest of the save (it was
+## restored from a backup).
+func restore_cell_snapshot(cell_id: String, snapshot: Dictionary) -> PackedStringArray:
+	var errors: PackedStringArray = []
+	if cell_id.is_empty():
+		return PackedStringArray(["cell id is empty"])
+	var items: Variant = snapshot.get(SNAPSHOT_ITEMS, [])
+	var positions: Variant = snapshot.get(SNAPSHOT_POSITIONS, {})
+	if typeof(items) != TYPE_ARRAY or typeof(positions) != TYPE_DICTIONARY:
+		return PackedStringArray(["cell %s: items must be an array and world_item_positions an object" % cell_id])
+	var new_items: Dictionary[String, ItemInstance] = {}
+	var new_positions: Dictionary[String, Vector3] = {}
+	var skipped: PackedStringArray = []
+	for entry: Variant in (items as Array):
+		var item: ItemInstance = ItemInstance.from_dict(entry as Dictionary) if typeof(entry) == TYPE_DICTIONARY else null
+		if item == null:
+			errors.append("cell %s: invalid item entry" % cell_id)
+			continue
+		var item_id: String = item.item_instance_id
+		if new_items.has(item_id) or skipped.has(item_id):
+			errors.append("cell %s: duplicate item id %s" % [cell_id, item_id])
+			continue
+		if _items.has(item_id) or _registry.has(item_id) or _registry.is_tombstoned(item_id):
+			skipped.append(item_id)
+			continue
+		if item.location_type != ItemInstance.LOCATION_WORLD:
+			errors.append("cell %s: item %s does not lie in the world" % [cell_id, item_id])
+		if not _catalog.has(item.definition_id):
+			errors.append("cell %s: unknown definition %s for %s" % [cell_id, item.definition_id, item_id])
+		var position: Variant = _position_from((positions as Dictionary).get(item_id, null))
+		if position == null:
+			errors.append("cell %s: bad or missing position for %s" % [cell_id, item_id])
+			continue
+		new_items[item_id] = item
+		new_positions[item_id] = position
+	if (positions as Dictionary).size() != (items as Array).size():
+		errors.append("cell %s: world_item_positions does not match items" % cell_id)
+	if not errors.is_empty():
+		return errors
+	if not skipped.is_empty():
+		GameLogger.warning("inventory", "saved world items skipped: already in memory or removed", {"cell_id": cell_id, "items": ", ".join(skipped), "operation": "restore_cell"})
+	for item_id: String in new_items:
+		var item: ItemInstance = new_items[item_id]
+		item.location_id = cell_id
+		item.slot_id = ""
+		_items[item_id] = item
+		_world_positions[item_id] = new_positions[item_id]
+		_ids.reserve_existing_id(item_id)
+		_registry.register(item_id, ENTITY_KIND_ITEM)
+		_index_world_item(item)
+	return errors
+
+
+## Forgets the world items of a cell (call only after they were saved,
+## CLAUDE.md §6). Their ids are released, not retired: the items still exist
+## in the save and come back with restore_cell_snapshot(). Returns how many
+## items left memory.
+func release_cell(cell_id: String) -> int:
+	var item_ids: PackedStringArray = world_item_ids_in_cell(cell_id)
+	for item_id: String in item_ids:
+		_items.erase(item_id)
+		_world_positions.erase(item_id)
+		_cell_index.remove(item_id)
+		_registry.release(item_id)
+	return item_ids.size()
+
+
+## Gives every world item in memory the cell `resolver` (Callable(Vector3)
+## -> String) names for its position. For saves whose cell ids were written
+## for another grid, or before cells existed (P3-1: every item said
+## "cell_0_0"). Returns how many items changed their cell.
+func reassign_world_item_cells(resolver: Callable) -> int:
+	var changed: int = 0
+	for item_id: String in _world_positions:
+		var item: ItemInstance = _items[item_id]
+		var cell_id: String = str(resolver.call(_world_positions[item_id]))
+		if cell_id.is_empty() or cell_id == item.location_id:
+			continue
+		item.location_id = cell_id
+		_index_world_item(item)
+		changed += 1
+	return changed
+
+
+## Plain-data snapshot for saving (sorted, deterministic). `saved_with_cell`
+## (Callable(cell_id: String) -> bool, P3-1) names the cells whose world
+## items are saved in a document of their own (cell_snapshot): those items
+## are left out here. Without it every item is in the snapshot.
+func to_snapshot(saved_with_cell: Callable = Callable()) -> Dictionary:
 	var item_ids: PackedStringArray = PackedStringArray(_items.keys())
 	item_ids.sort()
 	var items: Array[Dictionary] = []
-	for item_id: String in item_ids:
-		items.append(_items[item_id].to_dict())
 	var positions: Dictionary = {}
-	for item_id: String in world_item_ids():
-		var p: Vector3 = _world_positions[item_id]
-		positions[item_id] = [p.x, p.y, p.z]
+	for item_id: String in item_ids:
+		var item: ItemInstance = _items[item_id]
+		var in_world: bool = _world_positions.has(item_id)
+		if in_world and saved_with_cell.is_valid() and bool(saved_with_cell.call(item.location_id)):
+			continue
+		items.append(item.to_dict())
+		if in_world:
+			var p: Vector3 = _world_positions[item_id]
+			positions[item_id] = [p.x, p.y, p.z]
 	var inventories: Dictionary = {}
 	for inventory_id: String in _inventories:
 		inventories[inventory_id] = _inventories[inventory_id]
@@ -480,10 +618,13 @@ func restore_snapshot(snapshot: Dictionary) -> PackedStringArray:
 		_ids.reserve_existing_id(inventory_id)
 		if not _registry.has(inventory_id):
 			_registry.register(inventory_id, ENTITY_KIND_INVENTORY)
+	_cell_index.remove_kind(ENTITY_KIND_ITEM)
 	for item_id: String in _items:
 		_ids.reserve_existing_id(item_id)
 		if not _registry.has(item_id):
 			_registry.register(item_id, ENTITY_KIND_ITEM)
+		if _world_positions.has(item_id):
+			_index_world_item(_items[item_id])
 	return errors
 
 
@@ -527,6 +668,24 @@ func _move_to_world(item: ItemInstance, cell_id: String, position: Vector3) -> v
 	item.location_id = cell_id
 	item.slot_id = ""
 	_world_positions[item.item_instance_id] = position
+	_index_world_item(item)
+
+
+## Puts a world item into the cell index under its `location_id`. An item
+## without a cell id (never written by the server rules) stays unindexed.
+func _index_world_item(item: ItemInstance) -> void:
+	if not item.location_id.is_empty():
+		_cell_index.put(item.item_instance_id, ENTITY_KIND_ITEM, item.location_id)
+
+
+## Vector3 for a saved [x, y, z] array of finite numbers, or null.
+static func _position_from(value: Variant) -> Variant:
+	if typeof(value) != TYPE_ARRAY or (value as Array).size() != 3:
+		return null
+	for component: Variant in (value as Array):
+		if not (typeof(component) == TYPE_FLOAT or typeof(component) == TYPE_INT) or not is_finite(float(component)):
+			return null
+	return Vector3(float(value[0]), float(value[1]), float(value[2]))
 
 
 func _dropped_event(inventory_id: String, item_instance_ids: Array, cell_id: String, position: Vector3) -> Dictionary:

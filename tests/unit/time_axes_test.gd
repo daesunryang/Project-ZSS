@@ -28,6 +28,10 @@ var _footstep_settings: PlayerNoiseSettings = null
 var _combat_settings: CombatSettings = null
 var _gameplay: GameplaySettings = null
 var _pause_when_empty: bool = true
+## P3-1: zombies are simulated only in active world cells. A test that puts
+## zombies more than 100 m from every player turns this on: the whole map
+## is active, as it was before cells existed.
+var _whole_map_active: bool = false
 var _now_msec: int = 0
 var _sequence: int = 0
 var _root: String = ""
@@ -45,6 +49,7 @@ func before_each() -> void:
 	_combat_settings = CombatSettings.new()
 	_gameplay = GameplaySettings.new()
 	_pause_when_empty = true
+	_whole_map_active = false
 	_now_msec = 0
 	_sequence = 0
 	_root = "user://test_saves/time_axes_%d" % Time.get_ticks_usec()
@@ -67,6 +72,10 @@ func _config(scale: float) -> CompositionConfig:
 	config.player_noise = _footstep_settings
 	config.zombie = _zombie_settings
 	config.combat = _combat_settings
+	if _whole_map_active:
+		config.world_cells = WorldCellSettings.new()
+		config.world_cells.active_radius_cells = config.world_cells.preload_radius_cells + 60
+		config.world_cells.preload_radius_cells = config.world_cells.active_radius_cells + 1
 	return config
 
 
@@ -253,6 +262,7 @@ func test_survival_fragment_v4_stores_and_validates_the_action_death_time() -> v
 func _zombie_outcome(scale: float) -> Dictionary:
 	_zombie_settings.bite_chance = 0.0
 	_zombie_settings.corpse_remove_delay_sec = 3.03
+	_whole_map_active = true  # the listener and the corpse are 212 m from alice
 	_survival_settings.infection_chance_scratch = 0.0
 	# Natural healing is a calendar rule; keep it out of the health comparison.
 	_survival_settings.health_recovery_per_world_sec = 0.0
