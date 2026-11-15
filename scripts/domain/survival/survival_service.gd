@@ -11,6 +11,9 @@ extends ServerSystem
 ##   movement_speed_multiplier(player_id) -> float  (legs/feet wounds)
 ##   apply_damage(player_id, DamageInput) -> ActionResult
 ##   stop_bleeding(player_id, wound_id) -> ActionResult
+##   bleeding_wound_ids(player_id) -> PackedStringArray  (worst first)
+##   check_stop_worst_bleeding(player_id, wound_count) -> String  (preflight)
+##   stop_worst_bleeding(player_id, wound_count, source_id) -> ActionResult
 ##   apply_infection_exposure(player_id, InfectionState.Exposure, source_id) -> ActionResult
 ##   apply_infection_treatment(player_id, source_id) -> ActionResult
 ##   infection_stage(player_id) -> InfectionState.Stage
@@ -65,6 +68,9 @@ const ENTITY_KIND_WOUND: String = "wound"
 
 const EVENT_PLAYER_WOUNDED: String = "player_wounded"
 const EVENT_PLAYER_BLEEDING_STOPPED: String = "player_bleeding_stopped"
+## Summary of one treatment that stopped one or more wounds (P2-T6). Returned
+## and logged only; each wound is queued as "player_bleeding_stopped".
+const EVENT_PLAYER_BLEEDING_TREATED: String = "player_bleeding_treated"
 const EVENT_PLAYER_SURVIVAL_DAMAGE: String = "player_survival_damage"
 const EVENT_PLAYER_DIED: String = "player_died"
 const EVENT_PLAYER_RESPAWNED: String = "player_respawned"
@@ -84,6 +90,8 @@ const REASON_ALREADY_INFECTED: String = "already_infected"
 const REASON_BAD_EXPOSURE: String = "bad_exposure"
 const REASON_UNKNOWN_WOUND: String = "unknown_wound"
 const REASON_NOT_BLEEDING: String = "not_bleeding"
+## A treatment that would stop fewer than one wound.
+const REASON_BAD_WOUND_COUNT: String = "bad_wound_count"
 const REASON_NOT_INFECTED: String = "not_infected"
 const REASON_TOO_LATE: String = "too_late"
 
@@ -267,8 +275,8 @@ func apply_damage(player_id: String, damage: DamageInput) -> ActionResult:
 	return ActionResult.success(event)
 
 
-## Stops one recorded wound from bleeding. Medical-item consumption is owned
-## by a later ticket; this is the server-authoritative treatment seam.
+## Stops one recorded wound from bleeding (the server-authoritative treatment
+## seam). A bandage reaches it through stop_worst_bleeding (P2-T6).
 func stop_bleeding(player_id: String, wound_id: String) -> ActionResult:
 	var reason: String = _check_living(player_id)
 	if not reason.is_empty():
@@ -291,6 +299,75 @@ func stop_bleeding(player_id: String, wound_id: String) -> ActionResult:
 	}
 	_push_event(event)
 	GameLogger.info("survival", "player bleeding stopped", event)
+	return ActionResult.success(event)
+
+
+## Ids of the living player's bleeding wounds, worst first: the wound that
+## costs the most health per second (type multiplier x severity) comes
+## first, equal wounds in the order they were received. Empty for unknown
+## and dead players.
+func bleeding_wound_ids(player_id: String) -> PackedStringArray:
+	var ids: PackedStringArray = []
+	var vitals: PlayerVitals = _vitals.get(player_id, null)
+	if vitals == null or not vitals.is_alive():
+		return ids
+	# [health loss rate, position in the wound list, wound id]
+	var rows: Array[Array] = []
+	for index: int in vitals.injuries.size():
+		var wound: Wound = vitals.injuries[index]
+		if wound.is_bleeding:
+			rows.append([_settings.bleeding_type_multiplier(wound.wound_type) * wound.severity, index, wound.wound_id])
+	rows.sort_custom(func(a: Array, b: Array) -> bool:
+		return float(a[0]) > float(b[0]) or (float(a[0]) == float(b[0]) and int(a[1]) < int(b[1])))
+	for row: Array in rows:
+		ids.append(str(row[2]))
+	return ids
+
+
+## "" when stop_worst_bleeding() with these arguments would succeed now,
+## otherwise its failure reason. Changes nothing: callers that must commit
+## something else together with the treatment (ItemConsumption) check first.
+func check_stop_worst_bleeding(player_id: String, wound_count: int) -> String:
+	if wound_count < 1:
+		return REASON_BAD_WOUND_COUNT
+	var reason: String = _check_living(player_id)
+	if not reason.is_empty():
+		return reason
+	return "" if _has_bleeding(_vitals[player_id]) else REASON_NOT_BLEEDING
+
+
+## Stops up to `wound_count` bleeding wounds of the player, worst first
+## (bleeding_wound_ids; server rule entry, e.g. a bandage, P2-T6). The wounds
+## stay, only their bleeding ends. Every stopped wound is queued and logged as
+## "player_bleeding_stopped" (stop_bleeding). Success event (returned and
+## logged, not queued):
+##   {event_type: "player_bleeding_treated", player_id, source_id,
+##    wound_ids: Array of String (worst first),
+##    remaining_bleeding_wounds: int, world_time}
+## Failure reasons: bad_wound_count (< 1), unknown_player, player_dead,
+## not_bleeding; a refused call changes nothing.
+func stop_worst_bleeding(player_id: String, wound_count: int, source_id: String) -> ActionResult:
+	var reason: String = check_stop_worst_bleeding(player_id, wound_count)
+	if not reason.is_empty():
+		return ActionResult.failure(reason)
+	var bleeding: PackedStringArray = bleeding_wound_ids(player_id)
+	var stopped: Array = []
+	for index: int in mini(wound_count, bleeding.size()):
+		var result: ActionResult = stop_bleeding(player_id, bleeding[index])
+		if not result.ok:
+			# Unreachable: the ids were just read from the bleeding wounds.
+			GameLogger.error("survival", "bleeding wound could not be stopped", {"player_id": player_id, "entity_id": bleeding[index], "reason": result.reason, "operation": "stop_worst_bleeding"})
+			continue
+		stopped.append(bleeding[index])
+	var event: Dictionary = {
+		"event_type": EVENT_PLAYER_BLEEDING_TREATED,
+		"player_id": player_id,
+		"source_id": source_id,
+		"wound_ids": stopped,
+		"remaining_bleeding_wounds": bleeding.size() - stopped.size(),
+		"world_time": _clock.world_time_sec,
+	}
+	GameLogger.info("survival", "player bleeding treated", event)
 	return ActionResult.success(event)
 
 

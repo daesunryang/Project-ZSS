@@ -245,7 +245,7 @@ B3에서 `Wound.is_bleeding`과 `PlayerVitals.died_at_world_time`을 저장 상�
 
 B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragment 스키마를 v3으로 올렸다(v1/v2는 경과 시간 0으로 읽음). 서버는 접속 중이고 생존한 플레이어의 활성 월드 시간만 누적해 `LATENT → EARLY → PROGRESSING → SEVERE → TERMINAL → ZOMBIFIED`를 진행한다. 각 단계 시간과 감염 경로별 시간 배율은 `SurvivalSettings`에서 읽으며 감염 단계 경계를 B3의 구간 적분 경계에 포함한다. `ZOMBIFIED` 진입 즉시 원인 `infection`으로 사망시키고 플레이어 좀비는 만들지 않으며, 기존 리스폰이 감염을 해제한다(P2-T5부터는 감염으로 죽은 자리에 좀비가 생긴다, §14.20. 새 캐릭터는 감염 없이 시작한다, §14.19). 단계 변화는 `player_infection_stage_changed` 로그(`player_id`, `from`, `to`, `world_time`)로 남긴다.
 
-단계별 스태미나 회복 배율은 기존 욕구 배율과 곱하고, 단계별 체력 감소율은 출혈·굶주림·탈수 피해와 합산한다. 양수인 감염 체력 감소가 적용되는 동안에는 자연 회복을 허용하지 않는다. 치료 seam `apply_infection_treatment(player_id, source_id)`는 설정된 최대 단계 이하에서 감염을 해제하고 `player_infection_cured`를 반환·기록하며, 아이템·품질·의료 능력 판정은 후속 티켓 소유다. 읽기 전용 `infection_stage(player_id)`는 현재 단계를 반환한다. 임시 수치는 docs/15 P2-7/P2-8/P2-18/P2-19에 기록한다. 감염 복제는 §14.14(P2-N1c), 섭취는 §14.18(P2-T3: `reduce_needs`, `check_reduce_needs`)에서 추가됐다. 수면은 아직 없다.
+단계별 스태미나 회복 배율은 기존 욕구 배율과 곱하고, 단계별 체력 감소율은 출혈·굶주림·탈수 피해와 합산한다. 양수인 감염 체력 감소가 적용되는 동안에는 자연 회복을 허용하지 않는다. 치료 seam `apply_infection_treatment(player_id, source_id)`는 설정된 최대 단계 이하에서 감염을 해제하고 `player_infection_cured`를 반환·기록하며, 아이템·품질·의료 능력 판정은 후속 티켓 소유다. 읽기 전용 `infection_stage(player_id)`는 현재 단계를 반환한다. 임시 수치는 docs/15 P2-7/P2-8/P2-18/P2-19에 기록한다. 감염 복제는 §14.14(P2-N1c), 섭취는 §14.18(P2-T3: `reduce_needs`, `check_reduce_needs`), 붕대는 §14.21(P2-T6: `bleeding_wound_ids`, `check_stop_worst_bleeding`, `stop_worst_bleeding`. 지혈 seam `stop_bleeding`이 아이템과 연결됐다)에서 추가됐다. 수면은 아직 없다.
 
 P2-T1부터 이 절의 "월드 시간"은 달력 시간이고, 스태미나 회복·리스폰 대기·피해 이벤트 묶는 간격만 행동 시간(실제 초)이다. 설정 이름은 `stamina_regen_per_sec`, `respawn_delay_sec`, `survival_damage_event_interval_sec`로 바뀌었고 생존 fragment 스키마 v4가 `died_at_action_time`을 추가했다. 구간 적분이 두 축을 함께 다루는 방식은 §14.16.
 
@@ -699,6 +699,8 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 
 플레이어가 들고 있는 음식·물 아이템 한 단위를 소비하면 서버가 그 플레이어의 허기·갈증을 낮춘다. 임시 가정은 docs/15 §11 P2-120~P2-125.
 
+P2-T6부터 `ItemConsumption`은 아이템 정의의 사용 효과 전부를 적용하는 일반 규칙이다(§14.21: 지혈 효과, 사유 `not_bleeding`, 이벤트 필드 `bleeding_stopped_wound_ids`). 이 절의 먹기·마시기 규칙·검증·저장은 그대로이고, 아래 "클라이언트 표시"의 소비 키 하나는 종류별 키(음식 F, 물 G, 붕대 B)로 바뀌었다(§14.21이 우선).
+
 구성: `ItemDefinition`(소비 효과 필드), `SurvivalService.reduce_needs`(욕구를 낮추는 서버 전용 API), `ItemConsumption`(아이템 제거와 욕구 감소를 하나로 묶는 서버 규칙, `scripts/domain/survival/item_consumption.gd`), `InventoryNetModule`(소비 의도 RPC와 결과 응답 추가, §14.17), `DevWorldSeed`(수량 필드), 개발용 아이템 정의 2개, 클라이언트 소비 키와 인벤토리 HUD. `network_service.gd`는 수정하지 않았다.
 
 **프로토콜 변경 있음**: RPC 2개(`_rpc_request_consume`, `_rpc_consume_result`)가 새로 생겨 `BuildInfo.PROTOCOL_VERSION`을 5로 올렸다. join 스냅샷 형식은 그대로다.
@@ -846,3 +848,46 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 - 저장: 일반 좀비와 같이 world_state `systems.zombie`에 들어간다(스키마 변경 없음). 죽은 플레이어가 소지품을 들고 있었으면 그 틱 끝의 저장(§14.19)에 좀비도 함께 들어가고, 빈손이었으면 다음 저장에 들어간다. 그 전에 서버가 비정상 종료하면 플레이어는 감염된 채 살아 있던 마지막 저장으로 돌아가 다시 죽고 좀비도 다시 생긴다(하나).
 
 테스트: `tests/unit/player_zombie_test.gd`(감염 사망 → 그 위치·방향에 좀비 1마리와 이벤트 형식, 새 캐릭터가 좀비를 더 만들지 않음, 전투·감염자의 전투 사망·탈수·출혈은 생성 없음, 원인 문자열 판정, 감염 체력 감소 사망, 규칙 설정 3값과 검증, 상한에서 생략·로그·재시도 없음, 좀비 `step` 안에서 일어난 사망, 좀비 시스템 없는 월드, 저장 → 재생성 → 로드), `tests/integration/player_zombie_net_test.gd`(서버 1 + 클라이언트 2~3, 실제 ENet: 두 클라이언트 미러에 같은 ID의 좀비가 죽은 위치·방향으로 나타남, 같은 이벤트·순번, 이벤트와 미러에 플레이어 ID 없음, 다른 플레이어는 사망 원인을 받지 않음, 새 캐릭터와 감염 아닌 사망은 좀비를 늘리지 않음, 늦은 접속, 저장 → 서버 재시작 → 재접속).
+
+### 14.21 붕대(P2-T6, 사용자 결정 2026-11-15)
+
+플레이어가 들고 있는 붕대 한 단위를 쓰면 서버가 그 플레이어의 출혈 중인 상처를 지혈한다. §14.6의 서버 seam `stop_bleeding`을 아이템과 연결한 것이다. 임시 가정은 docs/15 §12.1 P2-140~P2-145.
+
+구성: `ItemDefinition`(지혈 효과 필드), `SurvivalService`(가장 심한 출혈 상처를 고르는 API 3개), `ItemConsumption`(먹기·마시기 규칙을 "아이템 사용 효과 적용"으로 일반화), 개발용 아이템 정의 `dev_bandage`, 개발용 월드 배치, 클라이언트의 종류별 사용 키와 HUD. `network_service.gd`와 `inventory_net_module.gd`의 코드는 바뀌지 않았다(주석만).
+
+**새 RPC 없음, 메시지 형식 변경 없음.** §14.18의 소비 의도(`_rpc_request_consume(request_id, item_instance_id)`)를 그대로 쓴다. 달라진 것은 서버가 그 아이템으로 하는 일과 결과 사유 코드 하나(`not_bleeding`)뿐이라 P2-T6만으로는 `PROTOCOL_VERSION`을 올리지 않았다(이 브랜치에서는 새 RPC가 생기는 P2-T8에서 한 번 올린다, docs/15 P2-145).
+
+#### 데이터
+
+- `ItemDefinition.treat_bleeding_wound_count`(정수, 0 이상): 한 단위가 지혈하는 출혈 상처 수. 0이면 지혈 효과가 없다(`stops_bleeding()`). `SurvivalSettings.max_wounds_per_player`(기본 64) 이상이면 사실상 "출혈 상처 전부"다. 음수는 정의 검증 오류다.
+- `ItemDefinition.is_consumable()`의 뜻이 "사용 효과가 하나라도 있다"로 넓어졌다(먹기·마시기 효과만 묻는 것은 `lowers_needs()`). 효과가 없는 아이템의 사유 코드는 그대로 `not_consumable`이다.
+- 개발용 정의 `dev_bandage`: 지혈 1곳, 최대 스택 5. 개발용 월드(`data/tuning/dev_world_seed.tres`)에 3개 묶음 하나를 (0, 0, −3)에 놓는다(§14.18의 목록에 추가).
+
+#### 서버 규칙
+
+`SurvivalService`(§14.6에 추가):
+
+| API | 계약 |
+|---|---|
+| `bleeding_wound_ids(player_id) -> PackedStringArray` | 살아 있는 플레이어의 출혈 중인 상처 ID, **심한 순서**. 심한 정도 = 그 상처가 초당 깎는 체력 = 종류별 출혈 배율 × severity(§14.6의 출혈 피해식과 같은 값). 같으면 먼저 생긴 상처가 앞이다. 모르는 플레이어·죽은 플레이어는 빈 배열 |
+| `check_stop_worst_bleeding(player_id, wound_count) -> String` | 같은 인자의 `stop_worst_bleeding`이 지금 성공하면 `""`, 아니면 그 실패 사유. 상태를 바꾸지 않는다 |
+| `stop_worst_bleeding(player_id, wound_count, source_id) -> ActionResult` | 심한 순서로 최대 `wound_count`개의 출혈을 멈춘다(상처마다 기존 `stop_bleeding`을 호출: 상처는 남고 `is_bleeding`만 false가 되며, 상처마다 기존 이벤트 `player_bleeding_stopped`가 큐와 로그에 남는다). 성공 이벤트 `{event_type: "player_bleeding_treated", player_id, source_id, wound_ids: [String](심한 순서), remaining_bleeding_wounds: int, world_time}`는 반환값과 로그로만 쓰인다. 실패 사유: `bad_wound_count`(1 미만), `unknown_player`, `player_dead`, `not_bleeding`(출혈 중인 상처가 없음). 실패하면 아무것도 바뀌지 않는다 |
+
+`ItemConsumption.try_consume`(§14.18)의 일반화:
+
+- 아이템 정의의 사용 효과마다 "지금 적용되는가"를 본다. 먹기·마시기 효과는 조건 없이 적용된다(욕구가 0이어도 소비됨, P2-122 그대로). 지혈 효과는 출혈 중인 상처가 하나라도 있을 때만 적용된다.
+- **적용되는 효과가 하나라도 있으면 승인**하고, 적용되지 않는 효과는 건너뛴다. 하나도 없으면 거부하고 아이템을 소비하지 않는다. 그래서 붕대만 있는 아이템은 출혈이 없을 때 `not_bleeding`으로 거부되고 그대로 남는다(먹기와 다른 규칙: 치료품은 낭비되지 않는다, docs/15 P2-141). 음식이면서 지혈도 하는 아이템(지금은 테스트용 정의뿐)은 출혈이 없어도 음식으로 소비된다.
+- 검사 순서에 `not_bleeding`이 마지막으로 추가됐다: `not_online` → `consumption_unavailable` → `unknown_player`/`player_dead` → `unknown_item` → `item_not_in_inventory` → `not_consumable` → `bad_need_amount` → `not_bleeding`. 소유 검사가 여전히 정의 검사보다 앞이다.
+- 원자성은 §14.18과 같다: 모든 조건을 먼저 검사한 뒤 `remove_player_item`(한 단위) → 적용되는 효과들(`reduce_needs`, `stop_worst_bleeding`) 순서로 확정한다. 거부된 요청은 아이템도 상처도 바꾸지 않는다.
+- 대상은 항상 아이템을 쓰는 플레이어 자신이다. 요청에는 대상 플레이어·상처를 지정할 인자가 없다(어느 상처를 멈출지는 서버가 심한 순서로 정한다).
+- 성공 이벤트 `item_consumed`에 `bleeding_stopped_wound_ids: [String]`(심한 순서, 없으면 빈 배열)가 추가됐다. 복제되지 않는다.
+
+#### 복제·정보 공개·저장
+
+- 복제는 기존 경로 그대로다. 줄어든 묶음·없어진 아이템은 `InventoryNet`이 소유자에게만 보낸다(§14.17). 지혈은 §14.14의 본인 전용 이벤트 `player_bleeding_stopped`(`wound_id`)와 본인 스냅샷(`wounds[].is_bleeding`)으로 간다. 결과(`_rpc_consume_result`)는 요청자에게만 간다.
+- 정보 공개(ADR-009): 다른 플레이어는 누가 붕대를 썼는지, 누구의 상처가 출혈 중인지·지혈됐는지 어떤 메시지로도 받지 않는다. 다른 플레이어가 상처에 대해 받는 것은 여전히 피격 순간의 공개 `player_wounded`(부위·종류)뿐이다(테스트: 다른 클라이언트의 생존 이벤트·결과·인벤토리 메시지 0개, 공개 피격 이벤트의 키 목록 고정).
+- 저장: 먹기와 같다(§14.18). 붕대 사용만으로는 저장하지 않고 다음 저장에 들어가며, `InventoryNetSettings.save_after_consume`을 켜면 결과 전송 전에 저장한다. 지혈 상태는 기존 `Wound.is_bleeding`(생존 fragment)이라 스키마 변경이 없다. 비정상 종료 뒤에는 "붕대도 돌아오고 출혈도 돌아온" 마지막 저장으로 복구된다.
+
+클라이언트 표시(`scripts/presentation/`): 사용 키가 종류별로 나뉘었다. `ConsumeIntentPolicy.Kind`(FOOD/DRINK/BANDAGE)와 `first_item_id_of_kind(inventory, catalog, kind)`가 인벤토리 미러에서 그 종류의 첫 아이템을 고르고(P2-T3의 `first_consumable_item_id`를 대체), `count_of_kind`가 보유 수를 센다. 키는 `ClientPresentationSettings.consume_key`(음식, 기본 F. 이름은 P2-T3 그대로), `drink_key`(물, 기본 G), `bandage_key`(붕대, 기본 B)이고 `ClientInputActions.USE_ACTION_KINDS`가 액션과 종류를 잇는다. 세 키는 서로 달라야 한다(설정 검증). 생존 HUD 끝에 `ClientPresentationFormatter.build_treatment_lines`의 줄 "출혈 중 (N곳) | 붕대 M개 [B]"(출혈이 없으면 "출혈 없음")이 붙는다. 결과 문구는 "아이템 사용 승인/거부: 사유"로 바뀌었다.
+
+테스트: `tests/unit/bandage_test.gd`(심한 순서와 동률 규칙, `stop_worst_bleeding`의 성공·이벤트·거부 사유, 붕대 사용 뒤 출혈 피해가 멈춤, 정의의 상처 수만큼 지혈, 출혈이 없으면 거부되고 묶음이 그대로임, 죽은 플레이어 거부, 음식+붕대 효과 아이템, 정의 데이터와 검증, 기본 개발용 월드의 붕대, 저장 → 재생성 → 로드), `tests/integration/bandage_net_test.gd`(서버 1 + 클라이언트 2, 실제 ENet: 붕대를 쓰면 서버와 본인 미러의 상처 출혈 상태·인벤토리가 일치하고 다른 클라이언트는 아무것도 받지 않음, 출혈이 없을 때의 거부, 조작된 요청 13종(남의 붕대, 상처 ID를 아이템 ID로 보냄, 형식 오류)과 인자를 더 붙인 호출, 죽은 플레이어, 저장 방침과 서버 재시작), `tests/unit/client_presentation_test.gd`(종류별 첫 아이템 선택과 보유 수, 키 등록·검증, 출혈·붕대 HUD 줄).

@@ -4,6 +4,6 @@
 
 [resource]
 script = ExtResource("1_seed")
-item_definition_ids = PackedStringArray("dev_test_item", "dev_food_ration", "dev_food_ration", "dev_water_bottle", "dev_water_bottle", "dev_melee_pipe")
-item_positions = PackedVector3Array(6, 0, 0, 2, 0, 2, 2, 0, -2, -2, 0, 2, -2, 0, -2, 0, 0, 3)
-item_quantities = PackedInt32Array(1, 3, 3, 3, 3, 1)
+item_definition_ids = PackedStringArray("dev_test_item", "dev_food_ration", "dev_food_ration", "dev_water_bottle", "dev_water_bottle", "dev_melee_pipe", "dev_bandage")
+item_positions = PackedVector3Array(6, 0, 0, 2, 0, 2, 2, 0, -2, -2, 0, 2, -2, 0, -2, 0, 0, 3, 0, 0, -3)
+item_quantities = PackedInt32Array(1, 3, 3, 3, 3, 1, 3)

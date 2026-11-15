@@ -44,7 +44,7 @@ visible = false
 offset_left = 8.0
 offset_top = 36.0
 offset_right = 420.0
-offset_bottom = 150.0
+offset_bottom = 250.0
 text = "생존 상태"
 
 [node name="EventLogLabel" type="Label" parent="Hud"]
@@ -82,9 +82,9 @@ text = "공격 요청 결과"
 unique_name_in_owner = true
 visible = false
 offset_left = 8.0
-offset_top = 160.0
+offset_top = 260.0
 offset_right = 420.0
-offset_bottom = 360.0
+offset_bottom = 460.0
 text = "소지품"
 
 [node name="ConsumeResultLabel" type="Label" parent="Hud"]

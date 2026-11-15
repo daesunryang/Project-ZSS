@@ -9,6 +9,8 @@ const ACTIONS: Array[StringName] = [
 	ClientInputActions.PICKUP,
 	ClientInputActions.ATTACK,
 	ClientInputActions.CONSUME,
+	ClientInputActions.DRINK,
+	ClientInputActions.USE_BANDAGE,
 ]
 
 
@@ -123,6 +125,12 @@ func _consume_catalog() -> ItemCatalog:
 	pipe.definition_id = "hud_pipe"
 	pipe.display_name = "Pipe"
 	catalog.add(pipe)
+	var bandage: ItemDefinition = ItemDefinition.new()
+	bandage.definition_id = "hud_bandage"
+	bandage.display_name = "Bandage"
+	bandage.max_stack = 5
+	bandage.treat_bleeding_wound_count = 1
+	catalog.add(bandage)
 	return catalog
 
 
@@ -130,21 +138,43 @@ func _carried(item_id: String, definition_id: String, quantity: int) -> Dictiona
 	return {"schema_version": 1, "item_instance_id": item_id, "definition_id": definition_id, "quantity": quantity, "location_type": "inventory", "location_id": "inventory_000001", "slot_id": "slot_0"}
 
 
-func test_consume_key_picks_the_first_consumable_item_of_the_mirror() -> void:
+## Since P2-T6 there is one key per kind of item (food, drink, bandage)
+## instead of the single "first consumable item" key of P2-T3, which could
+## not choose between them.
+func test_each_use_key_picks_the_first_item_of_its_kind_in_the_mirror() -> void:
 	var catalog: ItemCatalog = _consume_catalog()
 	var inventory: Array[Dictionary] = [
 		_carried("item_000001", "hud_pipe", 1),
 		_carried("item_000002", "hud_unknown", 1),
 		{"definition_id": "hud_food"},
+		{"definition_id": "hud_bandage"},
 		_carried("item_000003", "hud_water", 2),
 		_carried("item_000004", "hud_food", 1),
+		_carried("item_000005", "hud_bandage", 2),
+		_carried("item_000006", "hud_food", 4),
+		_carried("item_000007", "hud_bandage", 1),
 	]
-	assert_eq(ConsumeIntentPolicy.first_consumable_item_id(inventory, catalog), "item_000003", "mirror order, skipping what cannot be consumed")
+	assert_eq(ConsumeIntentPolicy.first_item_id_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.FOOD), "item_000004", "mirror order, skipping what is not food")
+	assert_eq(ConsumeIntentPolicy.first_item_id_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.DRINK), "item_000003", "mirror order, skipping what is not a drink")
+	assert_eq(ConsumeIntentPolicy.first_item_id_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.BANDAGE), "item_000005", "mirror order, skipping what is not a bandage")
+	assert_eq(ConsumeIntentPolicy.count_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.BANDAGE), 3, "units of every bandage stack")
+	assert_eq(ConsumeIntentPolicy.count_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.FOOD), 5)
+	assert_eq(ConsumeIntentPolicy.count_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.DRINK), 2)
 	var nothing: Array[Dictionary] = [_carried("item_000001", "hud_pipe", 1)]
-	assert_eq(ConsumeIntentPolicy.first_consumable_item_id(nothing, catalog), "", "nothing consumable")
 	var empty: Array[Dictionary] = []
-	assert_eq(ConsumeIntentPolicy.first_consumable_item_id(empty, catalog), "")
-	assert_eq(ConsumeIntentPolicy.first_consumable_item_id(inventory, null), "", "no catalog, no guess")
+	for kind: ConsumeIntentPolicy.Kind in [ConsumeIntentPolicy.Kind.FOOD, ConsumeIntentPolicy.Kind.DRINK, ConsumeIntentPolicy.Kind.BANDAGE]:
+		assert_eq(ConsumeIntentPolicy.first_item_id_of_kind(nothing, catalog, kind), "", "nothing of that kind")
+		assert_eq(ConsumeIntentPolicy.first_item_id_of_kind(empty, catalog, kind), "")
+		assert_eq(ConsumeIntentPolicy.first_item_id_of_kind(inventory, null, kind), "", "no catalog, no guess")
+		assert_eq(ConsumeIntentPolicy.count_of_kind(nothing, catalog, kind), 0)
+		assert_eq(ConsumeIntentPolicy.count_of_kind(inventory, null, kind), 0)
+		assert_false(ClientPresentationFormatter.nothing_to_use_text(kind).is_empty())
+	# A drink is not food and a bandage is neither.
+	assert_true(ConsumeIntentPolicy.is_kind(catalog.get_definition("hud_food"), ConsumeIntentPolicy.Kind.FOOD))
+	assert_false(ConsumeIntentPolicy.is_kind(catalog.get_definition("hud_food"), ConsumeIntentPolicy.Kind.DRINK))
+	assert_false(ConsumeIntentPolicy.is_kind(catalog.get_definition("hud_bandage"), ConsumeIntentPolicy.Kind.FOOD))
+	assert_false(ConsumeIntentPolicy.is_kind(catalog.get_definition("hud_pipe"), ConsumeIntentPolicy.Kind.BANDAGE))
+	assert_false(ConsumeIntentPolicy.is_kind(null, ConsumeIntentPolicy.Kind.BANDAGE))
 	# The flood guard is the same rule as the attack guard, with its own interval.
 	var policy: AttackIntentPolicy = AttackIntentPolicy.new(ClientPresentationSettings.new().consume_min_interval_sec)
 	assert_false(policy.should_send(false, 0.0), "offline input sends nothing")
@@ -184,7 +214,6 @@ func test_inventory_hud_lists_names_and_summed_quantities() -> void:
 func test_consume_result_text_and_action_use_settings() -> void:
 	assert_contains(ClientPresentationFormatter.format_consume_result(true, ""), "승인")
 	assert_contains(ClientPresentationFormatter.format_consume_result(false, "not_consumable"), "not_consumable")
-	assert_false(ClientPresentationFormatter.nothing_to_consume_text().is_empty())
 	var shipped: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
 	assert_eq(shipped.consume_key, KEY_F, "shipped consume key")
 	assert_true(shipped.hud_inventory_line_count > 0)
@@ -202,6 +231,69 @@ func test_consume_result_text_and_action_use_settings() -> void:
 	invalid.consume_min_interval_sec = 0.0
 	invalid.hud_inventory_line_count = 0
 	assert_eq(invalid.validate().size(), 3, "; ".join(invalid.validate()))
+
+
+# ------------------------------------------------------------ P2-T6: bandage key and bleeding HUD
+
+func test_use_keys_are_separate_actions_driven_by_settings() -> void:
+	var shipped: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
+	assert_eq(shipped.validate().size(), 0, "; ".join(shipped.validate()))
+	assert_eq(shipped.consume_key, KEY_F, "shipped food key")
+	assert_eq(shipped.drink_key, KEY_G, "shipped drink key")
+	assert_eq(shipped.bandage_key, KEY_B, "shipped bandage key")
+	var camera: CameraSettings = CameraSettings.new()
+	var presentation: ClientPresentationSettings = ClientPresentationSettings.new()
+	presentation.drink_key = KEY_H
+	presentation.bandage_key = KEY_N
+	ClientInputActions.register(camera, presentation)
+	var expected: Dictionary = {
+		ClientInputActions.CONSUME: KEY_F,
+		ClientInputActions.DRINK: KEY_H,
+		ClientInputActions.USE_BANDAGE: KEY_N,
+	}
+	for action: StringName in expected:
+		var events: Array[InputEvent] = InputMap.action_get_events(action)
+		assert_eq(events.size(), 1, str(action))
+		assert_eq((events[0] as InputEventKey).physical_keycode, expected[action], str(action))
+	ClientInputActions.register(camera, presentation)
+	assert_eq(InputMap.action_get_events(ClientInputActions.USE_BANDAGE).size(), 1, "registered once")
+	# Every use key maps to the kind of item it asks for.
+	assert_eq(ClientInputActions.USE_ACTION_KINDS[ClientInputActions.CONSUME], ConsumeIntentPolicy.Kind.FOOD)
+	assert_eq(ClientInputActions.USE_ACTION_KINDS[ClientInputActions.DRINK], ConsumeIntentPolicy.Kind.DRINK)
+	assert_eq(ClientInputActions.USE_ACTION_KINDS[ClientInputActions.USE_BANDAGE], ConsumeIntentPolicy.Kind.BANDAGE)
+	# Missing or shared keys are configuration errors.
+	var missing: ClientPresentationSettings = ClientPresentationSettings.new()
+	missing.drink_key = KEY_NONE
+	missing.bandage_key = KEY_NONE
+	assert_eq(missing.validate().size(), 2, "; ".join(missing.validate()))
+	var shared: ClientPresentationSettings = ClientPresentationSettings.new()
+	shared.bandage_key = shared.consume_key
+	assert_eq(shared.validate().size(), 1, "; ".join(shared.validate()))
+
+
+func test_treatment_hud_shows_bleeding_and_the_bandages_carried() -> void:
+	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
+	var catalog: ItemCatalog = _consume_catalog()
+	var vitals: Dictionary = {
+		"alive": true,
+		"wounds": [{"is_bleeding": false}, {"is_bleeding": true}, {"is_bleeding": true}],
+	}
+	var carried: Array[Dictionary] = [
+		_carried("item_000001", "hud_bandage", 2),
+		_carried("item_000002", "hud_food", 4),
+		_carried("item_000003", "hud_bandage", 1),
+	]
+	var lines: PackedStringArray = ClientPresentationFormatter.build_treatment_lines(vitals, carried, catalog, settings)
+	assert_eq(lines[0], "출혈 중 (2곳) | 붕대 3개 [B]", "how many wounds bleed, how many bandages, which key")
+	vitals["wounds"] = [{"is_bleeding": false}]
+	var none: Array[Dictionary] = []
+	assert_eq(ClientPresentationFormatter.build_treatment_lines(vitals, none, catalog, settings)[0], "출혈 없음 | 붕대 0개 [B]")
+	settings.bandage_key = KEY_N
+	assert_eq(ClientPresentationFormatter.build_treatment_lines(vitals, carried, catalog, settings)[0], "출혈 없음 | 붕대 3개 [N]", "the key comes from the settings")
+	assert_eq(ClientPresentationFormatter.bleeding_wound_count({"wounds": [{"is_bleeding": true}, "junk", {"severity": 1.0}]}), 1, "malformed wounds are skipped")
+	assert_true(ClientPresentationFormatter.build_treatment_lines({}, carried, catalog, settings).is_empty(), "no owner mirror, no line")
+	# The result text names the server's reason code (e.g. nothing bleeds).
+	assert_contains(ClientPresentationFormatter.format_consume_result(false, SurvivalService.REASON_NOT_BLEEDING), SurvivalService.REASON_NOT_BLEEDING)
 
 
 # ------------------------------------------------------------ P2-T4: permanent death

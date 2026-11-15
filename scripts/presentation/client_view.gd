@@ -108,8 +108,9 @@ func _physics_process(_delta: float) -> void:
 	_update_camera()
 	if Input.is_action_just_pressed(ClientInputActions.ATTACK):
 		_request_melee_attack()
-	if Input.is_action_just_pressed(ClientInputActions.CONSUME):
-		_request_consume()
+	for action: StringName in ClientInputActions.USE_ACTION_KINDS:
+		if Input.is_action_just_pressed(action):
+			_request_use(ClientInputActions.USE_ACTION_KINDS[action])
 	if _network == null or _state == null or _state.local_player_id.is_empty():
 		return
 	var sample: Vector2 = Vector2(
@@ -307,7 +308,10 @@ func _refresh_survival_hud() -> void:
 		"infection_stage": _survival_state.infection_stage(),
 		"character_generation": _survival_state.character_generation(),
 	}
-	_survival_label.text = "\n".join(ClientPresentationFormatter.build_survival_lines(vitals, _presentation))
+	var lines: PackedStringArray = ClientPresentationFormatter.build_survival_lines(vitals, _presentation)
+	var carried: Array[Dictionary] = _state.inventory if _state != null else ([] as Array[Dictionary])
+	lines.append_array(ClientPresentationFormatter.build_treatment_lines(vitals, carried, _item_catalog, _presentation))
+	_survival_label.text = "\n".join(lines)
 	_survival_label.visible = true
 
 
@@ -323,6 +327,8 @@ func _refresh_inventory_hud() -> void:
 	_inventory_signature = signature
 	_inventory_label.text = "\n".join(ClientPresentationFormatter.build_inventory_lines(_state.inventory, _item_catalog, _presentation.hud_inventory_line_count))
 	_inventory_label.visible = true
+	# The survival HUD counts the carried bandages.
+	_refresh_survival_hud()
 
 
 func _load_recent_events() -> void:
@@ -381,9 +387,10 @@ func _request_melee_attack() -> void:
 	_combat_module.request_melee_attack(_yaw)
 
 
-## Consume key: asks the server to eat / drink the first consumable item of
-## the mirrored inventory. Only the item id is sent; the server decides.
-func _request_consume() -> void:
+## A use key (food, drink, bandage): asks the server to use the first item of
+## that kind in the mirrored inventory. Only the item id is sent; the server
+## decides whether and how it works.
+func _request_use(kind: ConsumeIntentPolicy.Kind) -> void:
 	var connected: bool = (
 		_inventory_module != null
 		and _network != null
@@ -393,9 +400,9 @@ func _request_consume() -> void:
 	)
 	if not _consume_policy.should_send(connected, _now_sec()):
 		return
-	var item_id: String = ConsumeIntentPolicy.first_consumable_item_id(_state.inventory, _item_catalog)
+	var item_id: String = ConsumeIntentPolicy.first_item_id_of_kind(_state.inventory, _item_catalog, kind)
 	if item_id.is_empty():
-		_show_consume_text(ClientPresentationFormatter.nothing_to_consume_text())
+		_show_consume_text(ClientPresentationFormatter.nothing_to_use_text(kind))
 		return
 	_inventory_module.request_consume(item_id)
 

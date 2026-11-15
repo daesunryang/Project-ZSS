@@ -24,10 +24,14 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(1, 20) var hud_event_line_count: int = 5
 @export var death_message: String = "사망했습니다. 이 캐릭터는 끝났습니다. 소지품은 죽은 자리에 남고, 잠시 뒤 새 캐릭터로 시작합니다."
 
-## P2-T3 (docs/15 P2-125): the consume key asks the server to eat / drink the
-## first consumable item of the mirrored inventory.
+## Use keys (P2-T3, P2-T6; docs/15 P2-125, P2-144): each asks the server to
+## use the first item of its kind in the mirrored inventory. `consume_key` is
+## the food key (it was the only use key before P2-T6).
 @export var consume_key: Key = KEY_F
-## Local flood guard between two consume requests (the server has its own).
+@export var drink_key: Key = KEY_G
+@export var bandage_key: Key = KEY_B
+## Local flood guard between two use requests of any kind (the server has
+## its own).
 @export_range(0.01, 5.0) var consume_min_interval_sec: float = 0.25
 @export_range(0.1, 10.0) var consume_result_duration_sec: float = 2.0
 ## Item kinds listed in the HUD inventory summary; the rest is counted.
@@ -58,7 +62,25 @@ func validate() -> PackedStringArray:
 		errors.append("consume_result_duration_sec must be > 0")
 	if hud_inventory_line_count <= 0:
 		errors.append("hud_inventory_line_count must be > 0")
+	var other_use_keys: Dictionary[String, Key] = {"drink_key": drink_key, "bandage_key": bandage_key}
+	for key_name: String in other_use_keys:
+		if other_use_keys[key_name] == KEY_NONE:
+			errors.append("%s must not be KEY_NONE" % key_name)
+	if not _are_distinct([consume_key, drink_key, bandage_key]):
+		errors.append("use keys (consume, drink, bandage) must be different keys")
 	return errors
+
+
+## True when no key appears twice in `keys` (unset keys are not compared).
+static func _are_distinct(keys: Array[Key]) -> bool:
+	var seen: Dictionary[Key, bool] = {}
+	for key: Key in keys:
+		if key == KEY_NONE:
+			continue
+		if seen.has(key):
+			return false
+		seen[key] = true
+	return true
 
 
 static func load_or_default(path: String = DEFAULT_PATH) -> ClientPresentationSettings:

@@ -13,15 +13,18 @@ extends NetModule
 ##   server -> owner   _rpc_inventory_items_removed(item_instance_ids:Array[String])     reliable, ch0
 ##   server -> owner   _rpc_inventory_item_changed(item:Dictionary /* ItemInstance */)   reliable, ch0
 ##
-## Consume (eat / drink, P2-T3): the same shape as a drop request: a request
-## id and the id of a carried item, nothing else. The effect comes from the
-## item definition on the server (ItemConsumption). Checks, in order: joined,
-## argument types, request id >= 0, item id length, request rate (its own
-## bucket), then the rule (`player_dead`, `item_not_in_inventory`,
-## `not_consumable`, ...). The result goes to the requester only. The smaller
+## Consume = use up one unit of a carried item (eat / drink, P2-T3; bandage,
+## P2-T6): the same shape as a drop request: a request id and the id of a
+## carried item, nothing else. There is no target, wound or effect argument:
+## the effect comes from the item definition on the server and is applied to
+## the requester (ItemConsumption). Checks, in order: joined, argument types,
+## request id >= 0, item id length, request rate (its own bucket), then the
+## rule (`player_dead`, `item_not_in_inventory`, `not_consumable`,
+## `not_bleeding`, ...). The result goes to the requester only. The smaller
 ## stack / the vanished item reaches the owner through the replication below
-## and the lower needs through the owner's survival snapshot; other players
-## are told nothing about it. An accepted consumption is not saved on its own
+## and the effect (lower needs, a wound that no longer bleeds) through the
+## owner's survival events and snapshot; other players are told nothing
+## about it. An accepted use is not saved on its own
 ## (InventoryNetSettings.save_after_consume, docs/15 P2-123).
 ##
 ## Request: a client sends an intent only: its own request id and the id of

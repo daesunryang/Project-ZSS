@@ -8,7 +8,17 @@ const MOVE_LEFT: StringName = &"move_left"
 const MOVE_RIGHT: StringName = &"move_right"
 const PICKUP: StringName = &"pickup"
 const ATTACK: StringName = &"attack"
+## Use keys, one per kind of item (P2-T6). CONSUME is the food key (the
+## single consume key of P2-T3 kept its name and its setting `consume_key`).
 const CONSUME: StringName = &"consume"
+const DRINK: StringName = &"drink"
+const USE_BANDAGE: StringName = &"use_bandage"
+## Use action -> the kind of item its key asks the server to use.
+const USE_ACTION_KINDS: Dictionary[StringName, ConsumeIntentPolicy.Kind] = {
+	CONSUME: ConsumeIntentPolicy.Kind.FOOD,
+	DRINK: ConsumeIntentPolicy.Kind.DRINK,
+	USE_BANDAGE: ConsumeIntentPolicy.Kind.BANDAGE,
+}
 
 
 static func register(settings: CameraSettings, presentation: ClientPresentationSettings = null) -> void:
@@ -20,6 +30,8 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 	if presentation != null:
 		_add_mouse_action(ATTACK, presentation.attack_mouse_button, settings.input_deadzone)
 		_add_key_action(CONSUME, presentation.consume_key, settings.input_deadzone)
+		_add_key_action(DRINK, presentation.drink_key, settings.input_deadzone)
+		_add_key_action(USE_BANDAGE, presentation.bandage_key, settings.input_deadzone)
 
 
 static func _add_key_action(action: StringName, key: Key, deadzone: float) -> void:

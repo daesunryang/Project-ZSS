@@ -39,30 +39,65 @@ static func build_survival_lines(vitals: Dictionary, settings: ClientPresentatio
 	])
 	lines.append("감염 단계: %s" % _infection_stage_text(str(vitals.get("infection_stage", ""))))
 	var wounds: Array = vitals.get("wounds", [])
-	var bleeding: bool = false
-	for value: Variant in wounds:
-		if typeof(value) == TYPE_DICTIONARY and bool((value as Dictionary).get("is_bleeding", false)):
-			bleeding = true
-			break
-	lines.append("상처 %d | 출혈 %s" % [wounds.size(), "있음" if bleeding else "없음"])
+	lines.append("상처 %d | 출혈 %s" % [wounds.size(), "있음" if bleeding_wound_count(vitals) > 0 else "없음"])
 	if not bool(vitals.get("alive", true)):
 		lines.append(settings.death_message)
 	return lines
+
+
+## Number of the owner's wounds that bleed (malformed entries are skipped).
+static func bleeding_wound_count(vitals: Dictionary) -> int:
+	var count: int = 0
+	var wounds: Variant = vitals.get("wounds", [])
+	if typeof(wounds) != TYPE_ARRAY:
+		return count
+	for value: Variant in wounds as Array:
+		if typeof(value) == TYPE_DICTIONARY and (value as Dictionary).get("is_bleeding", false) == true:
+			count += 1
+	return count
+
+
+## HUD lines about what the owner can treat (P2-T6): how many wounds bleed,
+## how many bandages are carried (all stacks of the inventory mirror) and the
+## key that uses one. Empty input (no owner mirror) produces no line.
+static func build_treatment_lines(vitals: Dictionary, inventory: Array[Dictionary], catalog: ItemCatalog, settings: ClientPresentationSettings) -> PackedStringArray:
+	if vitals.is_empty():
+		return PackedStringArray()
+	var lines: PackedStringArray = []
+	var bleeding: int = bleeding_wound_count(vitals)
+	lines.append("%s | 붕대 %d개 [%s]" % [
+		"출혈 중 (%d곳)" % bleeding if bleeding > 0 else "출혈 없음",
+		ConsumeIntentPolicy.count_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.BANDAGE),
+		key_label(settings.bandage_key),
+	])
+	return lines
+
+
+## Name of a key as shown in the HUD ("B", "F1", ...).
+static func key_label(key: Key) -> String:
+	return OS.get_keycode_string(key)
 
 
 static func format_attack_result(ok: bool, reason: String) -> String:
 	return "공격 요청 승인" if ok else "공격 요청 거부: %s" % reason
 
 
-## Server answer to a consume (eat / drink) request.
+## Server answer to a use request (eat, drink, bandage).
 static func format_consume_result(ok: bool, reason: String) -> String:
-	return "먹기/마시기 요청 승인" if ok else "먹기/마시기 요청 거부: %s" % reason
+	return "아이템 사용 승인" if ok else "아이템 사용 거부: %s" % reason
 
 
-## Local notice: the consume key was pressed but the mirrored inventory holds
-## nothing consumable (no request was sent).
-static func nothing_to_consume_text() -> String:
-	return "먹거나 마실 것이 없습니다"
+## Local notice: a use key was pressed but the mirrored inventory holds
+## nothing of that kind (no request was sent).
+static func nothing_to_use_text(kind: ConsumeIntentPolicy.Kind) -> String:
+	match kind:
+		ConsumeIntentPolicy.Kind.FOOD:
+			return "먹을 것이 없습니다"
+		ConsumeIntentPolicy.Kind.DRINK:
+			return "마실 것이 없습니다"
+		ConsumeIntentPolicy.Kind.BANDAGE:
+			return "붕대가 없습니다"
+	return "쓸 수 있는 것이 없습니다"
 
 
 ## HUD inventory summary from the local inventory mirror (ItemInstance
