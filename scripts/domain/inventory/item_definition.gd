@@ -43,6 +43,12 @@ func stops_bleeding() -> bool:
 	return treat_bleeding_wound_count > 0
 
 
+## True when one unit treats something (bandage, cure). Treatments are what
+## a player can use on another player (P2-T12, ItemConsumption.try_use_on).
+func is_treatment() -> bool:
+	return stops_bleeding() or cures_infection
+
+
 func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
 	if not ItemInstance.is_valid_definition_id(definition_id):

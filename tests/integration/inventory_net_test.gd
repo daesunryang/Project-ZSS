@@ -917,6 +917,10 @@ func test_default_settings_and_composition() -> void:
 		# P2-T3 added the consume intent to this module (consume_net_test.gd).
 		"_rpc_request_consume": MultiplayerAPI.RPC_MODE_ANY_PEER,
 		"_rpc_consume_result": MultiplayerAPI.RPC_MODE_AUTHORITY,
+		# P2-T12 added the use-on-another-player intent (treat_other_net_test.gd).
+		"_rpc_request_use_on": MultiplayerAPI.RPC_MODE_ANY_PEER,
+		"_rpc_use_on_result": MultiplayerAPI.RPC_MODE_AUTHORITY,
+		"_rpc_treatment_notice": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_world_items_added": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_inventory_items_removed": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_inventory_item_changed": MultiplayerAPI.RPC_MODE_AUTHORITY,

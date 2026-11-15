@@ -404,3 +404,66 @@ static func creation_hint(first_character: bool) -> String:
 	if first_character:
 		return "이름과 외형을 정하면 스폰 지점에서 시작합니다."
 	return "이전 캐릭터는 끝났습니다. 새 캐릭터의 이름과 외형을 정하세요."
+
+
+# ------------------------------------------------------------ treating another player (P2-T12)
+
+## HUD line about whom a "use on another player" key would treat: the name
+## of the candidate and the key combinations, or that there is nobody.
+## Nothing for a dead character or without a mirror.
+static func build_treat_target_lines(vitals: Dictionary, target_name: String, settings: ClientPresentationSettings) -> PackedStringArray:
+	if vitals.is_empty() or vitals.get("alive", true) != true:
+		return PackedStringArray()
+	if target_name.is_empty():
+		return PackedStringArray(["치료 대상: 없음 (가까이서 바라보기)"])
+	var modifier: String = key_label(settings.treat_other_modifier_key)
+	return PackedStringArray(["치료 대상: %s | 붕대 [%s+%s] 치료제 [%s+%s]" % [target_name, modifier, key_label(settings.bandage_key), modifier, key_label(settings.cure_key)]])
+
+
+## Server answer to a use-on-another-player request. What the answer says
+## about the other player (it does not bleed, it is not infected, it is too
+## late) is the only thing the user learns about it, told as a sentence.
+static func format_use_on_result(ok: bool, reason: String) -> String:
+	if ok:
+		return "치료 승인"
+	match reason:
+		SurvivalService.REASON_NOT_BLEEDING:
+			return "치료 거부: 상대에게 출혈이 없습니다"
+		SurvivalService.REASON_NOT_INFECTED:
+			return "치료 거부: 상대는 감염되지 않았습니다"
+		SurvivalService.REASON_TOO_LATE:
+			return "치료 거부: 상대의 감염이 너무 진행되어 늦었습니다"
+		ItemConsumption.REASON_TARGET_TOO_FAR:
+			return "치료 거부: 대상이 너무 멉니다"
+		ItemConsumption.REASON_TARGET_DEAD:
+			return "치료 거부: 대상이 사망했습니다"
+		ItemConsumption.REASON_TARGET_UNAVAILABLE:
+			return "치료 거부: 그런 대상이 없습니다"
+		ItemConsumption.REASON_NOT_USABLE_ON_OTHERS:
+			return "치료 거부: 남에게 쓸 수 없는 아이템입니다"
+	return "치료 거부: %s" % reason
+
+
+## Local notice: a treat-other key was pressed but nobody is in reach.
+static func no_treat_target_text() -> String:
+	return "치료할 대상이 없습니다"
+
+
+## Event log line for a treatment notice (InventoryNetModule.treatment_seen):
+## for the target who used what on it and whether it did anything, for a
+## bystander only who tended to whom. `names` maps player ids to character
+## names (ids are shown for players without one). "" for anything else.
+static func format_treatment_notice(notice: Dictionary, names: Dictionary, catalog: ItemCatalog) -> String:
+	var user_id: String = str(notice.get("user_id", ""))
+	var target_id: String = str(notice.get("target_id", ""))
+	var user_name: String = str(names.get(user_id, user_id))
+	match str(notice.get("scope", "")):
+		InventoryNetModule.NOTICE_SCOPE_PUBLIC:
+			return "%s → %s 치료" % [user_name, str(names.get(target_id, target_id))]
+		InventoryNetModule.NOTICE_SCOPE_TARGET:
+			var definition_id: String = str(notice.get("definition_id", ""))
+			var definition: ItemDefinition = catalog.get_definition(definition_id) if catalog != null else null
+			var item_name: String = definition.display_name if definition != null and not definition.display_name.is_empty() else definition_id
+			var outcome: String = "" if notice.get("ok", false) == true else " (효과 없음)"
+			return "%s이(가) 나에게 %s 사용%s" % [user_name, item_name, outcome]
+	return ""

@@ -315,6 +315,9 @@ func test_a_client_cures_its_infection_and_nobody_else_learns_anything() -> void
 
 # ------------------------------------------------------------ 2. refusals and manipulated requests
 
+## P2-T12 note: this is about the consume intent (two arguments, always the
+## requester itself), which is unchanged. Treating another player is a
+## separate intent with a target argument (treat_other_net_test.gd).
 func test_a_cure_cannot_be_used_on_somebody_else_or_too_late() -> void:
 	assert_true(_start_server(), "server started")
 	var alices: String = _spawn(CURE, 2)

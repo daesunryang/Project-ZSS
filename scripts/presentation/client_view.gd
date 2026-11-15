@@ -57,6 +57,9 @@ var _posture_module: PostureNetModule = null
 var _posture_state: ClientPostureState = null
 ## Flood guard of the prone key (the interval of the rest key).
 var _posture_policy: AttackIntentPolicy = null
+## The player a "use on another player" key would name now (P2-T12), as
+## last shown in the HUD ("" = nobody).
+var _treat_target: String = ""
 ## Character names and appearance, and the creation request (P2-T9).
 var _character_module: CharacterNetModule = null
 var _character_state: ClientCharacterState = null
@@ -130,6 +133,7 @@ func _process(_delta: float) -> void:
 
 func _physics_process(_delta: float) -> void:
 	_update_camera()
+	_update_treat_target()
 	# No game input while the character creation screen is open (P2-T9).
 	if not is_game_input_enabled():
 		return
@@ -205,6 +209,10 @@ func _bind_network() -> void:
 	_inventory_module = _network.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule
 	if _inventory_module != null and not _inventory_module.consume_result.is_connected(_on_consume_result):
 		_inventory_module.consume_result.connect(_on_consume_result)
+	if _inventory_module != null and not _inventory_module.use_on_result.is_connected(_on_use_on_result):
+		_inventory_module.use_on_result.connect(_on_use_on_result)
+	if _inventory_module != null and not _inventory_module.treatment_seen.is_connected(_on_treatment_seen):
+		_inventory_module.treatment_seen.connect(_on_treatment_seen)
 	_character_module = _network.get_module(CharacterNetModule.MODULE_NAME) as CharacterNetModule
 	if _character_module != null:
 		_character_state = _character_module.client_state
@@ -442,6 +450,7 @@ func _refresh_survival_hud() -> void:
 	lines.append_array(ClientPresentationFormatter.build_treatment_lines(vitals, carried, _item_catalog, _presentation))
 	lines.append_array(ClientPresentationFormatter.build_rest_lines(vitals, _presentation))
 	lines.append_array(ClientPresentationFormatter.build_posture_lines(vitals, _presentation))
+	lines.append_array(ClientPresentationFormatter.build_treat_target_lines(vitals, _player_label(_treat_target) if not _treat_target.is_empty() else "", _presentation))
 	_survival_label.text = "\n".join(lines)
 	_survival_label.visible = true
 
@@ -535,7 +544,62 @@ func _request_use(kind: ConsumeIntentPolicy.Kind) -> void:
 	if item_id.is_empty():
 		_show_consume_text(ClientPresentationFormatter.nothing_to_use_text(kind))
 		return
+	# P2-T12: with the modifier held, a treatment key means "on the player I
+	# am looking at". Only the item and that player's id are sent.
+	if ConsumeIntentPolicy.is_usable_on_others(kind) and Input.is_action_pressed(ClientInputActions.TREAT_OTHER):
+		var target_id: String = _treat_target_id()
+		if target_id.is_empty():
+			_show_consume_text(ClientPresentationFormatter.no_treat_target_text())
+			return
+		_inventory_module.request_use_on(item_id, target_id)
+		return
 	_inventory_module.request_consume(item_id)
+
+
+## The player a "use on another player" key would name now: the nearest
+## other living player in the camera direction within reach, in the mirror
+## ("" = nobody). A suggestion only; the server decides.
+func _treat_target_id() -> String:
+	if _state == null or _state.local_player_id.is_empty():
+		return TreatTargetPolicy.NO_TARGET
+	var dead: PackedStringArray = []
+	if _survival_state != null:
+		for player_id: String in _state.players:
+			if _survival_state.has_player(player_id) and not _survival_state.is_alive(player_id):
+				dead.append(player_id)
+	return TreatTargetPolicy.pick_target(_state.local_player_id, _state.players, dead, _yaw, _presentation.treat_target_range_m, deg_to_rad(_presentation.treat_target_half_angle_deg))
+
+
+## Keeps the HUD's "treat target" line current: the candidate changes when
+## anybody moves or the camera turns, without any mirror signal of its own.
+func _update_treat_target() -> void:
+	var target_id: String = _treat_target_id()
+	if target_id == _treat_target:
+		return
+	_treat_target = target_id
+	_refresh_survival_hud()
+
+
+## Name shown for a player: its character name, or its id without one.
+func _player_label(player_id: String) -> String:
+	var character_name: String = _character_state.character_name(player_id) if _character_state != null else ""
+	return character_name if not character_name.is_empty() else player_id
+
+
+## The answer to a use-on-another-player request is shown where the use
+## results are shown.
+func _on_use_on_result(_request_id: int, ok: bool, reason: String) -> void:
+	_show_consume_text(ClientPresentationFormatter.format_use_on_result(ok, reason))
+
+
+## Somebody treated the local player, or one player tended to another: a
+## line in the event log.
+func _on_treatment_seen(notice: Dictionary) -> void:
+	var names: Dictionary = {}
+	for key: String in ["user_id", "target_id"]:
+		var player_id: String = str(notice.get(key, ""))
+		names[player_id] = _player_label(player_id)
+	_append_event_line(ClientPresentationFormatter.format_treatment_notice(notice, names, _item_catalog))
 
 
 ## Rest key (P2-T8): asks the server to lie down, or to get up when the

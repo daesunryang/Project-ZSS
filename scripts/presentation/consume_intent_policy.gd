@@ -60,3 +60,9 @@ static func count_of_kind(inventory: Array[Dictionary], catalog: ItemCatalog, ki
 		if is_kind(catalog.get_definition(str(definition_id)), kind):
 			total += int(quantity)
 	return total
+
+
+## True when the key of `kind` also has an "on another player" form (P2-T12):
+## the treatments. Whether the server allows it is the server's rule.
+static func is_usable_on_others(kind: Kind) -> bool:
+	return kind == Kind.BANDAGE or kind == Kind.CURE

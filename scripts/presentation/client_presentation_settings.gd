@@ -54,6 +54,16 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 ## is told apart from a sleeper, which lies flat on its back.
 @export_range(0.0, PI) var prone_tilt_rad: float = 1.25
 
+## Treating another player (P2-T12, docs/15 P2-199): holding this key while
+## pressing the bandage or the cure key asks the server to use the item on
+## the player the camera looks at instead of on oneself.
+@export var treat_other_modifier_key: Key = KEY_SHIFT
+## Which player that is: the nearest other living player within this
+## distance and this half angle around the camera direction, in the mirror.
+## Only a suggestion: the server checks its own positions and range.
+@export_range(0.1, 50.0) var treat_target_range_m: float = 2.5
+@export_range(1.0, 180.0) var treat_target_half_angle_deg: float = 60.0
+
 ## Name tag above a player's capsule (P2-T9, docs/15 P2-170): a billboard
 ## Label3D. Distance above the top of the capsule, world size of one font
 ## pixel, font size, and the colours of the local player's name, other
@@ -106,8 +116,14 @@ func validate() -> PackedStringArray:
 		errors.append("prone_key must not be KEY_NONE")
 	if prone_tilt_rad <= 0.0 or prone_tilt_rad > PI:
 		errors.append("prone_tilt_rad must be within (0, PI]")
-	if not _are_distinct([consume_key, drink_key, bandage_key, cure_key, rest_key, prone_key]):
-		errors.append("use keys (consume, drink, bandage, cure), the rest key and the prone key must be different keys")
+	if treat_other_modifier_key == KEY_NONE:
+		errors.append("treat_other_modifier_key must not be KEY_NONE")
+	if treat_target_range_m <= 0.0:
+		errors.append("treat_target_range_m must be > 0")
+	if treat_target_half_angle_deg <= 0.0 or treat_target_half_angle_deg > 180.0:
+		errors.append("treat_target_half_angle_deg must be within (0, 180]")
+	if not _are_distinct([consume_key, drink_key, bandage_key, cure_key, rest_key, prone_key, treat_other_modifier_key]):
+		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key and the treat-other modifier must be different keys")
 	return errors
 
 

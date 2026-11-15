@@ -13,6 +13,14 @@ const DEFAULT_PATH: String = "res://data/tuning/gameplay_settings.tres"
 @export_range(1.0, 10000.0) var world_half_extent_m: float = 250.0
 ## Maximum distance between player and world item for pickup, metres.
 @export_range(0.1, 50.0) var pickup_range_m: float = 2.5
+## Maximum distance between two players for one to use a treatment item on
+## the other, metres (P2-T12, docs/09 §14.27; PROVISIONAL, docs/15 P2-195).
+## Measured between server positions, like the pickup range.
+@export_range(0.1, 50.0) var treat_range_m: float = 2.5
+## true: food and drink can also be given to another player (their hunger /
+## thirst drops). false (default): only treatments (bandage, cure) can be
+## used on others (P2-T12, docs/15 P2-196).
+@export var allow_feeding_others: bool = false
 ## Number of item stacks a player inventory can hold.
 @export_range(1, 1000) var inventory_slot_capacity: int = 20
 ## Where new players appear.
@@ -27,6 +35,8 @@ func validate() -> PackedStringArray:
 		errors.append("world_half_extent_m must be > 0")
 	if pickup_range_m <= 0.0:
 		errors.append("pickup_range_m must be > 0")
+	if not is_finite(treat_range_m) or treat_range_m <= 0.0:
+		errors.append("treat_range_m must be > 0")
 	if inventory_slot_capacity < 1:
 		errors.append("inventory_slot_capacity must be >= 1")
 	if absf(player_spawn_position.x) > world_half_extent_m or absf(player_spawn_position.z) > world_half_extent_m:

@@ -47,7 +47,11 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    module PostureNet with the wanted-posture intent and its result
 ##    (_rpc_request_posture, _rpc_posture_result), posture rows to every
 ##    peer (_rpc_posture_rows) and a join fragment; the melee result may say
-##    "player_prone". The rest RPCs of SurvivalNet are unchanged.
+##    "player_prone". The rest RPCs of SurvivalNet are unchanged. P2-T12
+##    (treating other players): InventoryNet gets the use-on-a-player intent
+##    and its result (_rpc_request_use_on, _rpc_use_on_result) and treatment
+##    notices to the target and to bystanders (_rpc_treatment_notice). The
+##    consume intent is unchanged.
 const PROTOCOL_VERSION: int = 8
 
 const _VERSION_SETTING: String = "application/config/version"
