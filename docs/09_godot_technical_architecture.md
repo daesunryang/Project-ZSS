@@ -251,3 +251,21 @@ B3에서 `Wound.is_bleeding`과 `PlayerVitals.died_at_world_time`을 저장 상�
 - 이동 RPC는 입력 변경 시 즉시, 유지 시 0.2초 주기, 정지 시 `Vector2.ZERO` 1회만 전송한다. 클라이언트가 전송하는 값은 월드 XZ 방향과 yaw뿐이며 위치·속도·시간은 전송하지 않는다.
 - 입력 액션은 `ClientInputActions`가 코드로 등록하며, 기존 액션은 덮어쓰거나 바인딩을 중복 추가하지 않는다. 키·데드존·전송 기준은 `data/tuning/camera_settings.tres`에 있다.
 - 플레이어는 `ClientWorldState.players`의 서버 위치에 캡슐로 표시하고 로컬/원격 색을 구분한다. 줍기는 로컬 위치에서 가장 가까운 미러 아이템 ID만 `request_pickup`으로 보내고 거리/획득 판정은 서버에 남겨 둔다.
+
+### 14.8 소음 계약(P2-A1, system id `noise`)
+
+`scripts/domain/noise/`: `NoiseEvent`(docs/02 §5.3 필드: `source_id`, `position`, `loudness`, `frequency_profile`, `event_time`, `occlusion_context` + 실행 중 전용 `noise_id`/`sequence`), `NoisePerception`(조회 결과 한 줄: `event`, `intensity`, `distance`), `NoiseOcclusion`(차폐 인터페이스, 기본은 차폐 없음), `NoiseSettings`(`data/tuning/noise_settings.tres`), `NoiseService`(ServerSystem). 네트워크 코드는 없다. 생존 다음, 좀비 앞에 등록한다.
+
+다른 시스템은 `world.get_system(NoiseService.SYSTEM_ID) as NoiseService`로 얻어 아래를 호출한다.
+
+| API | 계약 |
+|---|---|
+| `emit(source_id, position, loudness, frequency_profile, occlusion_context = {}) -> ActionResult` | 성공 이벤트 `{event_type: "noise_emitted", noise_id, source_id, position: [x, y, z], loudness, frequency_profile, event_time}`. 실패 사유: `bad_noise_source`(빈 ID), `bad_noise_position`(NaN/무한), `noise_out_of_world`(월드 경계 밖), `bad_noise_loudness`(NaN/무한/0 이하), `noise_loudness_too_high`(상한 초과), `bad_noise_profile`, `bad_noise_occlusion_context`(JSON-safe 아님). 실패하면 상태가 바뀌지 않는다 |
+| `query_audible(position, hearing_multiplier, since_world_time) -> Array[NoisePerception]` | 지금 그 위치에서 들리는 소음을 센 순서(같으면 발생 순서)로 돌려준다. `event_time > since_world_time`인 것만 포함(`NoiseService.SINCE_ALWAYS` = 전부). 잘못된 입력(NaN, 경계 밖, 배율 0 이하)은 빈 목록. 반환된 `event`는 읽기 전용 |
+| `max_audible_distance(loudness, hearing_multiplier) -> float` | 방금 난 소리가 들리는 최대 거리(음수 = 들리지 않음) |
+| `purge_expired() -> int`, `active_count()`, `get_event(noise_id)`, `set_occlusion(provider)` | 만료 정리(평소에는 `step`이 호출), 진단, 차폐 구현 교체 |
+
+- 세기 모델과 수치는 docs/15 P2-20. 시간 감쇠·만료는 월드 시간 기준이라 월드 시계가 멈춘 동안(접속자 0명)에는 줄지도 사라지지도 않는다. 만료된 소음은 정리 전이라도 조회에 나오지 않는다.
+- 공간 조회: 소음은 XZ 평면 해시 격자(기본 16m)의 한 칸에 들어간다. 조회는 듣는 쪽 칸에서 "지금 가장 큰 소음이 들릴 수 있는 거리"만큼의 이웃 칸만 훑고, 그 후보 목록을 (칸, 범위)별로 캐시한다. 같은 칸에 있는 다른 청취자는 소음이 추가·삭제되기 전까지 캐시를 다시 쓴다(무리 지은 좀비 N마리가 칸 훑기 1번을 공유, docs/02 §6.3). 점유 칸 수가 이웃 칸 수보다 적으면 점유 칸만 훑는다. `query_audible_brute_force`는 격자 없이 전부 검사하는 기준 구현이며 테스트가 두 결과가 같은지 비교한다.
+- 저장하지 않는다(`to_world_document()`는 빈 문서). 이유와 ID 형식은 docs/15 P2-23. 다른 시스템이 저장 문서에 `noise_id`를 넣으면 안 되고, 필요하면 위치·시간을 복사해 저장한다.
+- 아직 소음을 내는 호출자는 없다. 플레이어 이동·전투가 `emit`을 호출하는 것은 후속 티켓(C1/N1)이다.

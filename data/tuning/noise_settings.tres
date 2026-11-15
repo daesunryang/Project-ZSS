@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="NoiseSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/noise/noise_settings.gd" id="1_noise"]
+
+[resource]
+script = ExtResource("1_noise")
+cell_size_m = 16.0
+max_loudness = 100.0
+distance_attenuation_per_m = 1.0
+event_lifetime_sec = 8.0
+min_audible_intensity = 1.0
+max_hearing_multiplier = 4.0
+max_active_events = 256
+frequency_profiles = PackedStringArray("broadband", "low", "high")
+default_profile = "broadband"

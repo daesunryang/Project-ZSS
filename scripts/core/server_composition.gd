@@ -17,6 +17,10 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# Phase 2-B: survival (B1). Registered first so later systems can use it.
 	if world.register_system(SurvivalService.new(config.survival, world.ids, world.clock)) != OK:
 		return null
+	# Phase 2-A: noise (A1). Before its listeners (zombies) so expired noise
+	# is gone before they query it in the same tick.
+	if world.register_system(NoiseService.new(config.noise, world.clock, config.gameplay.world_half_extent_m)) != OK:
+		return null
 	return world
 
 

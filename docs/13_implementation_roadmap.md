@@ -139,7 +139,7 @@ Phase 2는 단일 조정자(Opus)가 티켓을 쪼개고 병합한다. 설계 �
 | P2-B2 | 허기·갈증·피로 증가, 범주, 페널티 | `scripts/domain/survival/` | 조정자 | 완료 |
 | P2-B3 | 출혈·회복·굶주림 피해·사망/리스폰 | `scripts/domain/survival/` | Codex | 완료 |
 | P2-B4 | 감염 단계 진행(설정값) | `scripts/domain/survival/` | Codex | 대기(B3 후) |
-| P2-A1 | 소음 시스템(이벤트, 감쇠, 공간 격자) | `scripts/domain/noise/` | Fable | 진행 |
+| P2-A1 | 소음 시스템(이벤트, 감쇠, 공간 격자) | `scripts/domain/noise/` | Fable | 완료(병합 대기) |
 | P2-A2 | 좀비 모델·AI(감지/추격/공격/수색)·저장 | `scripts/domain/zombie/` | Fable | 대기(A1 후) |
 | P2-C1 | 근접 무기 공격 판정·피해(서버 권한) | `scripts/domain/combat/` | Fable | 대기(A2 후) |
 | P2-N1 | 네트워크: 좀비 복제(ch2), 전투 RPC, 생존 상태 본인 복제(B5), 이동 배율 연결 | `network_service.gd` 외 | Fable | 대기 |
