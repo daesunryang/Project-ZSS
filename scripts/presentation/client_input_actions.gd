@@ -35,6 +35,9 @@ const TRADE_ACCEPT: StringName = &"trade_accept"
 const TRADE_DECLINE: StringName = &"trade_decline"
 const TRADE_OFFER_ADD: StringName = &"trade_offer_add"
 const TRADE_OFFER_REMOVE: StringName = &"trade_offer_remove"
+## Show / hide the borders of the world cells around the player (P3-2; a
+## testing aid, local only).
+const CELL_OVERLAY: StringName = &"toggle_cell_overlay"
 ## Use action -> the kind of item its key asks the server to use.
 const USE_ACTION_KINDS: Dictionary[StringName, ConsumeIntentPolicy.Kind] = {
 	CONSUME: ConsumeIntentPolicy.Kind.FOOD,
@@ -68,6 +71,7 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 		_add_key_action(TRADE_DECLINE, presentation.trade_decline_key, settings.input_deadzone)
 		_add_key_action(TRADE_OFFER_ADD, presentation.trade_offer_add_key, settings.input_deadzone)
 		_add_key_action(TRADE_OFFER_REMOVE, presentation.trade_offer_remove_key, settings.input_deadzone)
+		_add_key_action(CELL_OVERLAY, presentation.cell_overlay_key, settings.input_deadzone)
 
 
 static func _add_key_action(action: StringName, key: Key, deadzone: float) -> void:

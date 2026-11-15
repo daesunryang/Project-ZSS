@@ -642,7 +642,7 @@ func test_default_settings_and_request_validation() -> void:
 	var broken: InventoryNetSettings = InventoryNetSettings.new()
 	broken.consume_intent_rate_per_sec = 0.0
 	assert_eq(broken.validate().size(), 1, "; ".join(broken.validate()))
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 12, "the consume RPCs were a protocol change (5); 6 since the rest RPCs (P2-T8), 7 since the character RPCs (P2-T9), 8 since P2-T10..T12, 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15), 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 13, "the consume RPCs were a protocol change (5); 6 since the rest RPCs (P2-T8), 7 since the character RPCs (P2-T9), 8 since P2-T10..T12, 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15), 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a), 13 since the replication scope by cell (P3-2)")
 	assert_eq(InventoryNetModule.validate_consume_request(1, "item_000001"), "")
 	assert_eq(InventoryNetModule.validate_consume_request("1", "item_000001"), IntentValidator.REASON_BAD_TYPE)
 	assert_eq(InventoryNetModule.validate_consume_request(1, &"item_000001"), IntentValidator.REASON_BAD_TYPE, "StringName is not String")

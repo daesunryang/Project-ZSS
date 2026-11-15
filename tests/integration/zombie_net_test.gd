@@ -279,7 +279,8 @@ func test_late_joiner_receives_all_zombies_in_the_join_snapshot() -> void:
 	assert_eq(_mirror(b).get_zombie(healthy), {"position": Vector3(60, 0, 0), "yaw": 1.0, "state": "idle", "health_fraction": 1.0})
 	assert_eq(_mirror(b).get_zombie(corpse)["state"], "dead")
 	assert_eq(_mirror(b).get_zombie(corpse)["health_fraction"], 0.0)
-	assert_eq(_mirror(b).last_event_sequence, _mirror(a).last_event_sequence, "bob starts at the same point of the event stream")
+	# P3-2: every client has its own event stream, numbered from its join.
+	assert_eq(_mirror(b).last_event_sequence, 0, "bob's own event stream starts with his join")
 	var both: Array[NetworkService] = [a, b]
 	var same: bool = await _eventually(func() -> bool: return _all_match(both))
 	assert_true(same, "late joiner matches the server rows")
@@ -292,7 +293,9 @@ func test_late_joiner_receives_all_zombies_in_the_join_snapshot() -> void:
 	assert_true(spawned, "a zombie spawned after the join reaches both clients")
 	assert_eq(b_events.size(), 1)
 	assert_eq(_observable(b_events[0]), _observable(a_events[a_events.size() - 1]))
-	assert_eq(b_events[0]["sequence"], a_events[a_events.size() - 1]["sequence"])
+	assert_eq(b_events[0]["sequence"], 1, "the first event of bob's stream")
+	assert_eq(a_events[a_events.size() - 1]["sequence"], a_events.size(), "alice's stream has no hole either")
+	assert_eq(_mirror(a).event_gap_count + _mirror(b).event_gap_count, 0)
 
 
 func test_default_new_world_join_snapshot_lists_the_dev_zombies() -> void:

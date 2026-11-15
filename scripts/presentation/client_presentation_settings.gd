@@ -124,6 +124,27 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export var name_tag_remote_color: Color = Color(1.0, 1.0, 1.0, 1.0)
 @export var name_tag_dead_color: Color = Color(0.6, 0.6, 0.6, 1.0)
 
+## The test map (P3-2, docs/15 P3-047..P3-049): a flat ground as large as the
+## map the SERVER described (the size is not a setting here), and a wall along
+## each edge. Colours of both, height and thickness of the walls.
+@export var map_ground_color: Color = Color(0.30, 0.36, 0.28, 1.0)
+@export var map_edge_color: Color = Color(0.75, 0.25, 0.20, 1.0)
+@export_range(0.1, 100.0) var map_edge_height_m: float = 3.0
+@export_range(0.01, 50.0) var map_edge_thickness_m: float = 0.5
+## Cell overlay, a testing aid: this key shows / hides the borders and ids
+## of the world cells around the local player (local only, nothing is sent).
+@export var cell_overlay_key: Key = KEY_F3
+@export var cell_overlay_initially_visible: bool = false
+## The overlay covers the cells within this many cells of the player's cell.
+@export_range(0, 32) var cell_overlay_radius_cells: int = 3
+@export var cell_overlay_color: Color = Color(1.0, 0.85, 0.20, 1.0)
+## Height of the border lines above the ground (above 0, so they are not
+## hidden in it) and of the cell id labels.
+@export_range(0.001, 10.0) var cell_overlay_height_m: float = 0.05
+@export_range(0.0, 50.0) var cell_overlay_label_height_m: float = 2.5
+@export_range(0.0001, 1.0) var cell_overlay_label_pixel_size: float = 0.02
+@export_range(1, 256) var cell_overlay_label_font_size: int = 48
+
 
 func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
@@ -191,8 +212,16 @@ func validate() -> PackedStringArray:
 		errors.append("trade_offer_step must be >= 1")
 	if trade_min_interval_sec <= 0.0:
 		errors.append("trade_min_interval_sec must be > 0")
+	if cell_overlay_key == KEY_NONE:
+		errors.append("cell_overlay_key must not be KEY_NONE")
+	if not is_finite(map_edge_height_m) or map_edge_height_m <= 0.0 or not is_finite(map_edge_thickness_m) or map_edge_thickness_m <= 0.0:
+		errors.append("map edge height and thickness must be > 0")
+	if cell_overlay_radius_cells < 0:
+		errors.append("cell_overlay_radius_cells must be >= 0")
+	if not is_finite(cell_overlay_height_m) or cell_overlay_height_m <= 0.0 or not is_finite(cell_overlay_label_height_m) or cell_overlay_label_height_m < 0.0 or cell_overlay_label_pixel_size <= 0.0 or cell_overlay_label_font_size < 1:
+		errors.append("cell overlay height and label pixel size must be > 0, label height >= 0 and font size >= 1")
 	if not _are_distinct(assigned_keys().values()):
-		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier and the trade keys must be different keys")
+		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier, the trade keys and the cell overlay key must be different keys")
 	return errors
 
 
@@ -215,6 +244,7 @@ func assigned_keys() -> Dictionary[String, Key]:
 		"trade_decline_key": trade_decline_key,
 		"trade_offer_add_key": trade_offer_add_key,
 		"trade_offer_remove_key": trade_offer_remove_key,
+		"cell_overlay_key": cell_overlay_key,
 	}
 
 

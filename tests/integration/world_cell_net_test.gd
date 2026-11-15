@@ -3,8 +3,15 @@ extends TestCase
 ## (docs/09 §15.1), over real ENet (one server and two clients in one
 ## process). A client must never keep showing an entity the server took out
 ## of memory, must get the entities of a cell that is loaded while it is
-## connected, and two clients must agree. No message was added for this:
-## the existing world item and zombie messages are reused.
+## connected, and two clients must agree.
+##
+## P3-2 (docs/09 §15.2): a client is told about a cell only while it is
+## interested in it AND the server has it in memory. The first two tests are
+## about the second half: there the interest area is the whole map, wider
+## than what the server keeps in memory (the settings check forbids that in
+## a real configuration), so a cell the clients are told about really is
+## released under them. The third test uses an interest area that fits the
+## cell lifecycle: there a cell is lost by interest before it is released.
 
 const WORLD: String = "cell_net_world"
 const NEVER: float = 1.0e9
@@ -49,6 +56,10 @@ func before_each() -> void:
 	_config.world_cells.deactivate_delay_sec = 0.1
 	_config.world_cells.unload_delay_sec = 0.3
 	_config.world_cells.refresh_period_sec = 0.0
+	# Every cell of the 10 x 10 map is wanted by every client (see the header).
+	_config.interest = InterestSettings.new()
+	_config.interest.interest_radius_cells = 10
+	_config.interest.keep_margin_cells = 0
 	_cluster = NetTestCluster.new(tree, network_settings, _config)
 	_server_events = []
 
@@ -220,3 +231,60 @@ func test_a_cell_emptied_by_a_pickup_stays_empty_for_everybody_after_a_reload() 
 	assert_eq(_item_ids(a).size(), 0)
 	assert_eq(_item_ids(b).size(), 0)
 	assert_true(a.client_state.has_inventory_item(item_id), "alice still carries it")
+
+
+## P3-2: with an interest area that fits the cell lifecycle a client is told
+## about a cell that is loaded for it, and loses it by walking away before
+## the server releases it. A client that stays where it is hears nothing.
+func test_a_loaded_cell_goes_to_the_client_that_walked_there_and_not_to_the_one_that_stayed() -> void:
+	# Told about cells up to 1 cell away, kept up to 2: inside the preload ring.
+	_config.interest.interest_radius_cells = 1
+	_config.interest.keep_margin_cells = 1
+	assert_eq(_config.interest.validate_against(_config.world_cells), PackedStringArray(), "this is a configuration the settings check accepts")
+	assert_true(_start())
+	var near_item: String = _world.inventory.spawn_world_item("dev_test_item", 1, _world.cell_id_at(Vector3(6.0, 0.0, 5.0)), Vector3(6.0, 0.0, 5.0))
+	var far_item: String = _world.inventory.spawn_world_item("dev_food_ration", 2, FAR_CELL, FAR_ITEM_AT)
+	var far_zombie: String = _spawn_zombie(FAR_ZOMBIE_AT)
+	assert_true(_zombies().apply_damage_to_zombie(far_zombie, 25.0, "test_source").ok)
+	var a: NetworkService = await _cluster.join_client("alice")
+	var b: NetworkService = await _cluster.join_client("bob")
+	assert_true(a != null and b != null)
+	var a_added: PackedStringArray = []
+	var a_removed: PackedStringArray = []
+	var b_seen: PackedStringArray = []
+	_mirror(a).zombie_added.connect(func(zombie_id: String) -> void: a_added.append(zombie_id))
+	_mirror(a).zombie_removed.connect(func(zombie_id: String) -> void: a_removed.append(zombie_id))
+	_mirror(b).zombie_added.connect(func(zombie_id: String) -> void: b_seen.append(zombie_id))
+	(b.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule).world_items_added.connect(func(ids: PackedStringArray) -> void: b_seen.append_array(ids))
+	assert_eq(_item_ids(a), PackedStringArray([near_item]), "the join data holds the cells around the spawn point only")
+	assert_eq(_zombie_ids(a), PackedStringArray())
+	assert_true(await _eventually(func() -> bool: return _cells().state_of(FAR_CELL) == WorldCellLifecycle.State.UNLOADED), "nobody is near the far cell: it is released")
+
+	# --- alice walks there: the cell is loaded and she alone is told ---
+	var a_id: String = a.client_state.local_player_id
+	_world.get_player(a_id).position = Vector3(35.0, 0.0, 5.0)
+	assert_true(await _eventually(func() -> bool: return _item_ids(a) == PackedStringArray([far_item]) and _zombie_ids(a) == PackedStringArray([far_zombie])), "alice sees what is in the loaded cell (and no longer the item at the spawn point): %s %s" % [str(_item_ids(a)), str(_zombie_ids(a))])
+	assert_eq(a.client_state.world_items[far_item]["position"], FAR_ITEM_AT)
+	assert_eq(int(a.client_state.world_items[far_item]["quantity"]), 2)
+	# It arrives as it was saved, not as a fresh zombie.
+	assert_true(is_equal_approx(float(_mirror(a).get_zombie(far_zombie)["health_fraction"]), 0.75), "the hurt zombie arrives hurt")
+	assert_eq(_mirror(a).get_zombie(far_zombie)["position"], FAR_ZOMBIE_AT)
+	await _cluster.wait_frames(20)
+	assert_eq(_item_ids(b), PackedStringArray([near_item]), "bob stayed: nothing changed for him")
+	assert_eq(_zombie_ids(b), PackedStringArray())
+
+	# --- she walks back: the cell leaves her view, then the server's memory ---
+	_world.get_player(a_id).position = SPAWN
+	assert_true(await _eventually(func() -> bool: return _item_ids(a) == PackedStringArray([near_item]) and _zombie_ids(a).is_empty()), "back at the spawn point alice sees what bob sees")
+	assert_true(await _eventually(func() -> bool: return _cells().state_of(FAR_CELL) == WorldCellLifecycle.State.UNLOADED))
+	await _cluster.wait_frames(20)
+	assert_eq(a_added.count(far_zombie), 1, "the zombie appeared once")
+	assert_eq(a_removed.count(far_zombie), 1, "and left once: the release itself told her nothing more")
+	assert_eq(b_seen.size(), 0, "bob was never told about the far cell: %s" % str(b_seen))
+	assert_eq(_item_ids(b), _item_ids(a), "two clients standing together agree")
+	assert_false(WorldCellDocument.is_empty(_store.document_of(FAR_CELL)), "the far cell is saved, not lost")
+	assert_eq(_count(_server_events, ZombieService.EVENT_REMOVED), 0, "no zombie was removed from the world")
+	for client: NetworkService in [a, b]:
+		assert_eq(_mirror(client).rejected_payload_count, 0)
+		assert_eq(_mirror(client).event_gap_count, 0)
+		assert_eq((client.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule).rejected_payload_count, 0)

@@ -677,7 +677,7 @@ func test_default_settings_rpc_table_and_request_validation() -> void:
 	broken.removals_per_message = 0
 	broken.max_mirror_structures = 0
 	assert_eq(broken.validate().size(), 5, "; ".join(broken.validate()))
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 12, "the structure RPCs are a protocol change (P3-4a)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 13, "the structure RPCs are a protocol change (12, P3-4a); 13 since the replication scope by cell (P3-2)")
 	# Every message is on the reliable ordered channel (docs/09 §15.4).
 	var module: StructureNetModule = StructureNetModule.new(settings, StructureCatalog.load_directory())
 	assert_eq(str(module.name), StructureNetModule.MODULE_NAME)

@@ -233,7 +233,7 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. 시스템 사이의 시그널 연결도 여기서 한다(P2-T5: `SurvivalService.player_died` → `ZombieService.on_player_died`, §14.20). `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
 | 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가), player v2→v3(`character_generation` 추가, 값은 1. P2-T4), player v3→v4(`character` 추가, 값은 기본 이름과 빈 외형. P2-T9, §14.24). `SaveService` 기본 마이그레이터 |
 
-채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 12(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24), P2-T10~T12 묶음에서 8: 기상 원인(§14.25), `PostureNet` 모듈(§14.26), 다른 플레이어 치료(§14.27), P2-T14에서 9: 건네기 의도와 건네기 알림(§14.28), P2-T15에서 10: 건네기 RPC 삭제와 내려놓기 수량(§14.29), P2-T16에서 11: `TradeNet` 모듈(§14.30), P3-4a에서 12: `StructureNet` 모듈(§15.4)). 버전별 메시지 목록은 `scripts/core/build_info.gd`의 주석에 있다.
+채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 13(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24), P2-T10~T12 묶음에서 8: 기상 원인(§14.25), `PostureNet` 모듈(§14.26), 다른 플레이어 치료(§14.27), P2-T14에서 9: 건네기 의도와 건네기 알림(§14.28), P2-T15에서 10: 건네기 RPC 삭제와 내려놓기 수량(§14.29), P2-T16에서 11: `TradeNet` 모듈(§14.30), P3-4a에서 12: `StructureNet` 모듈(§15.4), P3-2에서 13: 셀 기반 복제 범위(§15.2)). 버전별 메시지 목록은 `scripts/core/build_info.gd`의 주석에 있다.
 
 P2-T11에서 `ServerSystem`에 훅 넷이 추가됐다(모두 기본값은 "영향 없음"이고 `ServerWorld`의 같은 이름 함수가 모든 시스템의 값을 모은다, §14.26): `player_attack_block_reason(player_id)`(공격만 막는 사유. `ServerWorld.player_attack_block_reason`은 행동 전체를 막는 사유를 먼저 본다), `player_visibility_multiplier(player_id)`(좀비 시야 거리에 곱하는 가시성, 곱을 0~1로 제한), `player_footstep_loudness_multiplier(player_id)`·`player_footstep_stride_multiplier(player_id)`(발소리 세기·보폭 배율, 곱). 잘못된 값(NaN·무한·음수)은 오류 로그를 남기고 무시한다(1.0으로 취급: 고장 난 시스템이 누구도 숨기지 못한다). 조립에 시그널 연결 둘이 늘었다: `SurvivalService.rest_changed`·`player_died` → `PostureService.on_rest_changed`·`on_player_died`.
 
@@ -634,7 +634,7 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 - P2-T16에서 다섯 번째 트랜잭션 `exchange_items`(두 인벤토리가 서로 아이템을 주는 교환, 이벤트 `items_exchanged`)와 `InventoryNetModule.flush_pending_save`가 추가됐다. 계약과 복제는 §14.30.
 - 보조: `item_count()`(존재하는 인스턴스 수). 저장 형식은 바뀌지 않았다: 내려놓은 아이템의 좌표는 기존대로 world_state `inventory.world_item_positions`(docs/15 P1-7)에, 삭제된 ID는 world_state `tombstones`에, 다음 순번은 `next_entity_sequence`에 들어간다.
 
-`ServerWorld` 래퍼(위치·셀·인벤토리 ID는 서버 상태에서 채운다. 셀은 `DevWorldSeed.DEV_CELL_ID`, 위치는 `clamp_to_world(플레이어 위치)`):
+`ServerWorld` 래퍼(위치·셀·인벤토리 ID는 서버 상태에서 채운다. 셀은 놓이는 위치의 셀(`ServerWorld.cell_id_at`. P3-1 전에는 모든 아이템이 `DevWorldSeed.DEV_CELL_ID`였다, §15.1), 위치는 `clamp_to_world(플레이어 위치)`):
 
 | 메서드 | 대상 | 추가 실패 사유 |
 |---|---|---|
@@ -790,7 +790,7 @@ P2-T6부터 `ItemConsumption`은 아이템 정의의 사용 효과 전부를 적
 `SurvivalService._mark_dead`(전투 피해 `apply_damage`, 생존 규칙의 시간 피해, 감염 좀비화 모두 이 한 곳을 지난다)가 순서대로 한다: 체력 0과 사망 시각(달력·행동) 기록 → 아직 내보내지 않은 시간 피해 이벤트 → **소지품 전부를 그 플레이어의 서버 위치에 내려놓기**(`ServerWorld.drop_all_player_items`, §14.17의 `drop_all_items` 트랜잭션 한 번) → `player_died` 이벤트 → 다른 시스템용 시그널 `player_died`(P2-T5, §14.20).
 
 - 내려놓는 시점은 **사망 즉시**다(새 캐릭터가 시작될 때가 아니다). 이유: (1) 대기 시간 동안에도 다른 플레이어가 그 자리의 아이템을 보고 주울 수 있다. (2) "죽은 캐릭터는 아무것도 들고 있지 않다"가 사망 순간부터 성립하므로, 죽은 채 접속을 끊거나 서버가 저장·재시작되어도 소지품이 두 번 떨어지거나 사라질 중간 상태가 없다.
-- 위치는 `clamp_to_world(플레이어 위치)`, 셀은 `DevWorldSeed.DEV_CELL_ID`(§14.17과 같다). 한 점에 겹쳐 놓인다. 묶음은 나뉘지 않고, 아이템 수는 보존된다(생성·삭제 없음).
+- 위치는 `clamp_to_world(플레이어 위치)`, 셀은 그 위치의 셀(`ServerWorld.cell_id_at`, §14.17과 같다. P3-1 전에는 `DevWorldSeed.DEV_CELL_ID`였다). 한 점에 겹쳐 놓인다. 묶음은 나뉘지 않고, 아이템 수는 보존된다(생성·삭제 없음).
 - 복제와 저장은 `InventoryNet`이 한다(§14.17): 트랜잭션이 확정되는 자리에서 소유자에게 `_rpc_inventory_items_removed`, 이어서 모든 peer에게 `_rpc_world_items_added`를 보내고, 그 서버 틱 끝에 월드를 저장한다. 생존 이벤트(`player_wounded`, `player_died`)는 그 틱의 `server_physics`에서 나가므로 클라이언트는 "인벤토리 비워짐 → 월드 아이템 → 사망" 순서로 받는다. 빈손으로 죽으면 트랜잭션이 없어 그 틱에 저장되지 않는다(사망 상태는 다음 저장에 들어간다).
 - 오프라인 플레이어가 서버 규칙으로 죽어도(`apply_damage`는 접속 여부를 보지 않는다) 똑같이 내려놓는다.
 - `apply_damage`에는 월드 인자가 없으므로 `SurvivalService`는 등록될 때(`ServerSystem.on_registered(world)`, `ServerWorld.register_system`이 호출) 월드의 **약한 참조**를 보관한다(월드가 시스템을 소유하므로 강한 참조는 순환이 된다). 월드에 등록되지 않은 채 쓰이면 내려놓지 못하고 오류 로그를 남기며, 그 경우에도 아래 "새 캐릭터 시작"이 한 번 더 내려놓는다.
@@ -1976,6 +1976,161 @@ Phase 3(docs/13 §5, §15) 티켓의 계약을 티켓마다 한 절씩 적는다
 **테스트**: `tests/unit/world_cell_grid_test.gd`(좌표·ID·음수·정확한 경계·이웃·전이 표·색인), `world_cell_service_test.gd`(서버 위치 기반 활성화, 전이 순서, 히스테리시스, 미리보기, 로딩 예산, 로딩 실패·저장 실패, 저장소 없음, 떠돌이, 해제→재로딩 동일성), `world_cell_gating_test.gd`(비활성 셀의 좀비는 이동·감지·공격하지 않고 같은 조건의 활성 셀 좀비는 한다, 소음, 경계, 처리량), `world_cell_save_test.gd`(셀 파일, v3→v4, 빈 셀, 백업, 바뀌지 않은 파일), `world_cell_measure_test.gd`(측정값 출력), `tests/integration/world_cell_persistence_test.gd`(저장→재시작→복구, 구버전 저장, 시드 아이템 재생성 없음, 해제 세대의 일관성, 격자 변경, 손상된 셀 파일), `world_cell_net_test.gd`(두 클라이언트 미러의 제거·추가·일치). 아이템 이동과 셀: `tests/unit/item_moves_in_cells_test.gd`(일부 내려놓기의 셀·색인·셀 문서, 합쳐진 줍기의 색인 제거와 ID 은퇴, 일부 내려놓기·합쳐진 줍기 뒤 해제→재로딩의 수량 보존과 ID 유일, 줍기 전의 셀 문서가 돌아와도 합쳐진 수량이 되살아나지 않음, 내려놓기·합쳐진 줍기·완료된 거래 뒤 해제된 셀이 있는 월드 문서 왕복), `tests/integration/item_moves_cell_persistence_test.gd`(같은 흐름의 저장→재시작→복구를 실제 파일로 두 번, 디스크의 world_state와 셀 파일 전체에서 수량 보존·ID 유일·은퇴 ID 없음, 줍기 전 백업 셀 파일로 복구된 재시작).
 
 **P3-2가 알아야 할 것**: (1) 클라이언트별 범위는 `WorldCellNetModule`과 `ZombieNetModule`의 `cell_loaded`/`cell_unloading` 처리와 `NetworkService._build_join_snapshot`·`ZombieNetModule.build_join_fragment`·좀비 스냅샷 전송 세 곳을 "그 접속자의 관심 셀"로 거르면 된다. 관심 셀 계산에는 `WorldCellGrid.cells_within`과 `ServerWorld.cell_index.entities_in_cell`을 쓸 수 있다. (2) 지금은 PRELOADED 셀의 엔티티도 전송된다. (3) 아이템 제거는 아이템마다 메시지 하나다. (4) `InventoryNetModule`과 `NetworkService`에 공개 함수를 두면 이름으로 RPC를 부르는 부분을 없앨 수 있다. (5) 직접 `inventory.spawn_world_item`을 부르는 서버 코드는 여전히 복제되지 않는다(docs/15 P2-119). (6) 클라이언트 쪽 바닥·경계 표시는 서버의 `WorldCellSettings.bounds`와 `world_half_extent_m`이 같은 사각형임을 전제로 하면 된다.
+
+### 15.2 셀 기반 복제 범위와 클라이언트 테스트 맵(P3-2)
+
+접속자마다 **자기 플레이어 주변 셀**의 월드 아이템과 좀비만 받는다. 이 절이 §14.12·§14.13·§14.17·§14.29·§15.1의 "접속 중인 모든 클라이언트에게 보낸다", "거리 필터가 없다"는 서술보다 우선한다(플레이어 자신에 관한 것은 예외: 아래 "플레이어는 전역"). 클라이언트는 서버가 알려 준 맵 배치로 500m × 500m 테스트 맵의 바닥·가장자리·셀 경계를 그린다. 임시 수치·결정·측정값은 docs/15 §15.2(P3-031~P3-055).
+
+**프로토콜 변경 있음**: `BuildInfo.PROTOCOL_VERSION` 12 → 13(12는 먼저 병합된 P3-4a 구조물 메시지다, §15.4). 새 RPC 하나, 새 전선 이벤트 둘, 새 접속 조각 둘, 그리고 기존 메시지 몇 개의 뜻이 바뀌었다(아래 "메시지"). 기존 RPC의 서명은 바뀌지 않았다.
+
+#### 관심 셀 기능(재사용 가능, 아이템·좀비를 모른다)
+
+| 구성 요소 | 파일 | 계약 |
+|---|---|---|
+| `InterestSettings` | `scripts/services/multiplayer/interest_settings.gd`, `data/tuning/interest_settings.tres` | `interest_radius_cells`(2): 플레이어가 있는 셀에서 이만큼 안의 셀(정사각형, 체비쇼프 거리)이 관심 셀이 된다. `keep_margin_cells`(1): 한번 관심 셀이 된 셀은 `반경 + 여유`칸(`keep_radius_cells()` = 3)보다 멀어져야 빠진다. `validate()`, `validate_against(world_cells)`: `반경 + 여유 ≤ WorldCellSettings.preload_radius_cells`(서버가 그 플레이어 주변에 메모리로 두는 범위를 넘지 못한다). `CompositionConfig.interest`, `CompositionConfig.validate()`가 둘 다 부른다 |
+| `CellInterest` | `scripts/services/multiplayer/cell_interest.gd` | 노드 없는 순수 장부. 접속자(peer)별 관심 셀 집합. 아래 표 |
+| `InterestNetModule` | `scripts/services/multiplayer/interest_net_module.gd` | NetModule `InterestNet`, **RPC 없음**, 서버에서만 동작. `CellInterest`를 만들어 `NetworkService.cell_interest`에 걸고 서버 위치로 갱신한다. `ServerComposition.install_net_modules`가 **가장 먼저** 등록한다 |
+
+`CellInterest` API(`network.cell_interest`, 서버 전용. 클라이언트와 모듈 없는 조립에서는 null):
+
+| API | 계약 |
+|---|---|
+| `signal cell_gained(peer_id, cell_id)` | 그 접속자에게 그 셀에 지금 있는 것을 전부 알려라 |
+| `signal cell_lost(peer_id, cell_id)` | 그 접속자에게서 그 셀의 것을 전부 치워라(엔티티는 아직 읽을 수 있다) |
+| `is_interested(peer_id, cell_id) -> bool`, `peers_for_cell(cell_id) -> PackedInt32Array`(정렬) | 엔티티가 생기거나 바뀌거나 없어질 때 누구에게 보낼지 |
+| `cells_of(peer_id) -> PackedStringArray`(x, z 순), `cell_count_of`, `has_peer`, `peer_ids` | 조회 |
+| `begin_peer(peer_id, in_world, position)` | 접속하는 peer의 첫 셀을 **시그널 없이** 정한다: 그 셀의 내용은 접속 스냅샷으로 간다 |
+| `update_peer(peer_id, in_world, position)` | 다시 살펴보고 바뀐 만큼 `cell_lost`(먼저) → `cell_gained`를 낸다. 셀이 그대로면 아무 일도 하지 않는다 |
+| `remove_peer(peer_id)` | 나간 peer를 잊는다(시그널 없음) |
+| `notify_cell_loaded(cell_id)` / `notify_cell_unloading(cell_id)` | 셀이 서버 메모리에 들어옴 / 나가려 함 |
+| `update_count`, `recompute_count`, `gained_count`, `lost_count` | 진단값 |
+
+규칙:
+
+- 입력은 **서버가 가진 플레이어 위치**뿐이다. 클라이언트가 보낸 값은 쓰지 않는다.
+- 영역은 플레이어 **위치**가 아니라 플레이어가 있는 **셀** 기준의 정사각형이고 맵 밖 셀은 없다(`WorldCellGrid.cells_within`). 음수 좌표는 격자와 같이 내림한다.
+- **히스테리시스는 공간 여유뿐이다(시계 없음)**: 관심 셀은 `interest_radius_cells` 안에 들어와야 생기고 `keep_radius_cells()` 밖으로 나가야 없어진다. 여유가 1칸 이상이면 한 경계를 왔다 갔다 해도 첫 통과 뒤로는 아무것도 바뀌지 않는다. 그래서 같은 자리에 서 있어도 **걸어온 길에 따라** 바깥 고리 한 줄이 다를 수 있다(접속한 사람은 정사각형만, 걸어온 사람은 지나온 쪽 한 줄을 더 갖는다).
+- **월드에 캐릭터가 없는 접속자**(P2-T9: 접속했지만 캐릭터를 만들기 전)는 관심 셀이 없다. 캐릭터가 월드에 들어오는 순간(`on_player_joined`) 한꺼번에 얻는다. **죽은 캐릭터**는 월드에 있으므로(`ServerWorld.is_online`) 몸이 있는 자리 주변을 계속 본다(셀 생명주기와 같은 기준, docs/15 P3-029).
+- **서버 메모리에 없는 셀은 누구의 관심 셀도 아니다**: "peer P가 셀 C에 관심 있다" = "P는 지금 C의 내용을 받고 있다". 셀이 메모리에 들어오면 그 셀을 원하는 peer가 얻고(`cell_gained`), 나가려 하면 가진 peer가 잃는다(`cell_lost`). 그래서 §15.1의 `cell_loaded`/`cell_unloading`을 각 모듈이 따로 들을 필요가 없다. 셀 서비스가 없는 월드는 모든 셀이 메모리에 있는 것으로 본다.
+- 갱신: `InterestNetModule.server_physics`가 **매 서버 틱** 모든 접속자를 살핀다(다른 모듈보다 먼저). 플레이어가 월드에 들어올 때는 그 자리에서. 서버 코드가 위치를 직접 옮기면 다음 틱에 반영된다.
+
+#### `network_service.gd`의 변경(동결 이후 세 번째, 이 티켓에서 바꾼 전부)
+
+1. `var cell_interest: CellInterest = null`(공개. `InterestNetModule`이 서버 시작 때 넣는다).
+2. 공개 함수 둘: `is_cell_of_interest(peer_id, cell_id) -> bool`, `peers_interested_in(cell_id) -> PackedInt32Array`. `cell_interest`가 null이면 각각 `true`, `joined_peers()`(= P3-2 전의 동작).
+3. `_build_join_snapshot`: 모듈 조각을 **먼저** 만들고(관심 모듈의 조각이 그 접속자의 셀을 정한다) `world_items`에는 `is_cell_of_interest(peer, cell_index.cell_of(item))`인 것만 넣는다. 스냅샷의 형식과 키는 그대로다.
+4. `_rpc_request_pickup`: 성공했을 때 `_rpc_world_item_removed`를 모든 접속자가 아니라 `peers_interested_in(result.event.from_cell_id)`에게 보낸다. 거부했을 때 요청자에게 보내는 사유를 `_public_pickup_reason`으로 거른다(아래 "클라이언트를 믿지 않는다").
+5. 새 private 함수 `_public_pickup_reason(peer_id, item_id, reason)`.
+
+RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어에 관한 것(`_rpc_player_joined`/`_rpc_player_left`/`_rpc_position_snapshot`, 스냅샷의 `players`)은 건드리지 않았다.
+
+#### 무엇을 누가 받는가
+
+| 서버에서 일어난 일 | 보내는 곳 | 받는 접속자 |
+|---|---|---|
+| 접속(join) | `NetworkService` 스냅샷 `world_items`, `ZombieNet` 조각 `rows` | 그 접속자의 관심 셀에 있는 것만 |
+| 접속자가 셀을 얻음(걸어감, 월드 진입, 셀이 메모리에 들어옴) | `WorldCellNetModule` → `InventoryNetModule.send_world_items_added(peer, entries)` / `ZombieNetModule`의 조정(아래) | 그 접속자 |
+| 접속자가 셀을 잃음(걸어 나감, 셀이 메모리에서 나감) | `WorldCellNetModule` → `InventoryNetModule.send_world_items_removed(peer, ids)` / `ZombieNetModule`의 조정 | 그 접속자 |
+| 아이템을 내려놓음(묶음 전체·일부, 사망 시 전부 내려놓기) | `InventoryNetModule._rpc_world_items_added` | 놓인 셀(이벤트의 `cell_id`)에 관심 있는 접속자. 소지품 변화는 그대로 소유자에게만 |
+| 아이템을 주움(합쳐진 경우 포함) | `NetworkService._rpc_world_item_removed` | 놓여 있던 셀(`from_cell_id`)에 관심 있는 접속자. 결과와 소지품 변화는 그대로 요청자에게만 |
+| 좀비 생성(`zombie_spawned`) | `ZombieNetModule._rpc_zombie_events` | 그 좀비의 셀에 관심 있는 접속자(그때부터 그 좀비를 "안다") |
+| 그 밖의 좀비 이벤트(감지, 상태 변화, 공격, 피해, 사망, 제거) | 같음 | 그 좀비를 아는 접속자. `zombie_attacked`의 비공개 필드는 그대로 맞은 플레이어에게만 |
+| 좀비 위치 스냅샷 | `ZombieNetModule._rpc_zombie_snapshot` | 접속자마다 자기가 아는 좀비의 행만 |
+| 근접 공격 이벤트(`melee_attack`) | `CombatNetModule._rpc_combat_events` | 공격자 본인(항상), 맞은 좀비를 아는 접속자, 빗나간 공격은 공격자의 셀에 관심 있는 접속자 |
+| 플레이어에 관한 것(위치, 생존 공개 이벤트, 자세, 캐릭터 행, 거래·치료 알림) | 기존 그대로 | **모든 접속자**(이 티켓에서 범위를 두지 않았다) |
+| 구조물(§15.4: 접속 조각, 배치·철거·문, 셀 로딩·해제) | `StructureNetModule` 그대로 | **모든 접속자**, 서버 메모리에 있는 모든 셀(아직 범위를 두지 않았다, docs/15 P3-056) |
+
+요청자에게 가는 결과(`_rpc_pickup_result`, `_rpc_drop_result`, `_rpc_melee_result` 등)와 소유자 전용 메시지는 관심 셀과 무관하게 항상 간다. 요청자의 미러는 다음 불변식으로 일관된다: **미러에 있는 월드 아이템·좀비 = 지금 관심 셀에 있는 것**. 내려놓은 아이템의 셀이 (아주 드물게) 아직 요청자의 관심 셀이 아니면 추가는 가지 않고, 다음 틱에 그 셀을 얻을 때 함께 간다.
+
+#### 메시지
+
+| 방향 | RPC / 조각 | 채널/모드 | 내용 |
+|---|---|---|---|
+| S→C | `InventoryNet._rpc_world_items_removed(item_instance_ids: Array[String])` **(새 RPC)** | 0 reliable | 더는 관심 없는 셀의 월드 아이템을 미러에서 뺀다. 한 메시지에 `max_items_per_message`(32, 상한 64)개까지. 미러에 없는 ID는 조용히 건너뛴다(방금 누가 주웠을 수 있다). 아이템은 월드에 그대로 있다 |
+| S→C | `InventoryNet._rpc_world_items_added(items)` (기존) | 0 reliable | 형식 그대로. 받는 사람만 달라졌다 |
+| S→C | `NetworkService._rpc_world_item_removed(item_instance_id)` (기존) | 0 reliable | 형식 그대로. 줍기로 없어진 아이템 하나. 받는 사람만 달라졌다 |
+| S→C | `ZombieNet._rpc_zombie_events(tick, first_sequence, events)` (기존 RPC) | 0 reliable | **순번이 클라이언트별**이다: 그 클라이언트에게 보낸 이벤트만 1부터 센다(구멍 없음). 새 전선 이벤트 둘이 실린다(아래) |
+| S→C | `ZombieNet._rpc_zombie_snapshot(tick, rows)` (기존 RPC) | 2 unreliable_ordered | 형식 그대로. 그 클라이언트가 아는 좀비의 행만 |
+| S→C | `CombatNet._rpc_combat_events(events)` (기존 RPC) | 0 reliable | 형식 그대로. 순번은 서버 전체의 것이라 멀리 있는 클라이언트에게는 **구멍**이 보인다(뒤로 가지는 않는다) |
+| S→C | 접속 조각 `modules.WorldCellNet` = `{cell_size_m: float, bounds_min_m: [x, z], bounds_max_m: [x, z]}` **(새 조각)** | 0 reliable(`_rpc_join_accepted` 안) | 서버의 `WorldCellGrid.signature()`. 캐릭터가 없는 접속자에게도 간다 |
+| S→C | 접속 조각 `modules.InterestNet` = `{}` **(새 조각, 비어 있음)** | 같음 | 만드는 과정에서 그 접속자의 첫 관심 셀이 정해진다 |
+| S→C | 접속 조각 `modules.ZombieNet` (기존) | 같음 | `rows`는 관심 셀의 좀비만, `event_sequence`는 그 클라이언트 자신의 흐름이 시작하는 번호(새 접속자는 0) |
+
+새 전선 이벤트(`ZombieNetProtocol`, `ZombieService`는 만들지 않는다):
+
+| 이벤트 | 필드(`event_type`, `zombie_id`, `world_time` 공통) | 뜻 |
+|---|---|---|
+| `zombie_entered` | `position: [x, y, z]`, `yaw`, `state`(`ZombieState.STATE_NAMES`), `health_fraction`(0~1) | 그 좀비가 이 클라이언트의 관심 셀에 들어왔다. 스냅샷 행과 같은 내용이라 **있는 그대로**(상태·체력·시체 여부) 나타난다. docs/15 P3-015("로딩된 좀비가 잠깐 idle·체력 100%로 보인다")는 해소됐다 |
+| `zombie_left` | 없음 | 그 좀비가 관심 셀에서 나갔다. 좀비는 월드에 그대로 있다 |
+
+클라이언트 미러(`ClientZombieState`)는 `zombie_entered`를 "추가 또는 최신으로 교체"(이미 있으면 `zombie_added`를 다시 내지 않는다), `zombie_left`를 `zombie_removed`와 같이 처리한다. 표시 계층은 "생김/치워짐"(`zombie_spawned`/`zombie_removed`)과 "시야에 들어옴/나감"을 이벤트 종류로 구분할 수 있다.
+
+#### 좀비: 접속자별 흐름과 조정
+
+`ZombieNetModule`은 접속자마다 흐름 하나(`PeerStream`: 아는 좀비 집합, 자기 순번, 보낼 이벤트)를 둔다. 흐름은 그 접속자의 접속 조각을 만들 때 시작하고 나가면 없어진다.
+
+- **조정(reconcile)**: 스냅샷을 보내는 틱마다(기본 10Hz) 메모리의 모든 좀비를 각 접속자의 관심 셀과 대조한다. 알아야 하는데 모르는 좀비는 `zombie_entered`, 알고 있는데 관심 셀에 없는(또는 메모리에서 나간) 좀비는 `zombie_left`를 그 접속자의 흐름에 넣는다. 좀비가 관심 영역 경계를 걸어서 넘는 것, 접속자가 걷는 것, 월드 진입, 셀의 로딩·해제가 모두 이 한 번의 대조로 처리된다. 그래서 **나타나고 사라지는 시점은 최대 스냅샷 한 주기(0.1초) 늦을 수 있다**. 한 틱 안의 순서는 이벤트 수집 → 조정 → 이벤트 전송 → 스냅샷 전송이라, 나타난 좀비는 같은 틱의 스냅샷 행보다 먼저 미러에 있다.
+- 조정 사이에 난 이벤트는 "아는 접속자"에게만 가므로, 아직 `zombie_entered`를 받지 않은 접속자는 그 이벤트를 받지 않는다. 상태와 체력은 `zombie_entered`가 최신 값으로 전한다.
+- 유령·중복이 없다: 미러의 구성원은 reliable 이벤트(`zombie_spawned`/`zombie_entered`/`zombie_removed`/`zombie_left`)로만 바뀌고, 늦게 온 스냅샷은 없는 좀비를 만들지 않는다.
+- `server_events_drained`는 그대로 모든 도메인 이벤트를 낸다(누가 받았는지와 무관). 조정이 만든 두 이벤트는 들어 있지 않다.
+- 서버 공개 함수(다른 모듈용): `knows_zombie(peer_id, zombie_id) -> bool`, `ensure_known(peer_id, zombie_id) -> bool`(모르는 좀비면 `zombie_entered`를 그 자리에서 보낸 뒤 true. 좀비가 없거나 흐름이 없으면 false).
+- `build_join_fragment`는 접속당 한 번 불린다는 전제로 흐름을 시작한다. 이미 흐름이 있는 peer에 대해 부르면(도구·테스트) 흐름을 건드리지 않고 "지금 접속하면 받을 것"만 돌려준다.
+
+#### 좀비에 딸린 다른 것들(각 결정은 docs/15 §15.2)
+
+- **전투 이벤트**(`CombatNetModule._is_for`): 공격자 본인은 항상 받는다(자기 행동의 결과). 명중한 공격은 맞은 좀비를 아는 접속자에게, 빗나간 공격(좀비를 지목하지 않음)은 공격자가 서 있는 셀에 관심 있는 접속자에게 간다. 공격자가 맞힌 좀비를 모르는 경우(근접 사거리에서는 설정이 맞으면 일어나지 않는다)에는 먼저 `ensure_known`으로 알려 준다. 그래서 "모르는 좀비에 관한 이벤트"는 누구에게도 가지 않는다.
+- **좀비의 공격**(`zombie_attacked`): 맞은 플레이어는 그 좀비를 모르더라도 이벤트를 받는다(자기 감염 판정이 들어 있다). 이때도 먼저 `zombie_entered`로 알려 주고(`forced_known_count`), 그 좀비가 관심 셀 밖이면 다음 조정에서 `zombie_left`로 다시 빠진다. 본인의 상처·감염은 이와 별개로 `SurvivalNet`의 본인 이벤트·스냅샷으로 항상 간다.
+- **소음**: 소음은 클라이언트에 복제되지 않는다(P2-A1부터). 소음에 반응한 `zombie_detected`(감각 종류, 소음 위치)는 그 좀비를 아는 접속자에게만 간다.
+- **생존 공개 이벤트**(`player_wounded` 등): 플레이어에 관한 것이라 모든 접속자에게 간다(어느 좀비가 물었는지는 들어 있지 않다).
+
+#### 플레이어는 전역(임시, docs/15 P3-041)
+
+플레이어 행·위치 스냅샷·플레이어에 딸린 공개 사실(생존 공개 이벤트, 자세 행, 캐릭터 행, 거래 완료·치료 알림)은 이 티켓에서 범위를 두지 않았다. 위치 스냅샷과 접속·퇴장 알림은 동결된 `network_service.gd`가 보내고, 플레이어를 키로 쓰는 미러가 다섯 모듈에 있어(`SurvivalNet`, `PostureNet`, `CharacterNet`, `TradeNet`, `InventoryNet`의 알림) 범위를 두려면 "플레이어가 시야에 들어옴/나감"을 그 전부에 넣어야 한다. 별도 티켓으로 둔다.
+
+#### 클라이언트를 믿지 않는다
+
+줍기 판정은 그대로 서버의 사거리 검사뿐이다: 관심 셀 밖의 아이템 ID를 보내도 서버 위치에서 사거리 안이면 줍고, 아니면 거부한다. 달라진 것은 **거부 사유를 알려 주는 방식**이다(`NetworkService._public_pickup_reason`, ADR-009):
+
+| 서버 내부 사유 | 요청자에게 가는 사유 |
+|---|---|
+| `unknown_item`(없는 ID) | `item_not_in_world` |
+| `item_not_in_world`(누가 들고 있음) | `item_not_in_world` |
+| `too_far`·`inventory_full`, 그 아이템의 셀이 요청자의 관심 셀이 **아님** | `item_not_in_world` |
+| `too_far`·`inventory_full`, 관심 셀임(미러에 있는 아이템) | 그대로 |
+| 요청자 자신에 관한 사유(`player_dead`, `player_resting`, `not_online`), 형식·빈도 사유 | 그대로 |
+
+즉 자기가 받지 않은 아이템에 대해서는 "없는 ID", "남이 들고 있는 것", "먼 곳에 놓인 것"을 구별할 수 없다. 거부 카운터(`rejected_intent_count`)와 로그에는 서버 내부 사유가 남는다. 내려놓기·소비·거래의 사유 가리기(`InventoryNetModule.public_reason` 등)는 그대로다.
+
+#### P3-030 정리(이름으로 부르던 RPC)
+
+`WorldCellNetModule`은 더 이상 다른 노드의 RPC를 메서드 이름으로 부르지 않는다. `InventoryNetModule`에 서버 공개 함수 둘이 생겼다: `send_world_items_added(peer_id, entries) -> int`, `send_world_items_removed(peer_id, item_instance_ids) -> int`(보낸 개수. 형식이 맞지 않는 항목은 오류 로그 후 뺀다. 메시지 분할 포함). `NetworkService._rpc_world_item_removed`는 줍기 전용으로 남았고 `WorldCellNetModule`은 쓰지 않는다. `WorldCellNetModule`은 `cell_interest`의 `cell_gained`/`cell_lost`만 듣는다(§15.1의 `cell_loaded`/`cell_unloading`을 직접 듣지 않는다). 생성자 인자(`InventoryNetSettings`)는 없어졌다.
+
+#### 클라이언트 맵(`scripts/presentation/`, `scenes/main/client_view.tscn`)
+
+- **맵 배치는 서버에서 온다**: `ClientWorldMap`(`scripts/services/multiplayer/client_world_map.gd`, `WorldCellNetModule.client_map`)이 접속 조각을 검증해(유한값, 크기 > 0, 최대 > 최소, 한 축의 셀 수 ≤ 100000, 키 정확히 셋) 보관하고, 같은 값으로 `WorldCellGrid`를 만들어 서버와 **같은 셀 계산**을 쓴다(`cell_id_at`). 클라이언트는 자기 `world_cell_settings.tres`를 읽지 않는다(테스트: 서버가 25m·20m 셀의 다른 맵을 돌려도 클라이언트가 그 맵을 그린다). 검증에 실패하면 맵은 "모름" 상태이고 아무것도 그리지 않는다.
+- **순수 계산** `WorldMapPresentation`: `ground(bounds_min, bounds_max)`(중심과 크기), `edge_boxes(...)`(가장자리 벽 넷: 안쪽 면이 맵 경계, 맵 **바깥**에 선다), `overlay_cells`, `cell_border_segments(...)`(플레이어 셀 주변 셀들의 경계선, 한 번씩, 맵 경계에서 자름), `cell_labels(...)`(셀마다 ID와 위치). HUD 문구는 `ClientPresentationFormatter.build_map_lines(cell_id, position, overlay_visible, settings)`.
+- **노드** `WorldMapVisuals`(`%WorldMap` 아래): `Ground`(PlaneMesh, 맵 크기), `Edges`(벽 넷), `CellOverlay`(`Borders`: 선 메시, `Labels`: 셀 ID 라벨). 배치가 바뀔 때만 다시 만든다. 오버레이는 켜져 있을 때 플레이어가 셀을 옮기면 다시 만든다.
+- **HUD**: 오른쪽 아래 `MapLabel`에 "셀 cell_0_0 | 위치 x 12, z -3 | 셀 경계 [F3] 꺼짐". 현재 셀은 미러의 본인 위치와 서버의 배치로 계산한다(`ClientView.current_cell_id()`). 맵을 모르거나 월드에 없으면 숨는다.
+- **디버그 키**: `ClientPresentationSettings.cell_overlay_key`(기본 F3, 액션 `toggle_cell_overlay`)가 셀 경계 오버레이를 켜고 끈다(로컬 전용, 아무것도 보내지 않는다). `cell_overlay_radius_cells`(3), `cell_overlay_initially_visible`(false). 키 겹침 검사(`assigned_keys`, `keys_shared_with`)에 포함된다: 이 Resource의 키는 열일곱 개가 됐다.
+- **미러를 따라가는 표시**: 바닥 아이템 표시(`WorldItemMarkers`)와 좀비 캡슐은 기존대로 미러의 변화(`changed`, `zombie_added`/`zombie_removed`)를 따른다. 범위 밖으로 나간 것은 미러에서 빠지므로 표시도 없어진다. 이벤트 로그는 `zombie_entered`/`zombie_left`를 적지 않는다.
+- 새 설정(모두 `ClientPresentationSettings`, 임시): `map_ground_color`, `map_edge_color`, `map_edge_height_m`(3), `map_edge_thickness_m`(0.5), `cell_overlay_key`, `cell_overlay_initially_visible`, `cell_overlay_radius_cells`, `cell_overlay_color`, `cell_overlay_height_m`(0.05), `cell_overlay_label_height_m`(2.5), `cell_overlay_label_pixel_size`, `cell_overlay_label_font_size`. 화면 설명은 docs/11 §2.15.
+
+#### 테스트
+
+`tests/unit/cell_interest_test.gd`(반경·맵 가장자리·음수 좌표, 시그널 순서, 히스테리시스(걸음 수로), 캐릭터 없는 접속자, 여러 접속자, 메모리에 없는 셀, 설정 검증과 조립 검증), `zombie_scope_events_test.gd`(두 전선 이벤트의 형식·검증과 미러 처리), `world_map_presentation_test.gd`(서버 배치의 수용·거부, 바닥·벽·경계선·라벨 계산, HUD 문구, 키), `tests/integration/interest_net_test.gd`(실제 ENet, 500m 맵에 멀리 떨어진 클라이언트 셋: 아이템이 가까운 접속자에게만 있고 걸어 들어오면 생기고 나가면 없어짐 / 늦은 접속자의 접속 데이터 / 일부·전체 내려놓기와 합쳐진 줍기 / 사망 시 내려놓기 / 좀비 이벤트·스냅샷 / 관심 경계를 넘는 좀비가 한 번 나타나고 한 번 사라짐 / 관심 셀 밖 아이템에 대한 조작된 줍기 / 함께 선 두 클라이언트의 일치 / 전투 이벤트 수신자 / `ensure_known` 뒤 조정 / 캐릭터 없는 접속자 / 서버에서 온 맵 배치), `interest_view_test.gd`(실제 클라이언트 세션: 서버 맵 크기의 바닥과 벽, HUD 셀, 걸을 때 표시가 미러를 따라감, 실제 입력 액션으로 오버레이), `interest_measure_test.gd`(측정값 출력, docs/15 §15.2). 고친 기존 테스트는 docs/15 §15.2에 적었다.
+
+#### 다음 티켓(P3-3 보관함, P3-4 구조물)이 알아야 할 것
+
+**구조물은 아직 범위 밖이다(임시, docs/15 P3-056)**: 이 절과 따로 병합된 `StructureNetModule`(§15.4)은 관심 셀을 쓰지 않는다. 셀 서비스의 `cell_loaded`/`cell_unloading`을 직접 듣고 `joined_peers()` 전원에게 보내며, 접속 조각에는 메모리의 모든 구조물이 들어 있다. 이 티켓의 변경(접속 스냅샷에서 모듈 조각을 먼저 만드는 순서, 관심 모듈이 첫 번째)과는 서로 영향을 주지 않는다: 그 모듈은 `cell_interest`와 월드 아이템 목록을 읽지 않는다. P3-5가 병합된 뒤 아래 순서대로 범위를 둔다.
+
+셀에 사는 엔티티를 복제하는 모듈은 다음 넷만 하면 된다.
+
+1. 접속 조각(`build_join_fragment(player_id)`)에는 `network.is_cell_of_interest(network.peer_of_player(player_id), cell_id)`인 것만 넣는다(이 시점에 그 접속자의 첫 셀은 이미 정해져 있다: 관심 모듈이 먼저 등록돼 있어야 한다).
+2. `on_server_started`에서 `network.cell_interest`(null일 수 있다)의 `cell_gained(peer_id, cell_id)`에 그 셀의 엔티티 전부를 보내는 처리를, `cell_lost`에 전부 빼는 처리를 건다. 셀의 엔티티는 `ServerWorld.cell_index.entities_in_cell(cell_id, kind)`로 얻는다. `_exit_tree`에서 끊는다.
+3. 엔티티가 생기거나 바뀌거나 없어질 때는 `network.peers_interested_in(cell_id)`에게만 보낸다(`can_send_to` 확인은 그대로).
+4. 엔티티가 셀을 옮겨 다니면(좀비처럼) 2 대신 주기적으로 대조하는 방식을 쓴다(`ZombieNetModule._reconcile`).
+
+요청자에게 주는 결과에는 관심 셀 밖 엔티티의 존재가 드러나지 않게 한다(줍기의 사유 가리기와 같은 규칙).
 
 ### 15.4 격자 구조물: 바닥·벽·문(P3-4a, docs/00 ADR-024, system id `building`, 모듈 `StructureNet`)
 

@@ -15,10 +15,13 @@ extends RefCounted
 ##     position in the server's event stream)
 ##
 ## Sources and ordering:
-##   - Membership (which zombies exist) only changes through the reliable
-##     channel: the join snapshot and zombie_spawned / zombie_removed events.
-##     Snapshots never add a zombie, so a late snapshot cannot resurrect a
-##     removed one.
+##   - Membership (which zombies are mirrored) only changes through the
+##     reliable channel: the join snapshot, zombie_spawned / zombie_removed
+##     events and (P3-2) zombie_entered / zombie_left events, which bring a
+##     zombie into and out of the cells this client is told about. The
+##     mirror holds only the zombies of those cells, not every zombie of the
+##     world. Snapshots never add a zombie, so a late snapshot cannot
+##     resurrect a removed one.
 ##   - position / yaw / health_fraction follow the newest position snapshot
 ##     (older ticks are dropped). zombie_died also sets health_fraction 0.
 ##   - state follows zombie_state_changed / zombie_died events at once and
@@ -26,7 +29,10 @@ extends RefCounted
 ##     a zombie may move it but cannot change its state or health back
 ##     (channels 0 and 2 are not ordered against each other).
 ##   - Events carry a sequence number; events at or below the sequence of
-##     the join snapshot are already part of it and are skipped.
+##     the join snapshot are already part of it and are skipped. The numbers
+##     count the events sent to THIS client (P3-2: every client has its own
+##     stream, holding only the events of the zombies it is told about), so
+##     they have no holes: a hole is counted in `event_gap_count`.
 ##
 ## Every payload is validated (ZombieNetProtocol); malformed input is
 ## counted, logged and leaves the mirror untouched. No interpolation or
@@ -271,7 +277,27 @@ func _apply_event(event: Dictionary, tick: int) -> bool:
 			return _set_fields(zombie_id, tick, {"state": str(event["to"])})
 		ZombieService.EVENT_DIED:
 			return _set_fields(zombie_id, tick, {"state": STATE_DEAD, "health_fraction": 0.0})
-		ZombieService.EVENT_REMOVED:
+		ZombieNetProtocol.EVENT_ENTERED:
+			# P3-2: the zombie came into the cells this client is told about.
+			# It arrives as what it is (state and health), not as a fresh one.
+			var is_known: bool = zombies.has(zombie_id)
+			if not is_known and zombies.size() >= _settings.max_mirrored_zombies:
+				_reject("zombie not mirrored", REASON_MIRROR_FULL, "apply_events", {"entity_id": zombie_id})
+				return false
+			var place: Array = event["position"]
+			zombies[zombie_id] = {
+				"position": Vector3(place[0], place[1], place[2]),
+				"yaw": float(event["yaw"]),
+				"state": str(event["state"]),
+				"health_fraction": float(event["health_fraction"]),
+			}
+			_event_ticks[zombie_id] = tick
+			if not is_known:
+				zombie_added.emit(zombie_id)
+			return true
+		ZombieService.EVENT_REMOVED, ZombieNetProtocol.EVENT_LEFT:
+			# Cleared away on the server, or (P3-2) out of this client's cells:
+			# either way it is no longer mirrored.
 			_event_ticks.erase(zombie_id)
 			if not zombies.erase(zombie_id):
 				return false

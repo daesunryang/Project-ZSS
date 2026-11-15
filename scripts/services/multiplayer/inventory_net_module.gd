@@ -15,6 +15,7 @@ extends NetModule
 ##   server -> owner   _rpc_use_on_result(request_id:int, ok:bool, reason:String)        reliable, ch0
 ##   server -> clients _rpc_treatment_notice(notice:Dictionary)                          reliable, ch0
 ##   server -> clients _rpc_world_items_added(items:Array[Dictionary])                   reliable, ch0
+##   server -> clients _rpc_world_items_removed(item_instance_ids:Array[String])         reliable, ch0
 ##   server -> owner   _rpc_inventory_items_removed(item_instance_ids:Array[String])     reliable, ch0
 ##   server -> owner   _rpc_inventory_item_changed(item:Dictionary /* ItemInstance */)   reliable, ch0
 ##
@@ -87,10 +88,19 @@ extends NetModule
 ## sends itself (same channel). It covers every caller: this module's drop
 ## intent and server rules that call ServerWorld.drop_all_player_items /
 ## remove_player_item or the InventoryService directly. An item that enters
-## the world goes to every joined peer (definition, quantity, position); an
-## item that leaves an inventory or changes its quantity goes to the owner
-## only. Nobody is sent another player's inventory. Late joiners get world
-## items and their own inventory in the join snapshot (NetworkService).
+## the world goes to the joined peers that are told about the cell it lies in
+## (P3-2, NetworkService.peers_interested_in; definition, quantity,
+## position); an item that leaves an inventory or changes its quantity goes
+## to the owner only. Nobody is sent another player's inventory. Late joiners
+## get the world items of their cells and their own inventory in the join
+## snapshot (NetworkService).
+##
+## Scope by cell (P3-2, docs/09 §15.2): when a peer gains or loses a cell,
+## WorldCellNetModule sends that cell's world items through
+## send_world_items_added() / send_world_items_removed(), the two public
+## server functions of this module. A removal by cell is one message for many
+## items (_rpc_world_items_removed); the removal of a single picked-up item
+## is still NetworkService's _rpc_world_item_removed.
 ## A pickup is replicated by NetworkService itself (the picked-up item, the
 ## result, the item leaving the world); this module adds the carried stacks
 ## that grew because the picked-up units merged into them (P2-T15), sent to
@@ -116,6 +126,9 @@ signal use_on_result(request_id: int, ok: bool, reason: String)
 signal treatment_seen(notice: Dictionary)
 ## Client: these items now lie in the world (already in the mirror).
 signal world_items_added(item_instance_ids: PackedStringArray)
+## Client: these items left the mirror because this client is no longer told
+## about the cell they lie in (P3-2). They still lie in the world.
+signal world_items_removed(item_instance_ids: PackedStringArray)
 ## Client: these items left the local inventory (already out of the mirror).
 signal inventory_items_removed(item_instance_ids: PackedStringArray)
 ## Client: an item of the local inventory was added or changed (quantity).
@@ -154,6 +167,11 @@ var rejected_payload_count: int = 0
 ## Client: owner-only messages (inventory items removed / changed) received
 ## from the server. A client only ever gets those about its own inventory.
 var owner_message_count: int = 0
+## Client (diagnostics, P3-2): world item messages received from the server
+## and the world items they announced as added / as removed by cell.
+var world_item_message_count: int = 0
+var received_world_item_add_count: int = 0
+var received_world_item_remove_count: int = 0
 
 var _settings: InventoryNetSettings
 # --- server state ---
@@ -500,7 +518,8 @@ func _on_inventory_transaction(event: Dictionary) -> void:
 
 
 ## Items left an inventory and now lie in the world: the owner is told what
-## left the inventory, every joined peer what appeared in the world.
+## left the inventory, the peers that are told about that cell (P3-2) what
+## appeared in the world.
 func _replicate_dropped(event: Dictionary) -> void:
 	var removed_ids: Array = []
 	var world_entries: Array = []
@@ -521,7 +540,7 @@ func _replicate_dropped(event: Dictionary) -> void:
 	if owner_peer != 0:
 		for message: Array in _split(removed_ids):
 			_rpc_inventory_items_removed.rpc_id(owner_peer, message)
-	var peers: PackedInt32Array = network.joined_peers()
+	var peers: PackedInt32Array = network.peers_interested_in(str(event.get("cell_id", "")))
 	for message: Array in _split(world_entries):
 		for peer_id: int in peers:
 			if network.can_send_to(peer_id):
@@ -529,7 +548,8 @@ func _replicate_dropped(event: Dictionary) -> void:
 
 
 ## A part of a stack was put down (P2-T15): the owner is told its smaller
-## stack, every joined peer the new item that lies in the world.
+## stack, the peers that are told about that cell (P3-2) the new item that
+## lies in the world.
 func _replicate_units_dropped(event: Dictionary) -> void:
 	var inventory_id: String = str(event.get("inventory_id", ""))
 	var owner_peer: int = _owner_peer(inventory_id)
@@ -545,7 +565,7 @@ func _replicate_units_dropped(event: Dictionary) -> void:
 	if not ClientWorldState.is_valid_world_item(entry):
 		GameLogger.error("net", "world item not replicated", {"entity_id": lying_id, "module": MODULE_NAME, "operation": "replicate_units_dropped"})
 		return
-	for peer_id: int in network.joined_peers():
+	for peer_id: int in network.peers_interested_in(str(event.get("cell_id", ""))):
 		if network.can_send_to(peer_id):
 			_rpc_world_items_added.rpc_id(peer_id, [entry])
 
@@ -642,6 +662,42 @@ func _replicate_exchanged(event: Dictionary) -> void:
 				GameLogger.error("net", "exchanged item not replicated", {"entity_id": str(raw_id), "module": MODULE_NAME, "operation": "replicate_exchanged"})
 				continue
 			_send_inventory_item(owner_peer, item)
+
+
+## Server (P3-2): tells one peer that these world items lie in the world
+## (`entries`: InventoryService.describe_world_item() dictionaries). For the
+## module that scopes world items by cell. Entries that do not fit the wire
+## format are logged and left out. Returns how many items were sent.
+func send_world_items_added(peer_id: int, entries: Array) -> int:
+	if network == null or not network.is_server() or not network.can_send_to(peer_id):
+		return 0
+	var valid: Array = []
+	for entry: Variant in entries:
+		# The server holds its own output to the rule its clients apply.
+		if not ClientWorldState.is_valid_world_item(entry):
+			GameLogger.error("net", "world item not replicated", {"peer_id": peer_id, "module": MODULE_NAME, "operation": "send_world_items_added"})
+			continue
+		valid.append(entry)
+	for message: Array in _split(valid):
+		_rpc_world_items_added.rpc_id(peer_id, message)
+	return valid.size()
+
+
+## Server (P3-2): takes these world items out of one peer's mirror because it
+## is no longer told about their cell. The items still lie in the world. For
+## the module that scopes world items by cell. Returns how many ids were sent.
+func send_world_items_removed(peer_id: int, item_instance_ids: Array) -> int:
+	if network == null or not network.is_server() or not network.can_send_to(peer_id):
+		return 0
+	var valid: Array = []
+	for item_instance_id: Variant in item_instance_ids:
+		if not _is_valid_item_id(item_instance_id):
+			GameLogger.error("net", "world item removal not replicated", {"peer_id": peer_id, "module": MODULE_NAME, "operation": "send_world_items_removed"})
+			continue
+		valid.append(str(item_instance_id))
+	for message: Array in _split(valid):
+		_rpc_world_items_removed.rpc_id(peer_id, message)
+	return valid.size()
 
 
 ## Sends one carried item (added or changed) to the peer that owns it.
@@ -834,6 +890,7 @@ func _rpc_treatment_notice(notice: Variant) -> void:
 func _rpc_world_items_added(payload: Variant) -> void:
 	if network == null or not network.is_from_server():
 		return
+	world_item_message_count += 1
 	if typeof(payload) != TYPE_ARRAY or (payload as Array).size() > MAX_ITEMS_PER_MESSAGE:
 		_reject_payload("bad_world_items")
 		return
@@ -843,8 +900,32 @@ func _rpc_world_items_added(payload: Variant) -> void:
 			_reject_payload("bad_world_item")
 			continue
 		added.append(str((entry as Dictionary)[ClientWorldState.KEY_ITEM_ID]))
+	received_world_item_add_count += added.size()
 	if not added.is_empty():
 		world_items_added.emit(added)
+
+
+## P3-2: the world items of a cell this client is no longer told about. An id
+## the mirror does not hold is skipped without complaint (the item may have
+## been picked up a moment before).
+@rpc("authority", "call_remote", "reliable", 0)
+func _rpc_world_items_removed(payload: Variant) -> void:
+	if network == null or not network.is_from_server():
+		return
+	world_item_message_count += 1
+	if typeof(payload) != TYPE_ARRAY or (payload as Array).size() > MAX_ITEMS_PER_MESSAGE:
+		_reject_payload("bad_removed_world_items")
+		return
+	var ids: PackedStringArray = []
+	for entry: Variant in payload as Array:
+		if not _is_valid_item_id(entry):
+			_reject_payload("bad_removed_world_item")
+			continue
+		ids.append(str(entry))
+	received_world_item_remove_count += ids.size()
+	var removed: PackedStringArray = network.client_state.apply_world_items_removed(ids)
+	if not removed.is_empty():
+		world_items_removed.emit(removed)
 
 
 @rpc("authority", "call_remote", "reliable", 0)

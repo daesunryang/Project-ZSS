@@ -82,7 +82,19 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    structures, _rpc_structures_removed). The join snapshot has a
 ##    "StructureNet" fragment with every structure the server has in memory.
 ##    No existing RPC or message format changed.
-const PROTOCOL_VERSION: int = 12
+## 13: P3-2 (replication scope by world cell, docs/09 §15.2). A client is told
+##    only about the world items and zombies of the cells around its player.
+##    New: InventoryNet._rpc_world_items_removed(item_instance_ids) (the
+##    items of a cell the client is no longer told about, one message for
+##    many); the zombie wire events "zombie_entered" and "zombie_left"; the
+##    join fragments "WorldCellNet" (the map layout: cell size and bounds)
+##    and "InterestNet" (empty). Changed meaning: the join snapshot's
+##    "world_items" and the ZombieNet join fragment hold the joining peer's
+##    cells only; zombie event sequence numbers count per client (the
+##    ZombieNet join fragment starts each client at 0); combat event
+##    sequences may have holes; a refused pickup reports an unknown id as
+##    "item_not_in_world". No existing RPC signature changed.
+const PROTOCOL_VERSION: int = 13
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

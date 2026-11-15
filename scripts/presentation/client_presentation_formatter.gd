@@ -365,6 +365,22 @@ static func nothing_to_pick_up_text() -> String:
 	return "가까이에 주울 것이 없습니다"
 
 
+## HUD line about where the local player is on the map (P3-2): the id of the
+## world cell it stands in (worked out from the layout the server sent), its
+## position and what the cell overlay key does now. No line while the cell
+## is not known (`cell_id` "": not joined, no layout, no character yet).
+static func build_map_lines(cell_id: String, position: Vector3, overlay_visible: bool, settings: ClientPresentationSettings) -> PackedStringArray:
+	if cell_id.is_empty():
+		return PackedStringArray()
+	return PackedStringArray(["셀 %s | 위치 x %d, z %d | 셀 경계 [%s] %s" % [
+		cell_id,
+		floori(position.x),
+		floori(position.z),
+		key_label(settings.cell_overlay_key),
+		"켜짐" if overlay_visible else "꺼짐",
+	]])
+
+
 static func format_combat_event(event: Dictionary) -> String:
 	if str(event.get(ClientCombatState.KEY_EVENT_TYPE, "")) != ClientCombatState.EVENT_MELEE_ATTACK:
 		return ""

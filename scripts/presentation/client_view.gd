@@ -7,6 +7,8 @@ extends Node3D
 @onready var _players_root: Node3D = %Players
 @onready var _zombies_root: Node3D = %Zombies
 @onready var _world_items_root: Node3D = %WorldItems
+@onready var _world_map_root: Node3D = %WorldMap
+@onready var _map_label: Label = %MapLabel
 @onready var _survival_label: Label = %SurvivalLabel
 @onready var _event_log_label: Label = %EventLogLabel
 @onready var _attack_result_label: Label = %AttackResultLabel
@@ -87,6 +89,14 @@ var _character_state: ClientCharacterState = null
 ## Appearance definitions the placeholder look is computed from (the
 ## module's when connected, so the client and the mirror agree).
 var _appearance_catalog: AppearanceCatalog = AppearanceCatalog.new()
+## The map layout the server sent with the join (P3-2) and the placeholder
+## map built from it: ground, edges and the cell overlay.
+var _map: ClientWorldMap = null
+var _world_map: WorldMapVisuals = null
+## The cell the local player is in, as last shown in the HUD ("" = not
+## known) and what that HUD line was built from.
+var _current_cell_id: String = ""
+var _map_hud_key: String = ""
 
 
 func _ready() -> void:
@@ -116,6 +126,7 @@ func _ready() -> void:
 	_trade_policy = AttackIntentPolicy.new(_presentation.trade_min_interval_sec)
 	_item_catalog = ItemCatalog.load_directory()
 	_world_item_markers = WorldItemMarkers.new(_world_items_root, _item_catalog, _presentation)
+	_world_map = WorldMapVisuals.new(_world_map_root, _presentation)
 	var shared_keys: PackedStringArray = _presentation.keys_shared_with(_settings)
 	if not shared_keys.is_empty():
 		GameLogger.error("presentation", "client keys are also movement or pickup keys", {"settings": ", ".join(shared_keys), "operation": "client_view_ready"})
@@ -162,9 +173,13 @@ func _physics_process(_delta: float) -> void:
 	_update_camera()
 	_update_treat_target()
 	_update_pickup_candidate()
+	_update_map_hud()
 	# No game input while the character creation screen is open (P2-T9).
 	if not is_game_input_enabled():
 		return
+	# P3-2: the cell overlay, a testing aid (local only).
+	if Input.is_action_just_pressed(ClientInputActions.CELL_OVERLAY):
+		set_cell_overlay_visible(not is_cell_overlay_visible())
 	# P2-T15: the inventory cursor (local only) and putting the selected
 	# stack down.
 	if Input.is_action_just_pressed(ClientInputActions.SELECT_PREVIOUS):
@@ -285,6 +300,12 @@ func _bind_network() -> void:
 			_character_state.changed.connect(_on_character_state_changed)
 		if not _character_module.create_result.is_connected(_on_create_result):
 			_character_module.create_result.connect(_on_create_result)
+	var cell_module: WorldCellNetModule = _network.get_module(WorldCellNetModule.MODULE_NAME) as WorldCellNetModule
+	if cell_module != null:
+		_map = cell_module.client_map
+		if not _map.changed.is_connected(_on_map_changed):
+			_map.changed.connect(_on_map_changed)
+	_on_map_changed()
 	_sync_creation_screen()
 	_sync_player_visuals()
 	_sync_zombie_visuals()
@@ -319,6 +340,52 @@ func _on_survival_state_changed() -> void:
 	_sync_player_visuals()
 	_refresh_survival_hud()
 	_refresh_trade_hud()
+
+
+# ------------------------------------------------------------ map (P3-2)
+
+## The server's map layout arrived (or was withdrawn): the ground and the
+## edges are rebuilt from it. Nothing here comes from the client's own
+## world settings.
+func _on_map_changed() -> void:
+	_world_map.sync(_map)
+	_map_hud_key = ""
+	_update_map_hud()
+
+
+## Id of the world cell the local player is in, by the server's layout and
+## the mirrored position ("" while either is unknown).
+func current_cell_id() -> String:
+	return _current_cell_id
+
+
+func is_cell_overlay_visible() -> bool:
+	return _world_map != null and _world_map.is_overlay_visible()
+
+
+## Shows or hides the cell borders around the local player (the debug key).
+## Local only: nothing is sent.
+func set_cell_overlay_visible(visible: bool) -> void:
+	_world_map.set_overlay_visible(visible)
+	_map_hud_key = ""
+	_update_map_hud()
+
+
+## Keeps the HUD's map line and the cell overlay current: the cell changes
+## when the local player moves, without any signal of its own.
+func _update_map_hud() -> void:
+	var in_world: bool = _map != null and _map.is_known() and _state != null and not _state.local_player_id.is_empty() and _state.players.has(_state.local_player_id)
+	var position: Vector3 = _state.position_of(_state.local_player_id) if in_world else Vector3.ZERO
+	_current_cell_id = _map.cell_id_at(position) if in_world else ""
+	if in_world:
+		_world_map.update_overlay(_map, position)
+	var lines: PackedStringArray = ClientPresentationFormatter.build_map_lines(_current_cell_id, position, is_cell_overlay_visible(), _presentation)
+	var key: String = "\n".join(lines)
+	if key == _map_hud_key and _map_label.visible == not lines.is_empty():
+		return
+	_map_hud_key = key
+	_map_label.text = key
+	_map_label.visible = not lines.is_empty()
 
 
 func _on_zombie_state_changed() -> void:

@@ -19,16 +19,27 @@ extends RefCounted
 ##
 ## A domain field that is not listed here is never sent, so new server-side
 ## fields stay private until someone adds them on purpose.
+##
+## Scope events (P3-2, docs/09 §15.2). Two event types exist only on the
+## wire; ZombieService never produces them:
+##   zombie_entered  the zombie came into the cells this client is told
+##                   about (it walked in, the client walked near, or its cell
+##                   came into the server's memory). Carries what a snapshot
+##                   row carries, so it shows at once as what it is.
+##   zombie_left     the zombie left those cells. It still exists.
+## A client can so tell "appeared / left my view" from zombie_spawned /
+## zombie_removed, which say that a zombie was made or cleared away.
 
 ## Value kinds of event fields.
-##   ID      non-empty String, at most MAX_ID_LENGTH
-##   TEXT    String (may be empty), at most MAX_TEXT_LENGTH
-##   NUMBER  finite float
-##   ANGLE   finite float, |value| <= MAX_ABS_YAW
-##   FLAG    bool
-##   STATE   one of ZombieState.STATE_NAMES
-##   POINT   [x, y, z] array of finite floats
-enum Kind { ID, TEXT, NUMBER, ANGLE, FLAG, STATE, POINT }
+##   ID        non-empty String, at most MAX_ID_LENGTH
+##   TEXT      String (may be empty), at most MAX_TEXT_LENGTH
+##   NUMBER    finite float
+##   ANGLE     finite float, |value| <= MAX_ABS_YAW
+##   FLAG      bool
+##   STATE     one of ZombieState.STATE_NAMES
+##   POINT     [x, y, z] array of finite floats
+##   FRACTION  finite float within 0..1
+enum Kind { ID, TEXT, NUMBER, ANGLE, FLAG, STATE, POINT, FRACTION }
 
 const MAX_ID_LENGTH: int = 64
 const MAX_TEXT_LENGTH: int = 64
@@ -64,6 +75,10 @@ const REASON_BAD_EVENT_TYPE: String = "bad_event_type"
 const REASON_BAD_EVENT_FIELD: String = "bad_event_field"
 const REASON_UNKNOWN_EVENT_FIELD: String = "unknown_event_field"
 
+## Wire-only event types (see "Scope events" in the header).
+const EVENT_ENTERED: String = "zombie_entered"
+const EVENT_LEFT: String = "zombie_left"
+
 ## Fields every event carries.
 const COMMON_FIELDS: Dictionary = {
 	KEY_EVENT_TYPE: Kind.TEXT,
@@ -82,6 +97,8 @@ const EVENT_FIELDS: Dictionary = {
 	ZombieService.EVENT_DAMAGED: {"source_id": Kind.TEXT, "damage": Kind.NUMBER, "health_after": Kind.NUMBER, "died": Kind.FLAG},
 	ZombieService.EVENT_DIED: {"source_id": Kind.TEXT},
 	ZombieService.EVENT_REMOVED: {},
+	EVENT_ENTERED: {"position": Kind.POINT, "yaw": Kind.ANGLE, "state": Kind.STATE, "health_fraction": Kind.FRACTION},
+	EVENT_LEFT: {},
 }
 ## event_type -> {field: Kind}; optional, owner-only fields.
 ## zombie_attacked: the infection result and the target's exact health are
@@ -186,6 +203,30 @@ static func event_error(event: Variant) -> String:
 	return ""
 
 
+## Server: the wire event that brings a zombie into a client's view, from
+## one ZombieService.snapshot_rows() entry, or {} when the entry does not
+## fit the format.
+static func entered_event(row: Dictionary, world_time: float) -> Dictionary:
+	var position: Variant = row.get("position", null)
+	if typeof(position) != TYPE_VECTOR3:
+		return {}
+	var point: Vector3 = position
+	return encode_event({
+		KEY_EVENT_TYPE: EVENT_ENTERED,
+		KEY_ZOMBIE_ID: row.get("id", null),
+		KEY_WORLD_TIME: world_time,
+		"position": [point.x, point.y, point.z],
+		"yaw": row.get("yaw", null),
+		"state": row.get("state", null),
+		"health_fraction": row.get("health_fraction", null),
+	})
+
+
+## Server: the wire event that takes a zombie out of a client's view.
+static func left_event(zombie_id: String, world_time: float) -> Dictionary:
+	return encode_event({KEY_EVENT_TYPE: EVENT_LEFT, KEY_ZOMBIE_ID: zombie_id, KEY_WORLD_TIME: world_time})
+
+
 ## Player id that may receive the private fields of this wire event, or ""
 ## when it has none.
 static func private_owner(event: Dictionary) -> String:
@@ -226,7 +267,7 @@ static func _copy_fields(source: Dictionary, target: Dictionary, fields: Diction
 static func _encode(kind: Kind, value: Variant) -> Variant:
 	var encoded: Variant = value
 	match kind:
-		Kind.NUMBER, Kind.ANGLE:
+		Kind.NUMBER, Kind.ANGLE, Kind.FRACTION:
 			if typeof(value) == TYPE_INT:
 				encoded = float(value)
 		Kind.POINT:
@@ -253,6 +294,8 @@ static func _is_valid(kind: Kind, value: Variant) -> bool:
 			return typeof(value) == TYPE_BOOL
 		Kind.STATE:
 			return typeof(value) == TYPE_STRING and ZombieState.STATE_NAMES.has(value as String)
+		Kind.FRACTION:
+			return typeof(value) == TYPE_FLOAT and is_finite(float(value)) and float(value) >= 0.0 and float(value) <= 1.0
 		Kind.POINT:
 			if typeof(value) != TYPE_ARRAY or (value as Array).size() != 3:
 				return false

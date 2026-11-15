@@ -1,108 +1,108 @@
 class_name WorldCellNetModule
 extends NetModule
-## Keeps the clients' picture of world items in step with the cells the
-## server has in memory (P3-1, docs/09 §15.1). Server side only; this module
-## has NO RPC of its own and so changes nothing in the protocol.
+## World cells as the clients see them (P3-1, P3-2; docs/09 §15.1, §15.2).
+## This module has NO RPC of its own.
 ##
-## The server announces to every joined peer:
-##   - a cell came into memory (WorldCellService.cell_loaded): its world
-##     items, with the message that announces a dropped item
-##     (InventoryNetModule._rpc_world_items_added);
-##   - a cell is about to leave memory (cell_unloading): each of its world
-##     items, with the message that announces a picked-up item
-##     (NetworkService._rpc_world_item_removed).
-## So a client never keeps showing an item the server has released, and
-## gets the items of a cell that is loaded while it is connected. Zombies
-## are announced the same way by ZombieNetModule. A peer that joins later
-## gets what is in memory at that moment in its join snapshot.
+## 1. The map layout. The join fragment of this module is the server's cell
+##    size and map rectangle (ClientWorldMap describes the format); the
+##    client keeps it in `client_map`. Presentation draws the ground, the map
+##    edges and the cell borders from it, never from its own settings files.
 ##
-## Both messages belong to other nodes and are sent by name: those files are
-## frozen (network_service.gd, docs/09 §14.5) or owned by another ticket
-## (inventory_net_module.gd). on_server_started checks that they exist.
+## 2. World items by cell (server). Every joined peer is told about the world
+##    items of the cells it is interested in (NetworkService.cell_interest,
+##    InterestNetModule), and only those:
+##      - peer P gained cell C (it walked near, entered the world, or the
+##        cell came into the server's memory): the items lying in C are sent
+##        to P (InventoryNetModule.send_world_items_added);
+##      - peer P lost cell C (it walked away, or the cell is about to leave
+##        the server's memory): the items lying in C are taken out of P's
+##        mirror (InventoryNetModule.send_world_items_removed).
+##    The items a peer sees at join are in the join snapshot (NetworkService)
+##    and items that are put down or picked up while a peer is told about
+##    their cell are announced by InventoryNetModule / NetworkService to the
+##    peers interested in that cell. Zombies are scoped by ZombieNetModule.
 ##
-## No interest management yet: every joined peer is told about every cell
-## in memory (docs/15 P3-014). Per-client scope is P3-2 and belongs here.
+## Both messages belong to InventoryNetModule and are sent through its two
+## public functions (docs/15 P3-030 is resolved: nothing is called by name).
 
 const MODULE_NAME: String = "WorldCellNet"
-## The existing messages this module sends (see the header).
-const RPC_WORLD_ITEMS_ADDED: StringName = &"_rpc_world_items_added"
-const RPC_WORLD_ITEM_REMOVED: StringName = &"_rpc_world_item_removed"
 
-## Diagnostics: world items announced as added / removed since the start.
+## Client: the map layout the server sent with the join.
+var client_map: ClientWorldMap = ClientWorldMap.new()
+## Client diagnostics: join fragments that did not hold a usable layout.
+var rejected_fragment_count: int = 0
+## Server diagnostics: world items announced as added / removed because a
+## peer gained / lost a cell, since the start.
 var sent_item_add_count: int = 0
 var sent_item_remove_count: int = 0
 
-var _settings: InventoryNetSettings
 var _world: ServerWorld = null
-var _cells: WorldCellService = null
-var _inventory_net: NetModule = null
+var _interest: CellInterest = null
+var _inventory_net: InventoryNetModule = null
 
 
-## `settings` gives the number of world items packed into one message.
-func _init(settings: InventoryNetSettings = null) -> void:
+func _init() -> void:
 	name = MODULE_NAME
-	_settings = settings if settings != null else InventoryNetSettings.new()
 
 
 func _exit_tree() -> void:
-	if _cells == null:
+	if _interest == null:
 		return
-	if _cells.cell_loaded.is_connected(_on_cell_loaded):
-		_cells.cell_loaded.disconnect(_on_cell_loaded)
-	if _cells.cell_unloading.is_connected(_on_cell_unloading):
-		_cells.cell_unloading.disconnect(_on_cell_unloading)
+	if _interest.cell_gained.is_connected(_on_cell_gained):
+		_interest.cell_gained.disconnect(_on_cell_gained)
+	if _interest.cell_lost.is_connected(_on_cell_lost):
+		_interest.cell_lost.disconnect(_on_cell_lost)
+	_interest = null
 
+
+# ------------------------------------------------------------ server side
 
 func on_server_started(world: ServerWorld) -> void:
 	_world = world
-	_cells = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
-	if _cells == null:
-		GameLogger.info("net", "world has no cell system, cell replication is off", {"world_id": world.world_id, "module": MODULE_NAME})
+	_inventory_net = network.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule
+	if network.cell_interest == null or _inventory_net == null:
+		GameLogger.error("net", "the interest module or the inventory module is missing; world items are not scoped by cell", {"world_id": world.world_id, "module": MODULE_NAME, "operation": "on_server_started"})
 		return
-	_inventory_net = network.get_module(InventoryNetModule.MODULE_NAME)
-	if _inventory_net == null or not _inventory_net.has_method(RPC_WORLD_ITEMS_ADDED) or not network.has_method(RPC_WORLD_ITEM_REMOVED):
-		GameLogger.error("net", "the world item messages are missing; cell replication is off", {"world_id": world.world_id, "module": MODULE_NAME, "operation": "on_server_started"})
-		_cells = null
-		return
-	_cells.cell_loaded.connect(_on_cell_loaded)
-	_cells.cell_unloading.connect(_on_cell_unloading)
+	_interest = network.cell_interest
+	_interest.cell_gained.connect(_on_cell_gained)
+	_interest.cell_lost.connect(_on_cell_lost)
 
 
-## The world items of a cell that came into memory go to every joined peer.
-func _on_cell_loaded(cell_id: String) -> void:
+## The map layout: the same for every joining peer, with or without a
+## character (it is no secret, and the ground must be there when the
+## player enters the world).
+func build_join_fragment(_player_id: String) -> Dictionary:
+	return ClientWorldMap.describe(_world.cell_grid) if _world != null else {}
+
+
+## The world items of a cell a peer is told about from now on.
+func _on_cell_gained(peer_id: int, cell_id: String) -> void:
 	if network == null or not network.is_server():
 		return
-	var peers: PackedInt32Array = network.joined_peers()
-	if peers.is_empty():
+	var item_ids: PackedStringArray = _world.inventory.world_item_ids_in_cell(cell_id)
+	if item_ids.is_empty():
 		return
 	var entries: Array = []
-	for item_id: String in _world.inventory.world_item_ids_in_cell(cell_id):
-		var entry: Dictionary = _world.inventory.describe_world_item(item_id)
-		# The server holds its own output to the rule its clients apply.
-		if not ClientWorldState.is_valid_world_item(entry):
-			GameLogger.error("net", "world item not replicated", {"entity_id": item_id, "cell_id": cell_id, "module": MODULE_NAME, "operation": "cell_loaded"})
-			continue
-		entries.append(entry)
-	var offset: int = 0
-	while offset < entries.size():
-		var message: Array = entries.slice(offset, offset + _settings.max_items_per_message)
-		for peer_id: int in peers:
-			if network.can_send_to(peer_id):
-				_inventory_net.rpc_id(peer_id, RPC_WORLD_ITEMS_ADDED, message)
-		offset += message.size()
-		sent_item_add_count += message.size()
+	for item_id: String in item_ids:
+		entries.append(_world.inventory.describe_world_item(item_id))
+	sent_item_add_count += _inventory_net.send_world_items_added(peer_id, entries)
 
 
-## The world items of a cell that is about to leave memory are taken away
-## from every joined peer.
-func _on_cell_unloading(cell_id: String) -> void:
+## The world items of a cell a peer is no longer told about.
+func _on_cell_lost(peer_id: int, cell_id: String) -> void:
 	if network == null or not network.is_server():
 		return
-	var peers: PackedInt32Array = network.joined_peers()
-	if peers.is_empty():
+	var item_ids: PackedStringArray = _world.inventory.world_item_ids_in_cell(cell_id)
+	if item_ids.is_empty():
 		return
-	for item_id: String in _world.inventory.world_item_ids_in_cell(cell_id):
-		for peer_id: int in peers:
-			if network.can_send_to(peer_id):
-				network.rpc_id(peer_id, RPC_WORLD_ITEM_REMOVED, item_id)
-		sent_item_remove_count += 1
+	sent_item_remove_count += _inventory_net.send_world_items_removed(peer_id, Array(item_ids))
+
+
+# ------------------------------------------------------------ client side
+
+func apply_join_fragment(fragment: Dictionary) -> void:
+	var reason: String = client_map.apply(fragment)
+	if reason.is_empty():
+		return
+	rejected_fragment_count += 1
+	GameLogger.warning("net", "map layout of the join snapshot ignored", {"reason": reason, "module": MODULE_NAME, "operation": "apply_join_fragment"})

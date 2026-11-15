@@ -49,6 +49,8 @@ var trade_net: TradeNetSettings
 var require_character_creation: bool = false
 ## P3-1 (world cells, docs/09 §15.1): the cell grid and the cell lifecycle.
 var world_cells: WorldCellSettings
+## P3-2 (docs/09 §15.2): which cells each joined peer is told about.
+var interest: InterestSettings
 ## P3-4a (grid structures, docs/09 §15.4): the building rules, the structure
 ## definitions (servers and client mirrors) and the network module.
 var building: BuildingSettings
@@ -78,6 +80,7 @@ static func from_defaults() -> CompositionConfig:
 	config.posture = PostureSettings.load_or_default()
 	config.posture_net = PostureNetSettings.load_or_default()
 	config.world_cells = WorldCellSettings.load_or_default()
+	config.interest = InterestSettings.load_or_default()
 	config.trade = TradeSettings.load_or_default()
 	config.trade_net = TradeNetSettings.load_or_default()
 	config.building = BuildingSettings.load_or_default()
@@ -113,6 +116,9 @@ func validate() -> PackedStringArray:
 	if world_cells == null:
 		errors.append("composition config is incomplete (world_cells)")
 		return errors
+	if interest == null:
+		errors.append("composition config is incomplete (interest)")
+		return errors
 	if trade == null or trade_net == null:
 		errors.append("composition config is incomplete (trade)")
 		return errors
@@ -142,6 +148,8 @@ func validate() -> PackedStringArray:
 	errors.append_array(posture_net.validate())
 	errors.append_array(world_cells.validate())
 	errors.append_array(world_cells.validate_play_area(gameplay.world_half_extent_m))
+	errors.append_array(interest.validate())
+	errors.append_array(interest.validate_against(world_cells))
 	errors.append_array(trade.validate())
 	errors.append_array(trade_net.validate())
 	errors.append_array(trade_net.validate_against(trade))

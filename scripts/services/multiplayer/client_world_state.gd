@@ -79,6 +79,19 @@ func apply_world_item_removed(item_instance_id: String) -> void:
 	changed.emit()
 
 
+## Removes several world items at once (P3-2: the items of a cell this
+## client is no longer told about). Returns the ids that were in the mirror;
+## `changed` is emitted once, and only when something was removed.
+func apply_world_items_removed(item_instance_ids: PackedStringArray) -> PackedStringArray:
+	var removed: PackedStringArray = []
+	for item_instance_id: String in item_instance_ids:
+		if world_items.erase(item_instance_id):
+			removed.append(item_instance_id)
+	if not removed.is_empty():
+		changed.emit()
+	return removed
+
+
 ## True when `entry` is a world item as the server describes it:
 ## {item_instance_id: String 1..64, definition_id: snake_case String,
 ##  quantity: int >= 1, position: finite Vector3}.

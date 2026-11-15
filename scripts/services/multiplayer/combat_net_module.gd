@@ -24,13 +24,17 @@ extends NetModule
 ## whose request id is usable (int >= 0). `reason` is "" exactly when ok.
 ##
 ## Events: every server tick this module empties CombatService.drain_events()
-## (it is the only consumer) and sends the public form of each event to all
-## joined peers, in the order the server decided them, numbered with a
-## per-session sequence (1, 2, ...). All peers get the same payload
-## (ClientCombatState documents it). A request's result is sent before the
-## event of the swing it caused (same ordered channel). Events are not
-## replayed to late joiners: the join fragment carries the newest sequence
-## number already sent, and a new client starts after it.
+## (it is the only consumer) and sends the public form of each event, in the
+## order the server decided them, numbered with a per-session sequence (1,
+## 2, ...). Since P3-2 an event goes to the attacker, to the peers that were
+## told about the zombie it hit and, for a miss, to the peers that are told
+## about the attacker's cell (_is_for; docs/09 §15.2), not to everybody: a
+## client far away sees holes in the sequence, which only ever grows.
+## Everybody who gets an event gets the same payload (ClientCombatState
+## documents it). A request's result is sent before the event of the swing
+## it caused (same ordered channel). Events are not replayed to late
+## joiners: the join fragment carries the newest sequence number already
+## sent, and a new client starts after it.
 ##
 ## Client surface (presentation): request_melee_attack(), the signals below,
 ## recent_events() / last_event_sequence(). The mirror has no authority.
@@ -147,7 +151,7 @@ func on_player_left(peer_id: int, _player_id: String) -> void:
 		_limiter.forget(peer_id)
 
 
-## Server: forwards the combat events of this tick to every joined peer.
+## Server: forwards the combat events of this tick to the peers they are for.
 func server_physics(_delta: float) -> void:
 	if network == null or not network.is_server() or _combat == null:
 		return
@@ -217,18 +221,50 @@ func _send_result(peer_id: int, request_id: int, ok: bool, reason: String) -> vo
 		_rpc_melee_result.rpc_id(peer_id, request_id, ok, reason)
 
 
-## Sends `batch` to every joined peer, split into messages of at most
-## `max_events_per_message` events. Same content and order for everyone.
+## Sends every joined peer the events of `batch` that are for it (see
+## _is_for), in order, split into messages of at most
+## `max_events_per_message` events. The content of an event is the same for
+## everybody who gets it; the sequence numbers a peer sees may have holes.
 func _broadcast(batch: Array) -> void:
-	var peers: PackedInt32Array = network.joined_peers()
+	if batch.is_empty():
+		return
 	var per_message: int = clampi(_settings.max_events_per_message, 1, MAX_EVENTS_PER_MESSAGE)
-	var offset: int = 0
-	while offset < batch.size():
-		var message: Array = batch.slice(offset, offset + per_message)
-		offset += message.size()
-		for peer_id: int in peers:
-			if network.can_send_to(peer_id):
-				_rpc_combat_events.rpc_id(peer_id, message)
+	var zombie_net: ZombieNetModule = network.get_module(ZombieNetModule.MODULE_NAME) as ZombieNetModule
+	for peer_id: int in network.joined_peers():
+		if not network.can_send_to(peer_id):
+			continue
+		var own: Array = []
+		for event: Dictionary in batch:
+			if _is_for(peer_id, event, zombie_net):
+				own.append(event)
+		var offset: int = 0
+		while offset < own.size():
+			var message: Array = own.slice(offset, offset + per_message)
+			offset += message.size()
+			_rpc_combat_events.rpc_id(peer_id, message)
+
+
+## Who is sent a combat event (P3-2, docs/09 §15.2). A swing names its
+## attacker (a player: players are known to everybody) and, when it hit, a
+## zombie:
+##   - the attacker always gets its own swing. Should it not have been told
+##     about the zombie it hit, it is told first (ZombieNetModule.ensure_known);
+##   - a hit goes to the peers that were told about the zombie that was hit,
+##     so nobody is sent an event about a zombie it does not know;
+##   - a miss names no zombie: it goes to the peers that are told about the
+##     cell the attacker stands in.
+## Without the zombie module a hit is treated like a miss.
+func _is_for(peer_id: int, event: Dictionary, zombie_net: ZombieNetModule) -> bool:
+	var target_id: String = str(event.get(ClientCombatState.KEY_TARGET_ID, ""))
+	var names_zombie: bool = zombie_net != null and not target_id.is_empty()
+	if network.player_of_peer(peer_id) == str(event.get(ClientCombatState.KEY_ATTACKER_ID, "")):
+		if names_zombie:
+			zombie_net.ensure_known(peer_id, target_id)
+		return true
+	if names_zombie:
+		return zombie_net.knows_zombie(peer_id, target_id)
+	var position: Variant = event.get(ClientCombatState.KEY_POSITION, Vector3.ZERO)
+	return network.is_cell_of_interest(peer_id, _world.cell_id_at(position as Vector3 if typeof(position) == TYPE_VECTOR3 else Vector3.ZERO))
 
 
 # ------------------------------------------------------------ client side

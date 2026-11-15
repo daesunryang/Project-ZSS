@@ -44,6 +44,8 @@ const INVENTORY_RPCS: Array = [
 	"_rpc_treatment_notice",
 	"_rpc_use_on_result",
 	"_rpc_world_items_added",
+	# P3-2: the world items of a cell the client is no longer told about.
+	"_rpc_world_items_removed",
 ]
 
 var _cluster: NetTestCluster = null
@@ -683,7 +685,7 @@ func test_units_put_down_and_merged_pickups_survive_a_save_and_server_restart() 
 # ------------------------------------------------------------ rules (no network)
 
 func test_rpc_table_and_drop_request_validation() -> void:
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 12, "the drop quantity and the withdrawn hand-over RPCs were a protocol change (10, P2-T15); 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 13, "the drop quantity and the withdrawn hand-over RPCs were a protocol change (10, P2-T15); 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a), 13 since the replication scope by cell (P3-2)")
 	const ITEM: String = "item_000001"
 	assert_eq(InventoryService.WHOLE_STACK, 0)
 	assert_eq(InventoryNetModule.validate_drop_request(1, ITEM, 1), "")

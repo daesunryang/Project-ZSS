@@ -77,16 +77,24 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 ## RPC node paths match). Must run before start_server/start_client.
 static func install_net_modules(service: NetworkService, config: CompositionConfig) -> Error:
 	# --- network modules ---
+	# P3-2 (docs/09 §15.2): which cells each joined peer is told about. FIRST:
+	# its join fragment gives a joining peer its cells before the other
+	# modules build theirs, and every tick it looks at the players before the
+	# other modules send. No RPC.
+	var interest_net: InterestNetModule = InterestNetModule.new(config.interest)
+	var error: Error = service.register_module(interest_net)
+	if error != OK:
+		interest_net.free()
+		return error
 	# Phase 2-N1a: zombie replication (ch2 snapshots, ch0 events, join fragment).
 	var zombie_net: ZombieNetModule = ZombieNetModule.new(config.zombie_net)
-	var error: Error = service.register_module(zombie_net)
+	error = service.register_module(zombie_net)
 	if error != OK:
 		zombie_net.free()
 		return error
-	# P3-1 (docs/09 §15.1): world items of cells that enter or leave the
-	# server's memory. No RPC of its own (it sends the existing world item
-	# messages), so the protocol is unchanged.
-	var world_cell_net: WorldCellNetModule = WorldCellNetModule.new(config.inventory_net)
+	# P3-1, P3-2 (docs/09 §15.1, §15.2): the map layout for the clients and
+	# the world items of the cells a peer gains or loses. No RPC of its own.
+	var world_cell_net: WorldCellNetModule = WorldCellNetModule.new()
 	error = service.register_module(world_cell_net)
 	if error != OK:
 		world_cell_net.free()

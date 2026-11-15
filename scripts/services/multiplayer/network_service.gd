@@ -54,6 +54,21 @@ extends Node
 ## player carries and then no longer exists, so _rpc_inventory_item is sent
 ## only for an item that is still there. The grown stacks are replicated by
 ## InventoryNetModule; the pickup messages themselves are unchanged.
+##
+## P3-2 (docs/09 §15.2, the third change since the freeze): replication scope
+## by world cell. `cell_interest` (set by InterestNetModule when the server
+## starts) says which joined peers are told about the entities of a cell;
+## is_cell_of_interest() / peers_interested_in() ask it, and answer "every
+## joined peer" while there is none. What this node sends itself follows it:
+##   - the join snapshot lists only the world items of the joining peer's
+##     cells (the module fragments are built first, because the interest
+##     module's fragment is what gives the peer its cells);
+##   - _rpc_world_item_removed after a pickup goes to the peers that were
+##     told about the cell the item lay in, not to everybody;
+##   - a refused pickup tells the requester nothing about an item it was not
+##     told about (_public_pickup_reason).
+## Players are not scoped: player rows and position snapshots still go to
+## every joined peer (docs/15 P3-041).
 
 signal server_started(port: int)
 signal join_accepted(player_id: String)
@@ -80,6 +95,9 @@ const NOT_JOINED: String = "not_joined"
 const SNAPSHOT_MODULES_KEY: String = "modules"
 
 var client_state: ClientWorldState = ClientWorldState.new()
+## Server (P3-2): which cells each joined peer is told about. Null (no
+## interest module installed) = every joined peer is told about every cell.
+var cell_interest: CellInterest = null
 
 var _mode: Mode = Mode.NONE
 var _settings: NetworkSettings = null
@@ -265,6 +283,18 @@ func joined_peer_count() -> int:
 	return _peer_players.size()
 
 
+## Server (P3-2): true when `peer_id` is to be told about the entities of
+## the world cell `cell_id` (docs/09 §15.2).
+func is_cell_of_interest(peer_id: int, cell_id: String) -> bool:
+	return cell_interest == null or cell_interest.is_interested(peer_id, cell_id)
+
+
+## Server (P3-2): the joined peers that are to be told about the entities of
+## the world cell `cell_id`, sorted.
+func peers_interested_in(cell_id: String) -> PackedInt32Array:
+	return joined_peers() if cell_interest == null else cell_interest.peers_for_cell(cell_id)
+
+
 ## Server: how many intents were rejected for `reason` ("" = all reasons).
 func rejected_intent_count(reason: String = "") -> int:
 	if not reason.is_empty():
@@ -438,7 +468,7 @@ func _rpc_request_pickup(request_id: Variant, item_instance_id: Variant) -> void
 	var result: ActionResult = _world.try_pickup(player_id, item_id)
 	if not result.ok:
 		count_rejection(result.reason)
-		_rpc_pickup_result.rpc_id(peer_id, int(request_id), false, result.reason)
+		_rpc_pickup_result.rpc_id(peer_id, int(request_id), false, _public_pickup_reason(peer_id, item_id, result.reason))
 		return
 	persist("item_picked_up")
 	# P2-T15: a picked-up item whose units all merged into carried stacks no
@@ -447,10 +477,28 @@ func _rpc_request_pickup(request_id: Variant, item_instance_id: Variant) -> void
 	if picked != null:
 		_rpc_inventory_item.rpc_id(peer_id, picked.to_dict())
 	_rpc_pickup_result.rpc_id(peer_id, int(request_id), true, "")
-	for other: int in _peer_players:
+	# P3-2: the item leaves the mirrors of the peers that were told about the
+	# cell it lay in. Nobody else ever had it.
+	for other: int in peers_interested_in(str(result.event.get("from_cell_id", ""))):
 		if can_send_to(other):
 			_rpc_world_item_removed.rpc_id(other, item_id)
 	GameLogger.info("net", "pickup committed", {"peer_id": peer_id, "player_id": player_id, "entity_id": item_id, "request_id": int(request_id)})
+
+
+## P3-2 (docs/00 ADR-009): the refusal a requester is told. About an item it
+## was not told about it must learn nothing: an id that does not exist, an
+## item somebody carries and an item lying in a cell outside the peer's
+## interest (whatever the server's own range check found) all read
+## `item_not_in_world`. Refusals about the requester itself (dead, resting,
+## not in the world) and about an item it is told about (`too_far`,
+## `inventory_full`) are passed on as they are. Counters and logs keep the
+## server's own reason.
+func _public_pickup_reason(peer_id: int, item_id: String, reason: String) -> String:
+	if reason == InventoryService.REASON_UNKNOWN_ITEM:
+		return InventoryService.REASON_NOT_IN_WORLD
+	if reason != InventoryService.REASON_TOO_FAR and reason != InventoryService.REASON_INVENTORY_FULL:
+		return reason
+	return reason if is_cell_of_interest(peer_id, _world.cell_index.cell_of(item_id)) else InventoryService.REASON_NOT_IN_WORLD
 
 
 func _broadcast_positions() -> void:
@@ -500,15 +548,19 @@ func _build_join_snapshot(player_id: String) -> Dictionary:
 	for online_id: String in _world.online_player_ids():
 		var state: PlayerState = _world.get_player(online_id)
 		players.append({"player_id": online_id, "position": state.position, "yaw": state.yaw})
-	var items: Array[Dictionary] = []
-	for item_id: String in _world.inventory.world_item_ids():
-		items.append(_world.inventory.describe_world_item(item_id))
-	var carried: Array[Dictionary] = []
-	for item: ItemInstance in _world.inventory.items_in_inventory(_world.get_player(player_id).inventory_id):
-		carried.append(item.to_dict())
+	# P3-2: the module fragments first. The interest module's fragment gives
+	# the joining peer its cells; the world items below are cut to them.
 	var modules: Dictionary = {}
 	for module: NetModule in _modules:
 		modules[str(module.name)] = module.build_join_fragment(player_id)
+	var peer_id: int = peer_of_player(player_id)
+	var items: Array[Dictionary] = []
+	for item_id: String in _world.inventory.world_item_ids():
+		if is_cell_of_interest(peer_id, _world.cell_index.cell_of(item_id)):
+			items.append(_world.inventory.describe_world_item(item_id))
+	var carried: Array[Dictionary] = []
+	for item: ItemInstance in _world.inventory.items_in_inventory(_world.get_player(player_id).inventory_id):
+		carried.append(item.to_dict())
 	return {"players": players, "world_items": items, "inventory": carried, SNAPSHOT_MODULES_KEY: modules}
 
 
