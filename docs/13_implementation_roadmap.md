@@ -151,4 +151,14 @@ Phase 2는 단일 조정자(Opus)가 티켓을 쪼개고 병합한다. 설계 �
 | P2-FIX1 | 시간 기반 생존 피해 이벤트 묶기(출혈 중 틱마다 RPC·로그가 쏟아지던 문제, 수용 시나리오에서 발견) | `scripts/domain/survival/` | 조정자 | 완료 |
 | P2-Z | Phase 2 수용 시나리오(두 클라이언트, 같은 좀비, 같은 결과). `tests/scenarios/phase2_acceptance_test.gd`: 발소리 → 조사 → 시야 → 추격, 좀비 공격·부상·감염과 정보 공개 범위, 두 클라이언트의 전투 결과 일치, 부상 페널티, 감염 단계 설정, 저장 → 서버 재시작 → 복구, 조작된 요청. 수용 항목 대응표는 docs/12 §6, 검증하지 못한 항목은 docs/15 §6.13. 시나리오에서 찾은 좀비 공격 간격 결함 수정 포함(`zombie_service.gd` 비교 한 줄, 재현 테스트는 `zombie_service_test.gd`) | `tests/scenarios/`, `scripts/domain/zombie/zombie_service.gd`(결함 수정만) | Fable | 완료 |
 
+### 14.1 사용자 결정 반영 티켓 (2026-11-15, docs/00 ADR-006~010)
+
+| 티켓 | 핵심 목표 | 소유 영역 | 담당 | 상태 |
+|---|---|---|---|---|
+| P2-T1 | 달력 시간과 행동 시간 분리, 월드 시간 24배속(ADR-006) | `scripts/core/world_clock*`, 각 시스템의 시간 사용 | Fable | 진행 |
+| P2-T2 | 인벤토리 변화 복제 기반: 아이템을 월드에 내려놓기·인벤토리에서 제거, 클라이언트 반영 | `scripts/domain/inventory/`, 새 NetModule | Fable | 진행 |
+| P2-T3 | 먹기·마시기: 소비 의도 → 서버가 허기·갈증 감소(ADR-010) | `survival/`, 아이템 정의, 새 RPC | Fable | 대기(T1·T2 후) |
+| P2-T4 | 영구 사망: 사망 시 소지품 처리와 새 캐릭터 시작(ADR-007) | `survival/`, `server_world.gd` | Fable | 대기(T3 후) |
+| P2-T5 | 감염으로 죽은 자리에 좀비 생성(ADR-008) | `survival/`, `zombie/` | Fable | 대기(T4 후) |
+
 병렬 규칙: 같은 파일을 두 담당이 동시에 고치지 않는다. 공유 조립 파일(`composition_config.gd`, `server_composition.gd`, 문서)은 조정자가 병합 때 정리한다.
