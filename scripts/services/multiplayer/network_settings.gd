@@ -7,9 +7,11 @@ extends Resource
 const DEFAULT_PATH: String = "res://data/tuning/network_settings.tres"
 ## Reliable, ordered: join, inventory, pickup results, join/leave notices.
 const CHANNEL_RELIABLE: int = 0
-## Unreliable ordered: position snapshots (latest state wins).
+## Unreliable ordered: player move intents and position snapshots.
 const CHANNEL_SNAPSHOT: int = 1
-const CHANNEL_COUNT: int = 2
+## Unreliable ordered: AI entity (zombie) snapshots. Reserved for Phase 2-A.
+const CHANNEL_ENTITY_SNAPSHOT: int = 2
+const CHANNEL_COUNT: int = 3
 ## Extra transport slots so a full server can still answer "server_full".
 const TRANSPORT_HEADROOM: int = 2
 

@@ -3,22 +3,24 @@ extends RefCounted
 ## Loads/saves a ServerWorld through SaveService. Server only.
 
 var _save: SaveService
-var _gameplay: GameplaySettings
-var _catalog: ItemCatalog
+var _config: CompositionConfig
 
 
-func _init(save_service: SaveService, gameplay: GameplaySettings, catalog: ItemCatalog) -> void:
+## Worlds are always built through ServerComposition so loaded and new
+## worlds have the same registered systems.
+func _init(save_service: SaveService, config: CompositionConfig) -> void:
 	_save = save_service
-	_gameplay = gameplay
-	_catalog = catalog
+	_config = config
 
 
 ## Returns the saved world, a freshly seeded world when no save exists, or
 ## null when the save exists but cannot be restored (never silently replaced).
-func load_or_create(world_id: String, seed: DevWorldSeed) -> ServerWorld:
-	var world: ServerWorld = ServerWorld.new(world_id, _gameplay, _catalog)
+func load_or_create(world_id: String) -> ServerWorld:
+	var world: ServerWorld = ServerComposition.create_world(world_id, _config)
+	if world == null:
+		return null
 	if not _save.has_save(world_id):
-		if world.seed_new_world(seed) != OK:
+		if world.seed_new_world(_config.dev_seed) != OK:
 			return null
 		if save(world) != OK:
 			return null

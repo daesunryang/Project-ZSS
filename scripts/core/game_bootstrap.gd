@@ -90,25 +90,27 @@ func _start_network(config: LaunchConfig, settings: AppSettings, world_id: Strin
 	if not errors.is_empty():
 		GameLogger.error("bootstrap", "invalid network settings", {"errors": "; ".join(errors), "operation": "start_network"})
 		return ERR_INVALID_DATA
+	var composition: CompositionConfig = CompositionConfig.from_defaults()
+	errors = composition.validate()
+	if not errors.is_empty():
+		GameLogger.error("bootstrap", "invalid gameplay settings", {"errors": "; ".join(errors), "operation": "start_network"})
+		return ERR_INVALID_DATA
 	_network = NetworkService.new()
 	_network.name = NETWORK_NODE_NAME
 	add_child(_network)
+	var module_result: Error = ServerComposition.install_net_modules(_network, composition)
+	if module_result != OK:
+		return module_result
 	if config.is_server():
-		return _start_server(config, settings, network_settings, world_id)
+		return _start_server(config, settings, network_settings, composition, world_id)
 	var port: int = config.connect_port if config.connect_port > 0 else (config.port_override if config.port_override > 0 else network_settings.port)
 	return _network.start_client(config.connect_address, port, config.player_key, network_settings)
 
 
-func _start_server(config: LaunchConfig, settings: AppSettings, network_settings: NetworkSettings, world_id: String) -> Error:
-	var gameplay: GameplaySettings = GameplaySettings.load_or_default()
-	var errors: PackedStringArray = gameplay.validate()
-	if not errors.is_empty():
-		GameLogger.error("bootstrap", "invalid gameplay settings", {"errors": "; ".join(errors), "operation": "start_server"})
-		return ERR_INVALID_DATA
-	var catalog: ItemCatalog = ItemCatalog.load_directory()
+func _start_server(config: LaunchConfig, settings: AppSettings, network_settings: NetworkSettings, composition: CompositionConfig, world_id: String) -> Error:
 	var save_root: String = config.save_root_override if not config.save_root_override.is_empty() else settings.save_root
-	var persistence: WorldPersistence = WorldPersistence.new(SaveService.new(save_root, settings.save_backup_keep), gameplay, catalog)
-	var server_world: ServerWorld = persistence.load_or_create(world_id, DevWorldSeed.load_or_default())
+	var persistence: WorldPersistence = WorldPersistence.new(SaveService.new(save_root, settings.save_backup_keep), composition)
+	var server_world: ServerWorld = persistence.load_or_create(world_id)
 	if server_world == null:
 		return ERR_FILE_CORRUPT
 	var port: int = config.port_override if config.port_override > 0 else network_settings.port

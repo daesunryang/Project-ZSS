@@ -16,6 +16,12 @@ func after_each() -> void:
 	GameLogger.set_capture(false)
 
 
+func _config() -> CompositionConfig:
+	var config: CompositionConfig = CompositionConfig.from_defaults()
+	config.gameplay = GameplaySettings.new()
+	return config
+
+
 func _world() -> ServerWorld:
 	return ServerWorld.new(WORLD, GameplaySettings.new(), ItemCatalog.load_directory())
 
@@ -42,15 +48,15 @@ func test_spawn_is_clamped_into_world() -> void:
 
 
 func test_persistence_round_trip_restores_players_and_items() -> void:
-	var persistence: WorldPersistence = WorldPersistence.new(SaveService.new(_root), GameplaySettings.new(), ItemCatalog.load_directory())
-	var world: ServerWorld = persistence.load_or_create(WORLD, DevWorldSeed.load_or_default())
+	var persistence: WorldPersistence = WorldPersistence.new(SaveService.new(_root), _config())
+	var world: ServerWorld = persistence.load_or_create(WORLD)
 	assert_not_null(world)
 	var alice: PlayerState = world.join("alice")
 	alice.position = Vector3(3, 0, 4)
 	assert_eq(persistence.save(world), OK)
 	var before: String = JSON.stringify(world.to_documents(), "", true)
 
-	var reloaded: ServerWorld = WorldPersistence.new(SaveService.new(_root), GameplaySettings.new(), ItemCatalog.load_directory()).load_or_create(WORLD, DevWorldSeed.new())
+	var reloaded: ServerWorld = WorldPersistence.new(SaveService.new(_root), _config()).load_or_create(WORLD)
 	assert_not_null(reloaded)
 	assert_eq(reloaded.known_player_count(), 1)
 	assert_eq(reloaded.get_player(alice.player_id).position, Vector3(3, 0, 4))
@@ -64,11 +70,11 @@ func test_persistence_round_trip_restores_players_and_items() -> void:
 
 func test_unloadable_save_is_not_replaced() -> void:
 	var save: SaveService = SaveService.new(_root)
-	var persistence: WorldPersistence = WorldPersistence.new(save, GameplaySettings.new(), ItemCatalog.load_directory())
-	assert_not_null(persistence.load_or_create(WORLD, DevWorldSeed.load_or_default()))
+	var persistence: WorldPersistence = WorldPersistence.new(save, _config())
+	assert_not_null(persistence.load_or_create(WORLD))
 	var bad_state: Dictionary = {"schema_version": 1, "world_id": "other_world"}
 	assert_eq(save.save_world(WORLD, bad_state, {}), OK)
-	assert_null(persistence.load_or_create(WORLD, DevWorldSeed.load_or_default()))
+	assert_null(persistence.load_or_create(WORLD))
 	assert_eq(save.current_generation(WORLD), 2, "failed load must not overwrite the save")
 
 

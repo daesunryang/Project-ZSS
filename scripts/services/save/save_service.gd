@@ -34,14 +34,15 @@ var _migrators: Dictionary[String, SaveMigrator] = {}
 
 
 ## `root` is e.g. "user://saves". `migrators` maps CATEGORY_* to a migrator;
-## missing categories default to "version 1, no migrations".
+## missing categories use the production chains in SaveMigrations.defaults().
 func _init(root: String, backup_keep: int = DEFAULT_BACKUP_KEEP, migrators: Dictionary[String, SaveMigrator] = {}) -> void:
 	_root = root
 	_backup_keep = maxi(backup_keep, 1)
 	_migrators = migrators
+	var defaults: Dictionary[String, SaveMigrator] = SaveMigrations.defaults()
 	for category: String in [CATEGORY_WORLD, CATEGORY_PLAYER]:
 		if not _migrators.has(category):
-			_migrators[category] = SaveMigrator.new(1)
+			_migrators[category] = defaults[category]
 
 
 func world_dir(world_id: String) -> String:

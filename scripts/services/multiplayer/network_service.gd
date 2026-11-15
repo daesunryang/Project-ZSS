@@ -31,6 +31,14 @@ extends Node
 ## server-side input timeout only covers lost packets.
 ## Initial state is sent inside _rpc_join_accepted; later deltas use the same
 ## reliable channel, so they always arrive after the snapshot.
+## Channel 2 (unreliable ordered) is reserved for AI entity snapshots (Phase 2-A).
+##
+## Extension seam (Phase 2 P2-0): feature NetModules are registered with
+## register_module() before start (ServerComposition.install_net_modules).
+## They become children of this node (same name on every peer -> matching RPC
+## paths), receive lifecycle hooks, contribute join snapshot fragments
+## (snapshot["modules"][name]) and use the public helpers below. This file is
+## frozen for feature work after P2-0.
 
 signal server_started(port: int)
 signal join_accepted(player_id: String)
@@ -53,6 +61,8 @@ const REASON_HANDSHAKE_TIMEOUT: String = "handshake_timeout"
 const MSEC_PER_SEC: float = 1000.0
 const RATE_LIMITED: String = "rate_limited"
 const NOT_JOINED: String = "not_joined"
+
+const SNAPSHOT_MODULES_KEY: String = "modules"
 
 var client_state: ClientWorldState = ClientWorldState.new()
 
@@ -77,9 +87,35 @@ var _player_key: String = ""
 var _auto_join: bool = true
 var _move_sequence: int = 0
 var _pickup_request_id: int = 0
+# --- feature modules (both roles) ---
+var _modules: Array[NetModule] = []
 
 
 # ============================================================ lifecycle
+
+## Adds a feature module as a child node. Only before start_server /
+## start_client; module node names must be unique and non-empty.
+func register_module(module: NetModule) -> Error:
+	if _mode != Mode.NONE:
+		GameLogger.error("net", "module registered after start", {"module": str(module.name), "operation": "register_module"})
+		return ERR_ALREADY_IN_USE
+	var module_name: String = str(module.name)
+	if module_name.is_empty() or has_node(NodePath(module_name)):
+		GameLogger.error("net", "module name empty or duplicate", {"module": module_name, "operation": "register_module"})
+		return ERR_ALREADY_EXISTS
+	module.network = self
+	add_child(module)
+	_modules.append(module)
+	return OK
+
+
+## Registered module by node name, or null.
+func get_module(module_name: String) -> NetModule:
+	for module: NetModule in _modules:
+		if str(module.name) == module_name:
+			return module
+	return null
+
 
 ## Starts listening. `persistence` may be null (no saving, tests only).
 func start_server(world: ServerWorld, persistence: WorldPersistence, settings: NetworkSettings, port: int) -> Error:
@@ -109,7 +145,9 @@ func start_server(world: ServerWorld, persistence: WorldPersistence, settings: N
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	_mode = Mode.SERVER
-	GameLogger.info("net", "server listening", {"port": port, "max_players": settings.max_players, "protocol": BuildInfo.PROTOCOL_VERSION, "world_id": world.world_id})
+	for module: NetModule in _modules:
+		module.on_server_started(world)
+	GameLogger.info("net", "server listening", {"port": port, "max_players": settings.max_players, "protocol": BuildInfo.PROTOCOL_VERSION, "world_id": world.world_id, "modules": _modules.size()})
 	server_started.emit(port)
 	return OK
 
@@ -145,7 +183,7 @@ func stop() -> void:
 		for peer_id: int in _peer_players.keys():
 			_world.leave(_peer_players[peer_id])
 		_peer_players.clear()
-		_persist("shutdown")
+		persist("shutdown")
 		multiplayer.peer_connected.disconnect(_on_peer_connected)
 		multiplayer.peer_disconnected.disconnect(_on_peer_disconnected)
 	else:
@@ -175,6 +213,38 @@ func get_world() -> ServerWorld:
 	return _world
 
 
+func get_settings() -> NetworkSettings:
+	return _settings
+
+
+## Server: player id of the peer whose RPC is being handled ("" if that peer
+## has not completed the join handshake). Call only inside an RPC handler.
+func sender_player_id() -> String:
+	if _mode != Mode.SERVER:
+		return ""
+	return _peer_players.get(multiplayer.get_remote_sender_id(), "")
+
+
+## Server: peer ids that completed the handshake (sorted).
+func joined_peers() -> PackedInt32Array:
+	var peers: PackedInt32Array = PackedInt32Array(_peer_players.keys())
+	peers.sort()
+	return peers
+
+
+## Server: peer id of an online player, or 0.
+func peer_of_player(player_id: String) -> int:
+	for peer_id: int in _peer_players:
+		if _peer_players[peer_id] == player_id:
+			return peer_id
+	return 0
+
+
+## Server: player id for a joined peer, or "".
+func player_of_peer(peer_id: int) -> String:
+	return _peer_players.get(peer_id, "")
+
+
 ## Server: number of peers that completed the handshake.
 func joined_peer_count() -> int:
 	return _peer_players.size()
@@ -199,6 +269,9 @@ func _physics_process(delta: float) -> void:
 	if _mode != Mode.SERVER:
 		return
 	_world.step_movement(delta, Time.get_ticks_msec(), int(_settings.move_input_timeout_sec * MSEC_PER_SEC))
+	_world.step_systems(delta)
+	for module: NetModule in _modules:
+		module.server_physics(delta)
 	_snapshot_elapsed += delta
 	if _snapshot_elapsed >= 1.0 / _settings.snapshot_rate_hz:
 		_snapshot_elapsed = 0.0
@@ -222,9 +295,11 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	_move_limiter.forget(peer_id)
 	_pickup_limiter.forget(peer_id)
 	_world.leave(player_id)
-	_persist("player_left")
+	for module: NetModule in _modules:
+		module.on_player_left(peer_id, player_id)
+	persist("player_left")
 	for other: int in _peer_players:
-		if _can_send_to(other):
+		if can_send_to(other):
 			_rpc_player_left.rpc_id(other, player_id)
 	GameLogger.info("net", "player disconnected", {"peer_id": peer_id, "player_id": player_id})
 	player_left.emit(player_id)
@@ -244,7 +319,7 @@ func _server_process(delta: float) -> void:
 		_autosave_elapsed += delta
 		if _autosave_elapsed >= _settings.autosave_interval_sec:
 			_autosave_elapsed = 0.0
-			_persist("autosave")
+			persist("autosave")
 
 
 @rpc("any_peer", "call_remote", "reliable", 0)
@@ -272,8 +347,10 @@ func _rpc_request_join(protocol_version: Variant, game_version: Variant, player_
 	_peer_players[peer_id] = state.player_id
 	_rpc_join_accepted.rpc_id(peer_id, state.player_id, _build_join_snapshot(state.player_id))
 	for other: int in _peer_players:
-		if other != peer_id and _can_send_to(other):
+		if other != peer_id and can_send_to(other):
 			_rpc_player_joined.rpc_id(other, state.player_id, state.position, state.yaw)
+	for module: NetModule in _modules:
+		module.on_player_joined(peer_id, state.player_id)
 	GameLogger.info("net", "join accepted", {"peer_id": peer_id, "player_id": state.player_id, "client_game_version": str(game_version)})
 	player_joined.emit(state.player_id)
 
@@ -285,19 +362,19 @@ func _rpc_move_intent(sequence: Variant, direction: Variant, yaw: Variant) -> vo
 	var peer_id: int = multiplayer.get_remote_sender_id()
 	var player_id: String = _peer_players.get(peer_id, "")
 	if player_id.is_empty():
-		_reject_intent(peer_id, "move", NOT_JOINED)
+		reject_intent(peer_id, "move", NOT_JOINED)
 		return
 	var reason: String = IntentValidator.validate_move(sequence, direction, yaw)
 	if not reason.is_empty():
-		_reject_intent(peer_id, "move", reason, player_id)
+		reject_intent(peer_id, "move", reason, player_id)
 		return
 	var now: int = Time.get_ticks_msec()
 	if not _move_limiter.allow(peer_id, now):
-		_reject_intent(peer_id, "move", RATE_LIMITED, player_id)
+		reject_intent(peer_id, "move", RATE_LIMITED, player_id)
 		return
 	reason = _world.set_move_input(player_id, int(sequence), direction as Vector2, float(yaw), now)
 	if not reason.is_empty():
-		_count_rejection(reason)  # stale sequences are normal on unreliable channels
+		count_rejection(reason)  # stale sequences are normal on unreliable channels
 
 
 @rpc("any_peer", "call_remote", "reliable", 0)
@@ -307,29 +384,29 @@ func _rpc_request_pickup(request_id: Variant, item_instance_id: Variant) -> void
 	var peer_id: int = multiplayer.get_remote_sender_id()
 	var player_id: String = _peer_players.get(peer_id, "")
 	if player_id.is_empty():
-		_reject_intent(peer_id, "pickup", NOT_JOINED)
+		reject_intent(peer_id, "pickup", NOT_JOINED)
 		return
 	var reason: String = IntentValidator.validate_pickup(request_id, item_instance_id)
 	if not reason.is_empty():
-		_reject_intent(peer_id, "pickup", reason, player_id)
+		reject_intent(peer_id, "pickup", reason, player_id)
 		if typeof(request_id) == TYPE_INT:
 			_rpc_pickup_result.rpc_id(peer_id, int(request_id), false, reason)
 		return
 	if not _pickup_limiter.allow(peer_id, Time.get_ticks_msec()):
-		_reject_intent(peer_id, "pickup", RATE_LIMITED, player_id)
+		reject_intent(peer_id, "pickup", RATE_LIMITED, player_id)
 		_rpc_pickup_result.rpc_id(peer_id, int(request_id), false, RATE_LIMITED)
 		return
 	var item_id: String = str(item_instance_id)
 	var result: ActionResult = _world.try_pickup(player_id, item_id)
 	if not result.ok:
-		_count_rejection(result.reason)
+		count_rejection(result.reason)
 		_rpc_pickup_result.rpc_id(peer_id, int(request_id), false, result.reason)
 		return
-	_persist("item_picked_up")
+	persist("item_picked_up")
 	_rpc_inventory_item.rpc_id(peer_id, _world.inventory.get_item(item_id).to_dict())
 	_rpc_pickup_result.rpc_id(peer_id, int(request_id), true, "")
 	for other: int in _peer_players:
-		if _can_send_to(other):
+		if can_send_to(other):
 			_rpc_world_item_removed.rpc_id(other, item_id)
 	GameLogger.info("net", "pickup committed", {"peer_id": peer_id, "player_id": player_id, "entity_id": item_id, "request_id": int(request_id)})
 
@@ -343,30 +420,33 @@ func _broadcast_positions() -> void:
 		var state: PlayerState = _world.get_player(player_id)
 		rows.append([player_id, state.position, state.yaw])
 	for peer_id: int in _peer_players:
-		if _can_send_to(peer_id):
+		if can_send_to(peer_id):
 			_rpc_position_snapshot.rpc_id(peer_id, _snapshot_tick, rows)
 
 
-func _reject_intent(peer_id: int, intent: String, reason: String, player_id: String = "") -> void:
-	_count_rejection(reason)
+## Server: counts and logs a rejected client intent (stable reason code).
+func reject_intent(peer_id: int, intent: String, reason: String, player_id: String = "") -> void:
+	count_rejection(reason)
 	GameLogger.warning("net", "intent rejected", {"peer_id": peer_id, "player_id": player_id, "intent": intent, "reason": reason, "operation": "validate_intent"})
 
 
-func _count_rejection(reason: String) -> void:
+## Server: counts a rejection without logging (expected, e.g. stale input).
+func count_rejection(reason: String) -> void:
 	_rejections[reason] = _rejections.get(reason, 0) + 1
 
 
 func _reject_join(peer_id: int, reason: String) -> void:
 	_pending_peers.erase(peer_id)
 	GameLogger.warning("net", "join rejected", {"peer_id": peer_id, "reason": reason, "operation": "request_join"})
-	if _can_send_to(peer_id):
+	if can_send_to(peer_id):
 		_rpc_join_rejected.rpc_id(peer_id, reason)
 	_kick_at_msec[peer_id] = Time.get_ticks_msec() + int(_settings.reject_disconnect_delay_sec * MSEC_PER_SEC)
 
 
 ## True while the ENet peer is fully connected. Peers that are already
 ## disconnecting (e.g. several clients quitting at once) must not be sent to.
-func _can_send_to(peer_id: int) -> bool:
+## Modules must guard every server->client send with this.
+func can_send_to(peer_id: int) -> bool:
 	if _peer == null:
 		return false
 	var packet_peer: ENetPacketPeer = _peer.get_peer(peer_id)
@@ -384,10 +464,14 @@ func _build_join_snapshot(player_id: String) -> Dictionary:
 	var carried: Array[Dictionary] = []
 	for item: ItemInstance in _world.inventory.items_in_inventory(_world.get_player(player_id).inventory_id):
 		carried.append(item.to_dict())
-	return {"players": players, "world_items": items, "inventory": carried}
+	var modules: Dictionary = {}
+	for module: NetModule in _modules:
+		modules[str(module.name)] = module.build_join_fragment(player_id)
+	return {"players": players, "world_items": items, "inventory": carried, SNAPSHOT_MODULES_KEY: modules}
 
 
-func _persist(reason: String) -> void:
+## Server: saves the whole world now (no-op without persistence).
+func persist(reason: String) -> void:
 	if _persistence == null:
 		return
 	var error: Error = _persistence.save(_world)
@@ -446,22 +530,27 @@ func send_raw_pickup_request(request_id: Variant, item_instance_id: Variant) -> 
 		_rpc_request_pickup.rpc_id(SERVER_PEER_ID, request_id, item_instance_id)
 
 
-func _is_from_server() -> bool:
+## Client: true while handling an RPC sent by the server.
+func is_from_server() -> bool:
 	return _mode == Mode.CLIENT and multiplayer.get_remote_sender_id() == SERVER_PEER_ID
 
 
 @rpc("authority", "call_remote", "reliable", 0)
 func _rpc_join_accepted(player_id: Variant, snapshot: Variant) -> void:
-	if not _is_from_server() or typeof(player_id) != TYPE_STRING or typeof(snapshot) != TYPE_DICTIONARY:
+	if not is_from_server() or typeof(player_id) != TYPE_STRING or typeof(snapshot) != TYPE_DICTIONARY:
 		return
 	client_state.apply_join(str(player_id), snapshot as Dictionary)
+	var fragments: Variant = (snapshot as Dictionary).get(SNAPSHOT_MODULES_KEY, {})
+	for module: NetModule in _modules:
+		var fragment: Variant = (fragments as Dictionary).get(str(module.name), {}) if typeof(fragments) == TYPE_DICTIONARY else {}
+		module.apply_join_fragment(fragment as Dictionary if typeof(fragment) == TYPE_DICTIONARY else {})
 	GameLogger.info("net", "joined world", {"player_id": player_id, "players": client_state.players.size(), "world_items": client_state.world_items.size()})
 	join_accepted.emit(str(player_id))
 
 
 @rpc("authority", "call_remote", "reliable", 0)
 func _rpc_join_rejected(reason: Variant) -> void:
-	if not _is_from_server():
+	if not is_from_server():
 		return
 	GameLogger.warning("net", "join rejected by server", {"reason": str(reason)})
 	join_rejected.emit(str(reason))
@@ -469,7 +558,7 @@ func _rpc_join_rejected(reason: Variant) -> void:
 
 @rpc("authority", "call_remote", "reliable", 0)
 func _rpc_player_joined(player_id: Variant, position: Variant, yaw: Variant) -> void:
-	if not _is_from_server() or typeof(player_id) != TYPE_STRING or typeof(position) != TYPE_VECTOR3 or typeof(yaw) != TYPE_FLOAT:
+	if not is_from_server() or typeof(player_id) != TYPE_STRING or typeof(position) != TYPE_VECTOR3 or typeof(yaw) != TYPE_FLOAT:
 		return
 	client_state.apply_player_joined(str(player_id), position as Vector3, float(yaw))
 	player_joined.emit(str(player_id))
@@ -477,7 +566,7 @@ func _rpc_player_joined(player_id: Variant, position: Variant, yaw: Variant) -> 
 
 @rpc("authority", "call_remote", "reliable", 0)
 func _rpc_player_left(player_id: Variant) -> void:
-	if not _is_from_server() or typeof(player_id) != TYPE_STRING:
+	if not is_from_server() or typeof(player_id) != TYPE_STRING:
 		return
 	client_state.apply_player_left(str(player_id))
 	player_left.emit(str(player_id))
@@ -485,27 +574,27 @@ func _rpc_player_left(player_id: Variant) -> void:
 
 @rpc("authority", "call_remote", "unreliable_ordered", 1)
 func _rpc_position_snapshot(tick: Variant, rows: Variant) -> void:
-	if not _is_from_server() or typeof(tick) != TYPE_INT or typeof(rows) != TYPE_ARRAY:
+	if not is_from_server() or typeof(tick) != TYPE_INT or typeof(rows) != TYPE_ARRAY:
 		return
 	client_state.apply_position_snapshot(int(tick), rows as Array)
 
 
 @rpc("authority", "call_remote", "reliable", 0)
 func _rpc_pickup_result(request_id: Variant, ok: Variant, reason: Variant) -> void:
-	if not _is_from_server() or typeof(request_id) != TYPE_INT or typeof(ok) != TYPE_BOOL or typeof(reason) != TYPE_STRING:
+	if not is_from_server() or typeof(request_id) != TYPE_INT or typeof(ok) != TYPE_BOOL or typeof(reason) != TYPE_STRING:
 		return
 	pickup_result.emit(int(request_id), bool(ok), str(reason))
 
 
 @rpc("authority", "call_remote", "reliable", 0)
 func _rpc_world_item_removed(item_instance_id: Variant) -> void:
-	if not _is_from_server() or typeof(item_instance_id) != TYPE_STRING:
+	if not is_from_server() or typeof(item_instance_id) != TYPE_STRING:
 		return
 	client_state.apply_world_item_removed(str(item_instance_id))
 
 
 @rpc("authority", "call_remote", "reliable", 0)
 func _rpc_inventory_item(item: Variant) -> void:
-	if not _is_from_server() or typeof(item) != TYPE_DICTIONARY:
+	if not is_from_server() or typeof(item) != TYPE_DICTIONARY:
 		return
 	client_state.apply_inventory_item(item as Dictionary)

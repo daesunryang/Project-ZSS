@@ -6,7 +6,9 @@ extends RefCounted
 ## injuries / needs / infection / shelter_membership arrive in Phase 2+.
 ## `peer_id` is runtime connection info and is never saved.
 
-const SCHEMA_VERSION: int = 1
+## v2 (Phase 2): the player file may carry "systems" fragments written by
+## ServerWorld; PlayerState itself ignores that key.
+const SCHEMA_VERSION: int = 2
 const PLAYER_ID_PATTERN: String = "^player_[0-9]+$"
 
 var player_id: String = ""

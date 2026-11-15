@@ -29,7 +29,7 @@ func after_each() -> void:
 
 
 func _persistence() -> WorldPersistence:
-	return WorldPersistence.new(SaveService.new(_root), GameplaySettings.load_or_default(), ItemCatalog.load_directory())
+	return WorldPersistence.new(SaveService.new(_root), CompositionConfig.from_defaults())
 
 
 func _collect_results(client: NetworkService) -> Dictionary:
@@ -41,7 +41,7 @@ func _collect_results(client: NetworkService) -> Dictionary:
 func test_two_clients_move_pick_up_save_and_restore() -> void:
 	# --- session 1 -------------------------------------------------------
 	var persistence: WorldPersistence = _persistence()
-	var world: ServerWorld = persistence.load_or_create(WORLD, DevWorldSeed.load_or_default())
+	var world: ServerWorld = persistence.load_or_create(WORLD)
 	assert_not_null(world)
 	_cluster = NetTestCluster.new(tree, _settings)
 	assert_eq(_cluster.start_server(world, persistence), OK)
@@ -109,7 +109,7 @@ func test_two_clients_move_pick_up_save_and_restore() -> void:
 	_cluster = null
 	world = null
 	var persistence2: WorldPersistence = _persistence()
-	var world2: ServerWorld = persistence2.load_or_create(WORLD, DevWorldSeed.load_or_default())
+	var world2: ServerWorld = persistence2.load_or_create(WORLD)
 	assert_not_null(world2, "world restored from save")
 	if world2 == null:
 		return

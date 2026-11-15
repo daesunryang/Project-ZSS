@@ -3,6 +3,9 @@ extends RefCounted
 ## Runs one server and N clients inside a single SceneTree, each in its own
 ## subtree with its own SceneMultiplayer, talking over real ENet sockets on
 ## localhost. Used by integration/scenario tests.
+## Every service gets the production NetModules from
+## ServerComposition.install_net_modules(); tests may add test-only modules
+## via `extra_module_factories` (Callables returning a new NetModule).
 
 const HOST: String = "127.0.0.1"
 const PORT_BASE: int = 25000
@@ -12,6 +15,8 @@ const DEFAULT_WAIT_FRAMES: int = 600
 
 var tree: SceneTree
 var settings: NetworkSettings
+var config: CompositionConfig
+var extra_module_factories: Array[Callable] = []
 var port: int = 0
 var server: NetworkService = null
 var clients: Array[NetworkService] = []
@@ -19,9 +24,10 @@ var _roots: Array[Node] = []
 var _counter: int = 0
 
 
-func _init(scene_tree: SceneTree, network_settings: NetworkSettings) -> void:
+func _init(scene_tree: SceneTree, network_settings: NetworkSettings, composition: CompositionConfig = null) -> void:
 	tree = scene_tree
 	settings = network_settings
+	config = composition if composition != null else CompositionConfig.from_defaults()
 
 
 ## Starts the server on a free random port.
@@ -94,6 +100,9 @@ func _make_service(prefix: String) -> NetworkService:
 	var service: NetworkService = NetworkService.new()
 	service.name = "NetworkService"
 	root.add_child(service)
+	ServerComposition.install_net_modules(service, config)
+	for factory: Callable in extra_module_factories:
+		service.register_module(factory.call() as NetModule)
 	_roots.append(root)
 	return service
 
