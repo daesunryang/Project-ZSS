@@ -45,3 +45,22 @@ func apply_player_left(player_id: String) -> void:
 func position_of(player_id: String) -> Vector3:
 	var entry: Dictionary = players.get(player_id, {})
 	return entry.get("position", Vector3.ZERO)
+
+
+## Applies an unreliable position snapshot; older ticks are dropped.
+## Returns false when the snapshot was stale or malformed.
+func apply_position_snapshot(tick: int, entries: Array) -> bool:
+	if tick <= last_snapshot_tick:
+		return false
+	for entry: Variant in entries:
+		if typeof(entry) != TYPE_ARRAY or (entry as Array).size() != 3:
+			return false
+		var row: Array = entry
+		if typeof(row[0]) != TYPE_STRING or typeof(row[1]) != TYPE_VECTOR3 or typeof(row[2]) != TYPE_FLOAT:
+			return false
+	last_snapshot_tick = tick
+	for entry: Variant in entries:
+		var row: Array = entry
+		players[str(row[0])] = {"position": row[1], "yaw": row[2]}
+	changed.emit()
+	return true

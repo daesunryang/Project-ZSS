@@ -9,6 +9,8 @@ extends RefCounted
 
 const SCHEMA_VERSION: int = 1
 const ENTITY_KIND_PLAYER: String = "player"
+const REASON_NOT_ONLINE: String = "not_online"
+const REASON_STALE_SEQUENCE: String = "stale_sequence"
 
 var world_id: String
 var gameplay: GameplaySettings
@@ -19,6 +21,8 @@ var inventory: InventoryService
 var _players: Dictionary[String, PlayerState] = {}
 var _player_ids_by_key: Dictionary[String, String] = {}
 var _online: Dictionary[String, bool] = {}
+## player_id -> {"direction": Vector2, "sequence": int, "received_msec": int}
+var _move_inputs: Dictionary[String, Dictionary] = {}
 
 
 func _init(id: String, gameplay_settings: GameplaySettings, catalog: ItemCatalog) -> void:
@@ -62,6 +66,7 @@ func join(player_key: String) -> PlayerState:
 
 ## Takes a player offline (state is kept for saving and reconnect).
 func leave(player_id: String) -> void:
+	_move_inputs.erase(player_id)
 	if _online.erase(player_id):
 		GameLogger.info("world", "player offline", {"world_id": world_id, "player_id": player_id})
 
@@ -82,6 +87,30 @@ func online_player_ids() -> PackedStringArray:
 
 func known_player_count() -> int:
 	return _players.size()
+
+
+## Stores the latest validated move intent. Older/duplicate sequences are
+## ignored (unreliable channel may reorder). Returns "" or a reason code.
+func set_move_input(player_id: String, sequence: int, direction: Vector2, yaw: float, now_msec: int) -> String:
+	if not _online.has(player_id):
+		return REASON_NOT_ONLINE
+	var previous: Dictionary = _move_inputs.get(player_id, {})
+	if not previous.is_empty() and sequence <= int(previous["sequence"]):
+		return REASON_STALE_SEQUENCE
+	_move_inputs[player_id] = {"direction": direction, "sequence": sequence, "received_msec": now_msec}
+	_players[player_id].yaw = yaw
+	return ""
+
+
+## Advances authoritative movement of online players by `delta` seconds.
+## Input older than `input_timeout_msec` counts as "stopped".
+func step_movement(delta: float, now_msec: int, input_timeout_msec: int) -> void:
+	for player_id: String in _move_inputs:
+		var input: Dictionary = _move_inputs[player_id]
+		if now_msec - int(input["received_msec"]) > input_timeout_msec:
+			continue
+		var state: PlayerState = _players[player_id]
+		state.position = MovementRules.step(state.position, input["direction"], gameplay.move_speed_mps, delta, gameplay.world_half_extent_m)
 
 
 ## Clamps a position into the playable square.

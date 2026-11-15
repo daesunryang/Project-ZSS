@@ -15,6 +15,14 @@ extends Node
 ##   server -> client  _rpc_join_rejected(reason:String)                                          reliable, ch0
 ##   server -> client  _rpc_player_joined(player_id:String, position:Vector3, yaw:float)          reliable, ch0
 ##   server -> client  _rpc_player_left(player_id:String)                                         reliable, ch0
+##   client -> server  _rpc_move_intent(sequence:int, direction:Vector2, yaw:float)               unreliable_ordered, ch1
+##   server -> client  _rpc_position_snapshot(tick:int, rows:Array[[player_id, Vector3, yaw]])    unreliable_ordered, ch1
+## Movement: clients send only an input direction (|d| <= 1) and facing; the
+## server applies its own speed on the physics tick, clamps to the world and
+## broadcasts positions. Clients never send positions. Input contract for the
+## client input layer (P1-4): send the current direction every physics tick
+## while it is non-zero and send Vector2.ZERO (a few times) on release; the
+## server-side input timeout only covers lost packets.
 ## Initial state is sent inside _rpc_join_accepted; later deltas use the same
 ## reliable channel, so they always arrive after the snapshot.
 
@@ -35,6 +43,8 @@ const REASON_ALREADY_JOINED: String = "already_joined"
 const REASON_KEY_IN_USE: String = "player_key_in_use"
 const REASON_HANDSHAKE_TIMEOUT: String = "handshake_timeout"
 const MSEC_PER_SEC: float = 1000.0
+const RATE_LIMITED: String = "rate_limited"
+const NOT_JOINED: String = "not_joined"
 
 var client_state: ClientWorldState = ClientWorldState.new()
 
@@ -48,9 +58,15 @@ var _pending_peers: Dictionary[int, int] = {}
 var _peer_players: Dictionary[int, String] = {}
 var _kick_at_msec: Dictionary[int, int] = {}
 var _autosave_elapsed: float = 0.0
+var _move_limiter: RateLimiter = null
+var _snapshot_elapsed: float = 0.0
+var _snapshot_tick: int = 0
+## Rejected intents per reason code (diagnostics and tests).
+var _rejections: Dictionary[String, int] = {}
 # --- client state ---
 var _player_key: String = ""
 var _auto_join: bool = true
+var _move_sequence: int = 0
 
 
 # ============================================================ lifecycle
@@ -62,6 +78,7 @@ func start_server(world: ServerWorld, persistence: WorldPersistence, settings: N
 	_settings = settings
 	_world = world
 	_persistence = persistence
+	_move_limiter = RateLimiter.new(settings.move_intent_rate_per_sec, settings.move_intent_burst)
 	_peer = ENetMultiplayerPeer.new()
 	if settings.bind_address != "*":
 		_peer.set_bind_ip(settings.bind_address)
@@ -145,9 +162,29 @@ func joined_peer_count() -> int:
 	return _peer_players.size()
 
 
+## Server: how many intents were rejected for `reason` ("" = all reasons).
+func rejected_intent_count(reason: String = "") -> int:
+	if not reason.is_empty():
+		return _rejections.get(reason, 0)
+	var total: int = 0
+	for count: int in _rejections.values():
+		total += count
+	return total
+
+
 func _process(delta: float) -> void:
 	if _mode == Mode.SERVER:
 		_server_process(delta)
+
+
+func _physics_process(delta: float) -> void:
+	if _mode != Mode.SERVER:
+		return
+	_world.step_movement(delta, Time.get_ticks_msec(), int(_settings.move_input_timeout_sec * MSEC_PER_SEC))
+	_snapshot_elapsed += delta
+	if _snapshot_elapsed >= 1.0 / _settings.snapshot_rate_hz:
+		_snapshot_elapsed = 0.0
+		_broadcast_positions()
 
 
 # ============================================================ server side
@@ -164,6 +201,7 @@ func _on_peer_disconnected(peer_id: int) -> void:
 		return
 	var player_id: String = _peer_players[peer_id]
 	_peer_players.erase(peer_id)
+	_move_limiter.forget(peer_id)
 	_world.leave(player_id)
 	_persist("player_left")
 	for other: int in _peer_players:
@@ -219,6 +257,50 @@ func _rpc_request_join(protocol_version: Variant, game_version: Variant, player_
 			_rpc_player_joined.rpc_id(other, state.player_id, state.position, state.yaw)
 	GameLogger.info("net", "join accepted", {"peer_id": peer_id, "player_id": state.player_id, "client_game_version": str(game_version)})
 	player_joined.emit(state.player_id)
+
+
+@rpc("any_peer", "call_remote", "unreliable_ordered", 1)
+func _rpc_move_intent(sequence: Variant, direction: Variant, yaw: Variant) -> void:
+	if _mode != Mode.SERVER:
+		return
+	var peer_id: int = multiplayer.get_remote_sender_id()
+	var player_id: String = _peer_players.get(peer_id, "")
+	if player_id.is_empty():
+		_reject_intent(peer_id, "move", NOT_JOINED)
+		return
+	var reason: String = IntentValidator.validate_move(sequence, direction, yaw)
+	if not reason.is_empty():
+		_reject_intent(peer_id, "move", reason, player_id)
+		return
+	var now: int = Time.get_ticks_msec()
+	if not _move_limiter.allow(peer_id, now):
+		_reject_intent(peer_id, "move", RATE_LIMITED, player_id)
+		return
+	reason = _world.set_move_input(player_id, int(sequence), direction as Vector2, float(yaw), now)
+	if not reason.is_empty():
+		_count_rejection(reason)  # stale sequences are normal on unreliable channels
+
+
+func _broadcast_positions() -> void:
+	if _peer_players.is_empty():
+		return
+	_snapshot_tick += 1
+	var rows: Array = []
+	for player_id: String in _world.online_player_ids():
+		var state: PlayerState = _world.get_player(player_id)
+		rows.append([player_id, state.position, state.yaw])
+	for peer_id: int in _peer_players:
+		if _can_send_to(peer_id):
+			_rpc_position_snapshot.rpc_id(peer_id, _snapshot_tick, rows)
+
+
+func _reject_intent(peer_id: int, intent: String, reason: String, player_id: String = "") -> void:
+	_count_rejection(reason)
+	GameLogger.warning("net", "intent rejected", {"peer_id": peer_id, "player_id": player_id, "intent": intent, "reason": reason, "operation": "validate_intent"})
+
+
+func _count_rejection(reason: String) -> void:
+	_rejections[reason] = _rejections.get(reason, 0) + 1
 
 
 func _reject_join(peer_id: int, reason: String) -> void:
@@ -284,6 +366,19 @@ func send_join_request(protocol_version: Variant, game_version: Variant, player_
 	_rpc_request_join.rpc_id(SERVER_PEER_ID, protocol_version, game_version, player_key)
 
 
+## Sends the current movement input (direction on XZ, |d| <= 1; facing).
+func send_move_intent(direction: Vector2, yaw: float) -> void:
+	_move_sequence += 1
+	send_raw_move_intent(_move_sequence, direction, yaw)
+
+
+## Sends an arbitrary move intent (tests use this to send malformed input
+## through the real RPC path).
+func send_raw_move_intent(sequence: Variant, direction: Variant, yaw: Variant) -> void:
+	if _mode == Mode.CLIENT and not client_state.local_player_id.is_empty():
+		_rpc_move_intent.rpc_id(SERVER_PEER_ID, sequence, direction, yaw)
+
+
 func _is_from_server() -> bool:
 	return _mode == Mode.CLIENT and multiplayer.get_remote_sender_id() == SERVER_PEER_ID
 
@@ -319,3 +414,10 @@ func _rpc_player_left(player_id: Variant) -> void:
 		return
 	client_state.apply_player_left(str(player_id))
 	player_left.emit(str(player_id))
+
+
+@rpc("authority", "call_remote", "unreliable_ordered", 1)
+func _rpc_position_snapshot(tick: Variant, rows: Variant) -> void:
+	if not _is_from_server() or typeof(tick) != TYPE_INT or typeof(rows) != TYPE_ARRAY:
+		return
+	client_state.apply_position_snapshot(int(tick), rows as Array)

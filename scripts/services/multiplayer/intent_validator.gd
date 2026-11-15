@@ -8,6 +8,12 @@ extends RefCounted
 const REASON_BAD_TYPE: String = "bad_type"
 const REASON_PROTOCOL_MISMATCH: String = "protocol_mismatch"
 const REASON_BAD_PLAYER_KEY: String = "bad_player_key"
+const REASON_BAD_DIRECTION: String = "bad_direction"
+const REASON_BAD_YAW: String = "bad_yaw"
+const REASON_BAD_SEQUENCE: String = "bad_sequence"
+## Upper bound on |yaw| accepted from clients (radians; any facing is
+## representable within one turn, larger values are treated as garbage).
+const MAX_ABS_YAW: float = TAU
 const PLAYER_KEY_PATTERN: String = "^[A-Za-z0-9_-]+$"
 const GAME_VERSION_MAX_LENGTH: int = 32
 
@@ -24,4 +30,16 @@ static func validate_join(protocol_version: Variant, game_version: Variant, play
 		return REASON_BAD_PLAYER_KEY
 	if RegEx.create_from_string(PLAYER_KEY_PATTERN).search(key) == null:
 		return REASON_BAD_PLAYER_KEY
+	return ""
+
+
+static func validate_move(sequence: Variant, direction: Variant, yaw: Variant) -> String:
+	if typeof(sequence) != TYPE_INT or typeof(direction) != TYPE_VECTOR2 or typeof(yaw) != TYPE_FLOAT:
+		return REASON_BAD_TYPE
+	if int(sequence) < 0:
+		return REASON_BAD_SEQUENCE
+	if not MovementRules.is_valid_direction(direction as Vector2):
+		return REASON_BAD_DIRECTION
+	if not is_finite(float(yaw)) or absf(float(yaw)) > MAX_ABS_YAW:
+		return REASON_BAD_YAW
 	return ""
