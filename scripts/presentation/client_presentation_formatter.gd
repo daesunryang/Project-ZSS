@@ -83,6 +83,36 @@ static func build_treatment_lines(vitals: Dictionary, inventory: Array[Dictionar
 	return lines
 
 
+## HUD line about resting (P2-T8) for a living owner: that it is resting and
+## the key to get up, or the key to lie down. `vitals["resting"]` is what the
+## server told the owner. Nothing for a dead character or without a mirror.
+static func build_rest_lines(vitals: Dictionary, settings: ClientPresentationSettings) -> PackedStringArray:
+	if vitals.is_empty() or vitals.get("alive", true) != true:
+		return PackedStringArray()
+	var key: String = key_label(settings.rest_key)
+	if vitals.get("resting", false) == true:
+		return PackedStringArray(["휴식 중 (피로 회복) | 일어나기 [%s]" % key])
+	return PackedStringArray(["눕기 [%s]" % key])
+
+
+## Server answer to a rest request (lie down / get up).
+static func format_rest_result(ok: bool, reason: String) -> String:
+	return "휴식 요청 승인" if ok else "휴식 요청 거부: %s" % reason
+
+
+## True when a player's capsule lies on the ground: dead, or resting.
+static func player_is_lying(alive: bool, resting: bool) -> bool:
+	return not alive or resting
+
+
+## Tilt of a player's capsule: upright, lying down to rest, or lying dead
+## (death wins).
+static func player_tilt_rad(alive: bool, resting: bool, settings: ClientPresentationSettings) -> float:
+	if not alive:
+		return settings.dead_tilt_rad
+	return settings.rest_tilt_rad if resting else 0.0
+
+
 ## Name of a key as shown in the HUD ("B", "F1", ...).
 static func key_label(key: Key) -> String:
 	return OS.get_keycode_string(key)

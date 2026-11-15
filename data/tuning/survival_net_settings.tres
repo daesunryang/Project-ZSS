@@ -7,3 +7,5 @@ script = ExtResource("1_survival_net")
 owner_snapshot_rate_hz = 2.0
 max_recent_events = 128
 max_player_id_length = 128
+rest_intent_rate_per_sec = 4.0
+rest_intent_burst = 4

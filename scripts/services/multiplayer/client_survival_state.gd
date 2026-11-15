@@ -8,15 +8,21 @@ signal own_vitals_changed
 signal player_alive_changed(player_id: String, alive: bool)
 signal event_received(event: Dictionary)
 signal player_respawned(player_id: String, position: Vector3)
+## A player lay down or is up again (P2-T8). Emitted on changes only.
+signal player_resting_changed(player_id: String, resting: bool)
 
 ## Join fragment / owner snapshot format (same value as SurvivalNetModule).
-const SCHEMA_VERSION: int = 2
+## 3 (P2-T8): the owner snapshot and the status rows carry "resting".
+const SCHEMA_VERSION: int = 3
 const SCOPE_OWNER: String = "owner"
 const SCOPE_PUBLIC: String = "public"
 
 var local_player_id: String = ""
 ## player_id -> bool. This is observation state, never authority.
 var alive_by_player: Dictionary[String, bool] = {}
+## player_id -> bool: lying down to rest (P2-T8). Visible to everybody, so
+## it is kept for every known player. Observation state, never authority.
+var resting_by_player: Dictionary[String, bool] = {}
 
 var _own_vitals: Dictionary = {}
 var _recent_events: Array[Dictionary] = []
@@ -42,6 +48,7 @@ func apply_join(player_id: String, fragment: Dictionary) -> bool:
 	if not _validate_owner_snapshot(own, player_id):
 		return _reject("join_self")
 	var statuses: Dictionary[String, bool] = {}
+	var resting: Dictionary[String, bool] = {}
 	for value: Variant in fragment["players"] as Array:
 		if typeof(value) != TYPE_DICTIONARY:
 			return _reject("join_player_type")
@@ -49,10 +56,12 @@ func apply_join(player_id: String, fragment: Dictionary) -> bool:
 		if not _validate_status(row) or statuses.has(str(row["player_id"])):
 			return _reject("join_player")
 		statuses[str(row["player_id"])] = bool(row["alive"])
-	if not statuses.has(player_id) or statuses[player_id] != bool(own["alive"]):
+		resting[str(row["player_id"])] = bool(row["resting"])
+	if not statuses.has(player_id) or statuses[player_id] != bool(own["alive"]) or resting[player_id] != bool(own["resting"]):
 		return _reject("join_local_status")
 	local_player_id = player_id
 	alive_by_player = statuses
+	resting_by_player = resting
 	_own_vitals = own.duplicate(true)
 	_recent_events.clear()
 	_respawn_positions.clear()
@@ -60,6 +69,8 @@ func apply_join(player_id: String, fragment: Dictionary) -> bool:
 	own_vitals_changed.emit()
 	for status_id: String in alive_by_player:
 		player_alive_changed.emit(status_id, alive_by_player[status_id])
+	for status_id: String in resting_by_player:
+		player_resting_changed.emit(status_id, resting_by_player[status_id])
 	return true
 
 
@@ -71,22 +82,26 @@ func apply_owner_snapshot(snapshot: Dictionary) -> bool:
 		return true
 	_own_vitals = snapshot.duplicate(true)
 	_set_alive(local_player_id, bool(snapshot["alive"]))
+	_set_resting(local_player_id, bool(snapshot["resting"]))
 	own_vitals_changed.emit()
 	changed.emit()
 	return true
 
 
-## Applies one public alive/dead status row (used when a player joins).
+## Applies one public status row: alive / dead and standing / lying down
+## (used when a player joins).
 func apply_player_status(status: Dictionary) -> bool:
 	if not _validate_status(status):
 		return _reject("player_status")
 	_set_alive(str(status["player_id"]), bool(status["alive"]))
+	_set_resting(str(status["player_id"]), bool(status["resting"]))
 	return true
 
 
 func remove_player(player_id: String) -> void:
 	if alive_by_player.erase(player_id):
 		_respawn_positions.erase(player_id)
+		resting_by_player.erase(player_id)
 		changed.emit()
 
 
@@ -116,6 +131,12 @@ func has_player(player_id: String) -> bool:
 
 func is_alive(player_id: String) -> bool:
 	return alive_by_player.get(player_id, false)
+
+
+## True while `player_id` (the local player or anybody else) is lying down
+## to rest. False for unknown players.
+func is_resting(player_id: String) -> bool:
+	return resting_by_player.get(player_id, false)
 
 
 func health() -> float:
@@ -177,6 +198,7 @@ func _apply_event(event: Dictionary) -> void:
 			own_vitals_changed.emit()
 		SurvivalService.EVENT_PLAYER_DIED:
 			_set_alive(player_id, false)
+			_apply_resting(player_id, false)
 			if player_id == local_player_id:
 				_own_vitals["health"] = 0.0
 				_own_vitals["alive"] = false
@@ -186,6 +208,7 @@ func _apply_event(event: Dictionary) -> void:
 			var position: Vector3 = Vector3(float(xyz[0]), float(xyz[1]), float(xyz[2]))
 			_respawn_positions[player_id] = position
 			_set_alive(player_id, true)
+			_apply_resting(player_id, false)
 			player_respawned.emit(player_id, position)
 		SurvivalService.EVENT_PLAYER_INFECTED:
 			_own_vitals["infection_stage"] = InfectionState.STAGE_NAMES[InfectionState.Stage.LATENT]
@@ -208,11 +231,32 @@ func _apply_event(event: Dictionary) -> void:
 			needs[str(event["need"])] = str(event["category"])
 			_own_vitals["needs"] = needs
 			own_vitals_changed.emit()
+		SurvivalService.EVENT_PLAYER_REST_STARTED:
+			_apply_resting(player_id, true)
+		SurvivalService.EVENT_PLAYER_REST_ENDED:
+			_apply_resting(player_id, false)
 	_recent_events.append(event.duplicate(true))
 	while _recent_events.size() > _net_settings.max_recent_events:
 		_recent_events.pop_front()
 	event_received.emit(event.duplicate(true))
 	changed.emit()
+
+
+## Applies a rest change reported by an event; the vitals mirror of the
+## local player follows.
+func _apply_resting(player_id: String, resting: bool) -> void:
+	if player_id == local_player_id and not _own_vitals.is_empty() and _own_vitals.get("resting", false) != resting:
+		_own_vitals["resting"] = resting
+		own_vitals_changed.emit()
+	_set_resting(player_id, resting)
+
+
+func _set_resting(player_id: String, resting: bool) -> void:
+	var previous: bool = resting_by_player.get(player_id, false)
+	resting_by_player[player_id] = resting
+	if previous != resting:
+		player_resting_changed.emit(player_id, resting)
+		changed.emit()
 
 
 func _set_alive(player_id: String, alive: bool) -> void:
@@ -224,7 +268,10 @@ func _set_alive(player_id: String, alive: bool) -> void:
 
 
 func _validate_owner_snapshot(data: Dictionary, expected_player_id: String) -> bool:
-	if not _has_exact_keys(data, ["schema_version", "player_id", "alive", "health", "stamina", "needs", "wounds", "infection_stage", "character_generation"]):
+	if not _has_exact_keys(data, ["schema_version", "player_id", "alive", "health", "stamina", "needs", "wounds", "infection_stage", "character_generation", "resting"]):
+		return false
+	# A dead character does not rest.
+	if typeof(data["resting"]) != TYPE_BOOL or (bool(data["resting"]) and data["alive"] != true):
 		return false
 	if typeof(data["schema_version"]) != TYPE_INT or int(data["schema_version"]) != SCHEMA_VERSION:
 		return false
@@ -275,10 +322,13 @@ func _validate_wound(wound: Dictionary) -> bool:
 
 func _validate_status(status: Dictionary) -> bool:
 	return (
-		_has_exact_keys(status, ["player_id", "alive"])
+		_has_exact_keys(status, ["player_id", "alive", "resting"])
 		and typeof(status["player_id"]) == TYPE_STRING
 		and _valid_player_id(str(status["player_id"]))
 		and typeof(status["alive"]) == TYPE_BOOL
+		and typeof(status["resting"]) == TYPE_BOOL
+		# A dead character does not rest.
+		and not (bool(status["resting"]) and not bool(status["alive"]))
 	)
 
 
@@ -316,6 +366,10 @@ func _validate_owner_event(event: Dictionary) -> bool:
 			return _has_exact_keys(event, ["scope", "event_type", "player_id", "from", "to", "world_time"]) and typeof(event["from"]) == TYPE_STRING and typeof(event["to"]) == TYPE_STRING and InfectionState.STAGE_NAMES.has(str(event["from"])) and InfectionState.STAGE_NAMES.has(str(event["to"])) and _world_time(event["world_time"])
 		SurvivalService.EVENT_PLAYER_INFECTION_CURED:
 			return _has_exact_keys(event, ["scope", "event_type", "player_id", "source_id", "from", "world_time"]) and typeof(event["source_id"]) == TYPE_STRING and typeof(event["from"]) == TYPE_STRING and InfectionState.STAGE_NAMES.has(str(event["from"])) and _world_time(event["world_time"])
+		SurvivalService.EVENT_PLAYER_REST_STARTED:
+			return _validate_rest_event(event)
+		SurvivalService.EVENT_PLAYER_REST_ENDED:
+			return _has_exact_keys(event, ["scope", "event_type", "player_id", "cause", "world_time"]) and typeof(event["cause"]) == TYPE_STRING and SurvivalService.REST_END_CAUSES.has(str(event["cause"])) and _world_time(event["world_time"])
 		SurvivalService.EVENT_NEED_CATEGORY_CHANGED:
 			return _has_exact_keys(event, ["scope", "event_type", "player_id", "need", "category", "world_time"]) and typeof(event["need"]) == TYPE_STRING and NeedKind.KIND_NAMES.has(str(event["need"])) and typeof(event["category"]) == TYPE_STRING and NeedKind.CATEGORY_NAMES.has(str(event["category"])) and _world_time(event["world_time"])
 	return false
@@ -329,7 +383,16 @@ func _validate_public_event(event: Dictionary) -> bool:
 			return _has_exact_keys(event, ["scope", "event_type", "player_id", "world_time"]) and _world_time(event["world_time"])
 		SurvivalService.EVENT_PLAYER_RESPAWNED:
 			return _validate_respawn_event(event)
+		# Lying down / getting up of another player: no cause, no numbers.
+		SurvivalService.EVENT_PLAYER_REST_STARTED, SurvivalService.EVENT_PLAYER_REST_ENDED:
+			return _validate_rest_event(event)
 	return false
+
+
+## A rest event without a cause (the owner event "player_rest_started" and
+## both public rest events).
+func _validate_rest_event(event: Dictionary) -> bool:
+	return _has_exact_keys(event, ["scope", "event_type", "player_id", "world_time"]) and _world_time(event["world_time"])
 
 
 func _validate_respawn_event(event: Dictionary) -> bool:

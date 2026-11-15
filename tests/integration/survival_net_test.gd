@@ -161,11 +161,11 @@ func test_non_server_and_malformed_payloads_are_ignored() -> void:
 	var before_health: float = state.health()
 	var before_events: int = state.recent_events().size()
 	# A direct/local invocation has no server remote sender and is ignored.
-	_module(a)._rpc_survival_owner_snapshot({"schema_version": ClientSurvivalState.SCHEMA_VERSION, "player_id": a.client_state.local_player_id, "alive": true, "health": 1.0, "stamina": 1.0, "needs": {"hunger": "good", "thirst": "good", "fatigue": "good"}, "wounds": [], "infection_stage": "none", "character_generation": 1})
+	_module(a)._rpc_survival_owner_snapshot({"schema_version": ClientSurvivalState.SCHEMA_VERSION, "player_id": a.client_state.local_player_id, "alive": true, "health": 1.0, "stamina": 1.0, "needs": {"hunger": "good", "thirst": "good", "fatigue": "good"}, "wounds": [], "infection_stage": "none", "character_generation": 1, "resting": false})
 	assert_eq(state.health(), before_health, "non-server sender ignored")
 	# These travel through the real server authority RPC path but fail DTO validation.
 	var peer_id: int = _cluster.server.peer_of_player(a.client_state.local_player_id)
-	_module(_cluster.server)._rpc_survival_owner_snapshot.rpc_id(peer_id, {"schema_version": ClientSurvivalState.SCHEMA_VERSION, "player_id": a.client_state.local_player_id, "alive": true, "health": _config.survival.max_health + 1.0, "stamina": 1.0, "needs": {}, "wounds": [], "infection_stage": "zombified", "character_generation": 1})
+	_module(_cluster.server)._rpc_survival_owner_snapshot.rpc_id(peer_id, {"schema_version": ClientSurvivalState.SCHEMA_VERSION, "player_id": a.client_state.local_player_id, "alive": true, "health": _config.survival.max_health + 1.0, "stamina": 1.0, "needs": {}, "wounds": [], "infection_stage": "zombified", "character_generation": 1, "resting": false})
 	_module(_cluster.server)._rpc_survival_events.rpc_id(peer_id, [{"scope": "public", "event_type": "player_infected", "player_id": a.client_state.local_player_id, "infection_stage": "latent"}])
 	await _cluster.wait_frames(10)
 	assert_eq(state.health(), before_health, "out-of-range snapshot ignored")

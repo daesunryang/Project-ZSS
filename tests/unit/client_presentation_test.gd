@@ -12,6 +12,7 @@ const ACTIONS: Array[StringName] = [
 	ClientInputActions.DRINK,
 	ClientInputActions.USE_BANDAGE,
 	ClientInputActions.USE_CURE,
+	ClientInputActions.REST,
 ]
 
 
@@ -360,6 +361,61 @@ func test_treatment_hud_shows_the_infection_and_the_cures_carried() -> void:
 	assert_eq(ClientPresentationFormatter.build_treatment_lines(vitals, carried, catalog, settings)[1], "감염: 중증 | 치료제 2개 [C]", "the HUD does not judge whether it is too late: the server does")
 	for reason: String in [SurvivalService.REASON_NOT_INFECTED, SurvivalService.REASON_TOO_LATE]:
 		assert_contains(ClientPresentationFormatter.format_consume_result(false, reason), reason)
+
+
+# ------------------------------------------------------------ P2-T8: rest key, HUD and lying capsule
+
+func test_rest_key_is_an_action_driven_by_settings() -> void:
+	var shipped: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
+	assert_eq(shipped.validate().size(), 0, "; ".join(shipped.validate()))
+	assert_eq(shipped.rest_key, KEY_R, "shipped rest key")
+	assert_true(shipped.rest_min_interval_sec > 0.0)
+	var camera: CameraSettings = CameraSettings.new()
+	var presentation: ClientPresentationSettings = ClientPresentationSettings.new()
+	presentation.rest_key = KEY_Z
+	ClientInputActions.register(camera, presentation)
+	var events: Array[InputEvent] = InputMap.action_get_events(ClientInputActions.REST)
+	assert_eq(events.size(), 1)
+	assert_eq((events[0] as InputEventKey).physical_keycode, KEY_Z)
+	ClientInputActions.register(camera, presentation)
+	assert_eq(InputMap.action_get_events(ClientInputActions.REST).size(), 1, "registered once")
+	assert_false(ClientInputActions.USE_ACTION_KINDS.has(ClientInputActions.REST), "resting uses no item")
+	var invalid: ClientPresentationSettings = ClientPresentationSettings.new()
+	invalid.rest_key = KEY_NONE
+	invalid.rest_min_interval_sec = 0.0
+	invalid.rest_tilt_rad = 0.0
+	assert_eq(invalid.validate().size(), 3, "; ".join(invalid.validate()))
+	var shared: ClientPresentationSettings = ClientPresentationSettings.new()
+	shared.rest_key = shared.cure_key
+	assert_eq(shared.validate().size(), 1, "the rest key must differ from the use keys: %s" % "; ".join(shared.validate()))
+	# The flood guard is the same rule as the attack guard, with its own interval.
+	var policy: AttackIntentPolicy = AttackIntentPolicy.new(ClientPresentationSettings.new().rest_min_interval_sec)
+	assert_false(policy.should_send(false, 0.0), "offline input sends nothing")
+	assert_true(policy.should_send(true, 0.0))
+	assert_false(policy.should_send(true, 0.1))
+
+
+func test_rest_hud_line_result_text_and_lying_capsule() -> void:
+	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
+	assert_eq(ClientPresentationFormatter.build_rest_lines({"alive": true, "resting": true}, settings), PackedStringArray(["휴식 중 (피로 회복) | 일어나기 [R]"]))
+	assert_eq(ClientPresentationFormatter.build_rest_lines({"alive": true, "resting": false}, settings), PackedStringArray(["눕기 [R]"]))
+	assert_eq(ClientPresentationFormatter.build_rest_lines({"alive": true}, settings), PackedStringArray(["눕기 [R]"]), "not resting until the server says so")
+	settings.rest_key = KEY_Z
+	assert_eq(ClientPresentationFormatter.build_rest_lines({"alive": true, "resting": true}, settings)[0], "휴식 중 (피로 회복) | 일어나기 [Z]", "the key comes from the settings")
+	assert_true(ClientPresentationFormatter.build_rest_lines({"alive": false, "resting": false}, settings).is_empty(), "a dead character has no rest line")
+	assert_true(ClientPresentationFormatter.build_rest_lines({}, settings).is_empty(), "no owner mirror, no line")
+	assert_contains(ClientPresentationFormatter.format_rest_result(true, ""), "승인")
+	assert_contains(ClientPresentationFormatter.format_rest_result(false, SurvivalService.REASON_ALREADY_RESTING), SurvivalService.REASON_ALREADY_RESTING)
+	# Capsule pose: standing, lying down to rest, lying dead.
+	assert_eq(ClientPresentationFormatter.player_tilt_rad(true, false, settings), 0.0, "standing")
+	assert_eq(ClientPresentationFormatter.player_tilt_rad(true, true, settings), settings.rest_tilt_rad, "resting: lying down")
+	assert_eq(ClientPresentationFormatter.player_tilt_rad(false, false, settings), settings.dead_tilt_rad, "dead")
+	assert_eq(ClientPresentationFormatter.player_tilt_rad(false, true, settings), settings.dead_tilt_rad, "death wins")
+	assert_false(ClientPresentationFormatter.player_is_lying(true, false))
+	assert_true(ClientPresentationFormatter.player_is_lying(true, true))
+	assert_true(ClientPresentationFormatter.player_is_lying(false, false))
+	# The attack result names the server's reason when a resting player swings.
+	assert_contains(ClientPresentationFormatter.format_attack_result(false, SurvivalService.REASON_PLAYER_RESTING), SurvivalService.REASON_PLAYER_RESTING)
 
 
 # ------------------------------------------------------------ P2-T4: permanent death

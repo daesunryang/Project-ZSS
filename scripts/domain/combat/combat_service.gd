@@ -26,6 +26,9 @@ extends ServerSystem
 ##   unknown_player      - not a player of this world
 ##   not_online          - the player is not connected
 ##   player_dead         - the player is dead
+##   player_resting      - the player is lying down (P2-T8), or any other
+##                         reason a system blocks the player's actions
+##                         (ServerWorld.player_action_block_reason)
 ##   no_weapon           - no usable weapon definition (configuration error)
 ##   attack_on_cooldown  - the previous swing's cooldown is still running
 ##   not_enough_stamina  - less stamina than the weapon's cost
@@ -119,6 +122,10 @@ func request_melee_attack(world: ServerWorld, player_id: String, aim_yaw: float)
 		return _reject(player_id, REASON_UNKNOWN_PLAYER)
 	if not survival.is_alive(player_id):
 		return _reject(player_id, REASON_PLAYER_DEAD)
+	# A resting player must get up before it can attack (P2-T8).
+	var blocked: String = world.player_action_block_reason(player_id)
+	if not blocked.is_empty():
+		return _reject(player_id, blocked)
 	var weapon: MeleeWeaponDefinition = _resolve_weapon(world, player)
 	if weapon == null:
 		return _reject(player_id, REASON_NO_WEAPON)

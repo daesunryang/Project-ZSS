@@ -38,7 +38,8 @@ extends RefCounted
 ##    infection_cured_from: String (stage name that was cured, "" = none),
 ##    world_time}
 ## Failure reasons, in check order: not_online, consumption_unavailable (no
-## survival system), unknown_player / player_dead, unknown_item,
+## survival system), unknown_player / player_dead, player_resting (or another
+## system's ServerSystem.player_action_block_reason), unknown_item,
 ## item_not_in_inventory, not_consumable (no use effect), bad_need_amount,
 ## not_bleeding, not_infected / too_late.
 
@@ -64,6 +65,11 @@ static func try_consume(world: ServerWorld, player_id: String, item_instance_id:
 		return ActionResult.failure(SurvivalService.REASON_UNKNOWN_PLAYER)
 	if not survival.is_alive(player_id):
 		return ActionResult.failure(SurvivalService.REASON_PLAYER_DEAD)
+	# Any other state in which the player cannot handle items (a resting
+	# player must get up first, P2-T8).
+	var blocked: String = world.player_action_block_reason(player_id)
+	if not blocked.is_empty():
+		return ActionResult.failure(blocked)
 	var player: PlayerState = world.get_player(player_id)
 	var item: ItemInstance = world.inventory.get_item(item_instance_id)
 	if item == null:

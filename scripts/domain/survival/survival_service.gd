@@ -20,6 +20,9 @@ extends ServerSystem
 ##   infection_stage(player_id) -> InfectionState.Stage
 ##   check_reduce_needs(player_id, hunger, thirst) -> String   (preflight)
 ##   reduce_needs(player_id, hunger, thirst, source_id) -> ActionResult
+##   is_resting(player_id) -> bool
+##   start_rest(player_id) -> ActionResult
+##   stop_rest(player_id) -> ActionResult
 ##   drain_events() -> Array[Dictionary]             (network read surface)
 ##
 ##   need_category(player_id, NeedKind.Kind) -> NeedKind.Category
@@ -39,10 +42,20 @@ extends ServerSystem
 ## `character_generation`. A dead character cannot pick up or put down
 ## items (player_action_block_reason).
 ##
+## Rest (P2-T8, docs/09 §14.23): an online, living player may lie down
+## (start_rest) and get up (stop_rest). While it rests its fatigue falls at
+## the configured calendar-time rate (never below 0) instead of rising,
+## hunger and thirst keep rising (SurvivalSettings.rest_*), it cannot move
+## (player_movement_multiplier 0) and it cannot attack or handle items
+## (player_action_block_reason "player_resting"). A hit (apply_damage) wakes
+## it; death ends the rest; leaving ends it silently. Time-based damage
+## (bleeding, ...) does not wake. Resting is session state: it is not saved,
+## and nobody rests after a restart.
+##
 ## Two time axes (docs/00 ADR-006, docs/09 §14.16):
-##   calendar time (world_delta, WorldClock.world_time_sec): needs, infection
-##     stages and their health loss, bleeding, natural health/wound recovery,
-##     starvation and dehydration.
+##   calendar time (world_delta, WorldClock.world_time_sec): needs (also the
+##     fatigue recovered by resting), infection stages and their health loss,
+##     bleeding, natural health/wound recovery, starvation and dehydration.
 ##   action time (action_delta, WorldClock.action_time_sec, real seconds):
 ##     stamina regeneration, the respawn delay and the interval that batches
 ##     "player_survival_damage" events.
@@ -82,6 +95,14 @@ const EVENT_PLAYER_INFECTION_CURED: String = "player_infection_cured"
 const EVENT_NEED_CATEGORY_CHANGED: String = "need_category_changed"
 ## Hunger and/or thirst were lowered (eating, drinking; P2-T3).
 const EVENT_PLAYER_NEEDS_REDUCED: String = "player_needs_reduced"
+## A player lay down / is up again (P2-T8). The second carries `cause`.
+const EVENT_PLAYER_REST_STARTED: String = "player_rest_started"
+const EVENT_PLAYER_REST_ENDED: String = "player_rest_ended"
+## Causes of "player_rest_ended".
+const REST_END_REQUESTED: String = "requested"
+const REST_END_DAMAGED: String = "damaged"
+const REST_END_DIED: String = "died"
+const REST_END_CAUSES: PackedStringArray = [REST_END_REQUESTED, REST_END_DAMAGED, REST_END_DIED]
 
 const REASON_UNKNOWN_PLAYER: String = "unknown_player"
 ## A need amount that is not finite, negative, or both amounts are 0.
@@ -95,6 +116,12 @@ const REASON_NOT_BLEEDING: String = "not_bleeding"
 const REASON_BAD_WOUND_COUNT: String = "bad_wound_count"
 const REASON_NOT_INFECTED: String = "not_infected"
 const REASON_TOO_LATE: String = "too_late"
+## Rest (P2-T8). `player_resting` is also the reason a resting player's
+## attacks and item actions are refused (player_action_block_reason).
+const REASON_PLAYER_RESTING: String = "player_resting"
+const REASON_ALREADY_RESTING: String = "already_resting"
+const REASON_NOT_RESTING: String = "not_resting"
+const REASON_NOT_ONLINE: String = ServerWorld.REASON_NOT_ONLINE
 
 const CAUSE_COMBAT: String = "combat"
 const CAUSE_BLEEDING: String = "bleeding"
@@ -120,6 +147,9 @@ var _clock: WorldClock
 var _world_ref: WeakRef = null
 var _vitals: Dictionary[String, PlayerVitals] = {}
 var _online: Dictionary[String, bool] = {}
+## Players that are lying down (P2-T8). Session state, never saved: a
+## player is removed when it gets up, is hit, dies or goes offline.
+var _resting: Dictionary[String, bool] = {}
 var _events: Array[Dictionary] = []
 ## Events discarded because the configured pending queue was full.
 var dropped_event_count: int = 0
@@ -137,6 +167,9 @@ var _step_action_end: float = 0.0
 ## Action seconds per calendar second in this tick (1 / time scale; 0 when a
 ## caller passes no action time).
 var _step_action_per_world_sec: float = 0.0
+## Whether the player being integrated rests (set by _advance_player before
+## every living portion; selects the need rates, _need_rate).
+var _step_resting: bool = false
 
 
 func _init(settings: SurvivalSettings, ids: EntityIdGenerator, clock: WorldClock) -> void:
@@ -268,6 +301,9 @@ func apply_damage(player_id: String, damage: DamageInput) -> ActionResult:
 	_push_event(event)
 	if died:
 		_mark_dead(player_id, vitals, _clock.world_time_sec, _clock.action_time_sec, CAUSE_COMBAT)
+	elif _resting.has(player_id):
+		# A hit wakes a resting player (P2-T8).
+		_end_rest(player_id, REST_END_DAMAGED, _clock.world_time_sec)
 	GameLogger.info("survival", "player wounded", {
 		"player_id": player_id, "entity_id": wound.wound_id, "source_id": damage.source_id,
 		"body_part": BodyPart.to_name(wound.body_part), "wound_type": Wound.type_name(wound.wound_type),
@@ -495,6 +531,49 @@ func reduce_needs(player_id: String, hunger_amount: float, thirst_amount: float,
 	return ActionResult.success(event)
 
 
+## True while the player is lying down to rest (P2-T8).
+func is_resting(player_id: String) -> bool:
+	return _resting.has(player_id)
+
+
+## The player lies down (P2-T8; see the header for what resting does).
+## Success event (also queued and logged):
+##   {event_type: "player_rest_started", player_id, world_time}
+## Failure reasons: unknown_player, player_dead, not_online,
+## already_resting; a refused call changes nothing.
+func start_rest(player_id: String) -> ActionResult:
+	var reason: String = _check_living(player_id)
+	if reason.is_empty() and not _online.has(player_id):
+		reason = REASON_NOT_ONLINE
+	if reason.is_empty() and _resting.has(player_id):
+		reason = REASON_ALREADY_RESTING
+	if not reason.is_empty():
+		return ActionResult.failure(reason)
+	_resting[player_id] = true
+	var event: Dictionary = {
+		"event_type": EVENT_PLAYER_REST_STARTED,
+		"player_id": player_id,
+		"world_time": _clock.world_time_sec,
+	}
+	_push_event(event)
+	GameLogger.info("survival", "player rest started", event)
+	return ActionResult.success(event)
+
+
+## The player gets up (P2-T8). Success event (also queued and logged):
+##   {event_type: "player_rest_ended", player_id, cause: "requested",
+##    world_time}
+## Failure reasons: unknown_player, not_resting; a refused call changes
+## nothing. (The same event with cause "damaged" / "died" is queued when a
+## hit wakes the player or the player dies.)
+func stop_rest(player_id: String) -> ActionResult:
+	if not _vitals.has(player_id):
+		return ActionResult.failure(REASON_UNKNOWN_PLAYER)
+	if not _resting.has(player_id):
+		return ActionResult.failure(REASON_NOT_RESTING)
+	return ActionResult.success(_end_rest(player_id, REST_END_REQUESTED, _clock.world_time_sec))
+
+
 # ------------------------------------------------------------ ServerSystem
 
 func on_registered(world: ServerWorld) -> void:
@@ -502,15 +581,21 @@ func on_registered(world: ServerWorld) -> void:
 
 
 ## Server movement factor (ServerWorld.step_movement): wounds, needs, death.
+## A resting player does not move at all (P2-T8).
 func player_movement_multiplier(player_id: String) -> float:
+	if _resting.has(player_id):
+		return DEAD_MULTIPLIER
 	return movement_speed_multiplier(player_id)
 
 
 ## A dead character is finished: it can neither pick up nor put down items
-## while the player waits for the new character (P2-T4).
+## while the player waits for the new character (P2-T4). A resting player
+## must get up first: it cannot attack or handle items (P2-T8).
 func player_action_block_reason(player_id: String) -> String:
 	var vitals: PlayerVitals = _vitals.get(player_id, null)
-	return REASON_PLAYER_DEAD if vitals != null and not vitals.is_alive() else ""
+	if vitals != null and not vitals.is_alive():
+		return REASON_PLAYER_DEAD
+	return REASON_PLAYER_RESTING if _resting.has(player_id) else ""
 
 
 func on_player_online(_world: ServerWorld, player_id: String) -> void:
@@ -530,6 +615,8 @@ func on_player_online(_world: ServerWorld, player_id: String) -> void:
 
 func on_player_offline(_world: ServerWorld, player_id: String) -> void:
 	_online.erase(player_id)
+	# Leaving ends a rest without an event: the player is gone for everybody.
+	_resting.erase(player_id)
 	var vitals: PlayerVitals = _vitals.get(player_id, null)
 	if vitals != null:
 		_flush_survival_damage(player_id, vitals, _clock.world_time_sec)
@@ -591,6 +678,8 @@ func restore_player_fragment(player_id: String, fragment: Dictionary) -> PackedS
 func _advance_player(world: ServerWorld, player_id: String, vitals: PlayerVitals, start_time: float, end_time: float) -> void:
 	var cursor: float = start_time
 	while cursor < end_time:
+		# Resting can end inside the tick (death), never start.
+		_step_resting = _resting.has(player_id)
 		if not vitals.is_alive():
 			if vitals.died_at_world_time == PlayerVitals.NOT_DEAD_TIME:
 				vitals.died_at_world_time = cursor
@@ -687,28 +776,35 @@ func _health_after_elapsed(vitals: PlayerVitals, elapsed: float) -> float:
 	return recovered - damage
 
 
-## Duration for which all needs remain GOOD. Bleeding or an active infection
-## health-loss effect makes it zero.
+## Duration within `elapsed` for which all needs are GOOD. Bleeding or an
+## active infection health-loss effect makes it zero. A rising need ends the
+## window when it reaches the caution threshold; a falling need (fatigue
+## while resting, P2-T8) that starts at or above the threshold opens it when
+## it drops below. Needs change linearly, so the window is one interval.
 func _natural_recovery_duration(vitals: PlayerVitals, elapsed: float) -> float:
 	if _has_bleeding(vitals) or _settings.infection_health_loss_per_world_sec(vitals.infection.stage) > 0.0:
 		return 0.0
-	var duration: float = elapsed
+	var good_from: float = 0.0
+	var good_until: float = elapsed
 	for kind_index: int in NeedKind.KIND_NAMES.size():
 		var kind: NeedKind.Kind = kind_index as NeedKind.Kind
 		var value: float = _need_value(vitals, kind)
+		var rate: float = _need_rate(kind)
 		if value >= _settings.need_caution_threshold:
-			return 0.0
-		var rate: float = _settings.need_rate_per_world_sec(kind)
-		if rate > 0.0:
-			duration = minf(duration, (_settings.need_caution_threshold - value) / rate)
-	return maxf(duration, 0.0)
+			if rate >= 0.0:
+				return 0.0
+			good_from = maxf(good_from, (value - _settings.need_caution_threshold) / -rate)
+		elif rate > 0.0:
+			good_until = minf(good_until, (_settings.need_caution_threshold - value) / rate)
+	return maxf(good_until - good_from, 0.0)
 
 
 func _need_time_at_max(vitals: PlayerVitals, kind: NeedKind.Kind, elapsed: float) -> float:
 	var value: float = _need_value(vitals, kind)
+	var rate: float = _need_rate(kind)
 	if value >= _settings.need_max:
-		return elapsed
-	var rate: float = _settings.need_rate_per_world_sec(kind)
+		# A need at its maximum stays there unless it is falling.
+		return elapsed if rate >= 0.0 else 0.0
 	if rate <= 0.0:
 		return 0.0
 	return maxf(elapsed - (_settings.need_max - value) / rate, 0.0)
@@ -749,8 +845,10 @@ func _stamina_recovery(vitals: PlayerVitals, elapsed: float) -> float:
 	for kind_index: int in NeedKind.KIND_NAMES.size():
 		var kind: NeedKind.Kind = kind_index as NeedKind.Kind
 		var value: float = _need_value(vitals, kind)
-		var rate: float = _settings.need_rate_per_world_sec(kind)
-		if rate <= 0.0:
+		# Negative while fatigue falls during rest: the crossing times below
+		# hold for both directions.
+		var rate: float = _need_rate(kind)
+		if rate == 0.0:
 			continue
 		for threshold: float in [_settings.need_caution_threshold, _settings.need_danger_threshold]:
 			var crossing: float = (threshold - value) / rate
@@ -771,7 +869,7 @@ func _worst_need_category_at(vitals: PlayerVitals, elapsed: float) -> NeedKind.C
 	var worst: NeedKind.Category = NeedKind.Category.GOOD
 	for kind_index: int in NeedKind.KIND_NAMES.size():
 		var kind: NeedKind.Kind = kind_index as NeedKind.Kind
-		var projected: float = minf(_need_value(vitals, kind) + _settings.need_rate_per_world_sec(kind) * elapsed, _settings.need_max)
+		var projected: float = clampf(_need_value(vitals, kind) + _need_rate(kind) * elapsed, 0.0, _settings.need_max)
 		var category: NeedKind.Category = NeedKind.category_for(projected, _settings.need_caution_threshold, _settings.need_danger_threshold)
 		worst = maxi(worst, category) as NeedKind.Category
 	return worst
@@ -874,6 +972,9 @@ func _mark_dead(player_id: String, vitals: PlayerVitals, world_time: float, acti
 	vitals.died_at_action_time = action_time
 	# Report damage taken up to the death before the death itself.
 	_flush_survival_damage(player_id, vitals, world_time)
+	# A dead character does not rest (P2-T8).
+	if _resting.has(player_id):
+		_end_rest(player_id, REST_END_DIED, world_time)
 	_leave_belongings(player_id)
 	var event: Dictionary = {
 		"event_type": EVENT_PLAYER_DIED,
@@ -955,15 +1056,40 @@ func _world_time_at(action_time: float) -> float:
 	return _step_world_start + wait / _step_action_per_world_sec
 
 
-## Raises each need by rate * world_delta (clamped to need_max) and logs
-## category changes so balance problems are visible in server logs.
+## Moves each need by rate * world_delta (clamped to 0..need_max; the rate
+## of fatigue is negative while the player rests) and logs category changes
+## so balance problems are visible in server logs.
 func _advance_needs(player_id: String, vitals: PlayerVitals, world_delta: float) -> void:
 	for kind_index: int in NeedKind.KIND_NAMES.size():
 		var kind: NeedKind.Kind = kind_index as NeedKind.Kind
 		var before: NeedKind.Category = need_category(player_id, kind)
-		var raised: float = minf(_need_value(vitals, kind) + _settings.need_rate_per_world_sec(kind) * world_delta, _settings.need_max)
-		vitals.set(NeedKind.kind_name(kind), raised)
+		var moved: float = clampf(_need_value(vitals, kind) + _need_rate(kind) * world_delta, 0.0, _settings.need_max)
+		vitals.set(NeedKind.kind_name(kind), moved)
 		_report_need_category_change(player_id, vitals, kind, before)
+
+
+## Need units per calendar second of the player being integrated: the usual
+## growth, or the resting rates (fatigue falls) while it rests (P2-T8). Only
+## valid inside _advance_player, which sets `_step_resting`.
+func _need_rate(kind: NeedKind.Kind) -> float:
+	if _step_resting:
+		return _settings.resting_need_rate_per_world_sec(kind)
+	return _settings.need_rate_per_world_sec(kind)
+
+
+## Ends the rest of `player_id` and queues / logs "player_rest_ended". The
+## caller checked that the player rests. Returns the event.
+func _end_rest(player_id: String, cause: String, world_time: float) -> Dictionary:
+	_resting.erase(player_id)
+	var event: Dictionary = {
+		"event_type": EVENT_PLAYER_REST_ENDED,
+		"player_id": player_id,
+		"cause": cause,
+		"world_time": world_time,
+	}
+	_push_event(event)
+	GameLogger.info("survival", "player rest ended", event)
+	return event
 
 
 ## Queues and logs "need_category_changed" when the category of `kind`

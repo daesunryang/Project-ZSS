@@ -23,7 +23,15 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ## 5: P2-T3..T5 (InventoryNet: consume intent and its result; P2-T4: the
 ##    SurvivalNet owner snapshot / join fragment carry "character_generation",
 ##    format 2; the pickup result may say "player_dead").
-const PROTOCOL_VERSION: int = 5
+## 6: P2-T6..T8, bumped once for the three tickets. P2-T8 changes the wire:
+##    SurvivalNet gets the rest intent and its result (_rpc_request_rest,
+##    _rpc_rest_result), the owner snapshot and every status row / join
+##    fragment row carry "resting" (format 3), there are public and owner
+##    events "player_rest_started" / "player_rest_ended", and pickup, drop,
+##    consume and melee results may say "player_resting". P2-T6 / P2-T7 only
+##    add result reasons to the consume intent ("not_bleeding",
+##    "not_infected", "too_late"); its messages are unchanged.
+const PROTOCOL_VERSION: int = 6
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

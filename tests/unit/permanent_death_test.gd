@@ -522,7 +522,7 @@ func _owner_snapshot(player_id: String, generation: Variant) -> Dictionary:
 		"schema_version": ClientSurvivalState.SCHEMA_VERSION, "player_id": player_id, "alive": true,
 		"health": 50.0, "stamina": 50.0,
 		"needs": {"hunger": "good", "thirst": "good", "fatigue": "good"},
-		"wounds": [], "infection_stage": "none", "character_generation": generation,
+		"wounds": [], "infection_stage": "none", "character_generation": generation, "resting": false,
 	}
 
 
@@ -530,7 +530,7 @@ func test_the_owner_mirror_carries_the_character_generation() -> void:
 	const PLAYER: String = "player_000001"
 	var mirror: ClientSurvivalState = ClientSurvivalState.new(SurvivalNetSettings.new(), SurvivalSettings.new())
 	assert_eq(mirror.character_generation(), 0, "unknown before anything arrived")
-	var fragment: Dictionary = {"schema_version": ClientSurvivalState.SCHEMA_VERSION, "self": _owner_snapshot(PLAYER, 1), "players": [{"player_id": PLAYER, "alive": true}]}
+	var fragment: Dictionary = {"schema_version": ClientSurvivalState.SCHEMA_VERSION, "self": _owner_snapshot(PLAYER, 1), "players": [{"player_id": PLAYER, "alive": true, "resting": false}]}
 	assert_true(mirror.apply_join(PLAYER, fragment))
 	assert_eq(mirror.character_generation(), 1)
 	assert_true(mirror.apply_owner_snapshot(_owner_snapshot(PLAYER, 2)))

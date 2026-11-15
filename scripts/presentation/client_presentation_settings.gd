@@ -38,6 +38,14 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 ## Item kinds listed in the HUD inventory summary; the rest is counted.
 @export_range(1, 50) var hud_inventory_line_count: int = 6
 
+## Rest (P2-T8, docs/15 P2-155): the key asks the server to lie down, or to
+## get up when the mirror says the local player is lying.
+@export var rest_key: Key = KEY_R
+## Local flood guard between two rest requests (the server has its own).
+@export_range(0.01, 5.0) var rest_min_interval_sec: float = 0.5
+## How far a resting player's capsule is tilted (PI / 2 = lying flat).
+@export_range(0.0, PI) var rest_tilt_rad: float = PI * 0.5
+
 
 func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
@@ -67,8 +75,14 @@ func validate() -> PackedStringArray:
 	for key_name: String in other_use_keys:
 		if other_use_keys[key_name] == KEY_NONE:
 			errors.append("%s must not be KEY_NONE" % key_name)
-	if not _are_distinct([consume_key, drink_key, bandage_key, cure_key]):
-		errors.append("use keys (consume, drink, bandage, cure) must be different keys")
+	if rest_key == KEY_NONE:
+		errors.append("rest_key must not be KEY_NONE")
+	if rest_min_interval_sec <= 0.0:
+		errors.append("rest_min_interval_sec must be > 0")
+	if rest_tilt_rad <= 0.0 or rest_tilt_rad > PI:
+		errors.append("rest_tilt_rad must be within (0, PI]")
+	if not _are_distinct([consume_key, drink_key, bandage_key, cure_key, rest_key]):
+		errors.append("use keys (consume, drink, bandage, cure) and the rest key must be different keys")
 	return errors
 
 

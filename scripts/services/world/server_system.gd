@@ -60,10 +60,13 @@ func player_movement_multiplier(_player_id: String) -> float:
 	return 1.0
 
 
-## "" when this system lets the player act on items in the world (pick up,
-## put down), otherwise a stable reason code such as "player_dead".
-## ServerWorld asks every system before such an action and refuses it with
-## the first reason (P2-T4: a dead character is finished).
+## "" when this system lets the player act (pick up, put down, use an item,
+## attack), otherwise a stable reason code such as "player_dead" or
+## "player_resting". ServerWorld asks every system before a pickup or a drop
+## and refuses it with the first reason (P2-T4: a dead character is
+## finished); ItemConsumption and CombatService ask through
+## ServerWorld.player_action_block_reason (P2-T8: a resting player must get
+## up first). Movement is not asked here: see player_movement_multiplier.
 func player_action_block_reason(_player_id: String) -> String:
 	return ""
 

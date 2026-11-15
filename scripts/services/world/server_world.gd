@@ -233,9 +233,9 @@ func player_movement_multiplier(player_id: String) -> float:
 	return clampf(product, 0.0, 1.0)
 
 
-## "" when every system lets the player act on items in the world, otherwise
-## the first system's reason code (ServerSystem.player_action_block_reason;
-## e.g. "player_dead").
+## "" when every system lets the player act (items, attacks), otherwise the
+## first system's reason code (ServerSystem.player_action_block_reason;
+## e.g. "player_dead", "player_resting").
 func player_action_block_reason(player_id: String) -> String:
 	for system: ServerSystem in _system_order:
 		var reason: String = system.player_action_block_reason(player_id)

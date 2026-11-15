@@ -21,6 +21,13 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(0.01, 100000.0) var hunger_hours_to_max: float = 48.0
 @export_range(0.01, 100000.0) var thirst_hours_to_max: float = 24.0
 @export_range(0.01, 100000.0) var fatigue_hours_to_max: float = 18.0
+## Rest (P2-T8, docs/15 P2-150, PROVISIONAL). World hours of lying down that
+## bring fatigue from need_max to 0 (calendar time; 8 world hours = 20 real
+## minutes at the default time scale 24). Fatigue does not rise while resting.
+@export_range(0.01, 100000.0) var rest_fatigue_hours_from_max: float = 8.0
+## Factor on the hunger and thirst growth while resting (1.0 = as when
+## awake, 0 = they do not rise during rest).
+@export_range(0.0, 100.0) var rest_hunger_thirst_rate_multiplier: float = 1.0
 ## Category boundaries: value >= caution -> CAUTION, >= danger -> DANGER.
 @export_range(0.0, 10000.0) var need_caution_threshold: float = 40.0
 @export_range(0.0, 10000.0) var need_danger_threshold: float = 75.0
@@ -110,6 +117,10 @@ func validate() -> PackedStringArray:
 		errors.append("stamina_regen_per_sec must be >= 0")
 	if hunger_hours_to_max <= 0.0 or thirst_hours_to_max <= 0.0 or fatigue_hours_to_max <= 0.0:
 		errors.append("need *_hours_to_max must be > 0")
+	if not is_finite(rest_fatigue_hours_from_max) or rest_fatigue_hours_from_max <= 0.0:
+		errors.append("rest_fatigue_hours_from_max must be finite and > 0")
+	if not is_finite(rest_hunger_thirst_rate_multiplier) or rest_hunger_thirst_rate_multiplier < 0.0:
+		errors.append("rest_hunger_thirst_rate_multiplier must be finite and >= 0")
 	if need_caution_threshold < 0.0 or need_caution_threshold >= need_danger_threshold or need_danger_threshold > need_max:
 		errors.append("need thresholds must satisfy 0 <= caution < danger <= need_max")
 	for multiplier: float in [caution_stamina_regen_multiplier, danger_stamina_regen_multiplier, caution_movement_multiplier, danger_movement_multiplier]:
@@ -193,6 +204,15 @@ func need_rate_per_world_sec(kind: NeedKind.Kind) -> float:
 		_:
 			hours = fatigue_hours_to_max
 	return need_max / (hours * SECONDS_PER_HOUR)
+
+
+## Need units per world second for a need kind while the player rests
+## (P2-T8): fatigue falls (a negative rate), hunger and thirst rise at their
+## usual rate times `rest_hunger_thirst_rate_multiplier`.
+func resting_need_rate_per_world_sec(kind: NeedKind.Kind) -> float:
+	if kind == NeedKind.Kind.FATIGUE:
+		return -need_max / (rest_fatigue_hours_from_max * SECONDS_PER_HOUR)
+	return need_rate_per_world_sec(kind) * rest_hunger_thirst_rate_multiplier
 
 
 ## Stamina regen factor for a worst-need category.

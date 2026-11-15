@@ -226,14 +226,14 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 |---|---|---|
 | `WorldClock` / `WorldClockSettings` | `scripts/core/world_clock.gd`, `world_clock_settings.gd`, `data/tuning/world_clock_settings.tres` | 서버 권한 시계. 달력 시각 `world_time_sec`(실제 초 × `time_scale`, 기본 24)와 행동 시각 `action_time_sec`(실제 초)를 함께 진행한다(§14.16). `step(real_delta, any_online) -> world_delta`, 같은 틱의 증분은 `last_world_delta`/`last_action_delta`. 접속자 0명이면 둘 다 일시정지(설정). world_state `world_time_sec`·`action_time_sec`로 저장 |
 | `BucketScheduler` | `scripts/core/bucket_scheduler.gd` | `new(period_sec, bucket_count)`, `add/remove/has/size/bucket_of`, `advance(delta) -> PackedStringArray`. 등록 순서 라운드로빈(결정론), 주기당 각 id 정확히 1회, 한 호출에서 같은 id 중복 없음 |
-| `ServerSystem` | `scripts/services/world/server_system.gd` | `get_system_id()`(필수, snake_case), `seed_new_world(world)`, `step(world, action_delta, world_delta)`(매 서버 physics tick. `action_delta` = 실제 초, `world_delta` = 달력 초 = `action_delta` × 배율. 일시정지 중에는 둘 다 0. P2-T1에서 두 번째 매개변수의 뜻을 `real_delta`에서 바꿨다, §14.16), `on_player_online/offline(world, player_id)`, `player_movement_multiplier(player_id)`(기본 1.0, 서버 이동 속도 배율: 모든 시스템 값의 곱을 0~1로 제한), `on_registered(world)`(등록될 때 한 번. 월드를 보관해야 하는 시스템은 약한 참조만, P2-T4), `player_action_block_reason(player_id)`(기본 `""`. 플레이어가 아이템을 줍거나 내려놓지 못하게 하는 사유 코드, 예: `player_dead`. P2-T4, §14.19), `to_world_document()`/`restore_world_document(doc)`, `to_player_fragment(player_id)`/`restore_player_fragment(player_id, doc)`. 문서는 JSON-safe + `schema_version` |
+| `ServerSystem` | `scripts/services/world/server_system.gd` | `get_system_id()`(필수, snake_case), `seed_new_world(world)`, `step(world, action_delta, world_delta)`(매 서버 physics tick. `action_delta` = 실제 초, `world_delta` = 달력 초 = `action_delta` × 배율. 일시정지 중에는 둘 다 0. P2-T1에서 두 번째 매개변수의 뜻을 `real_delta`에서 바꿨다, §14.16), `on_player_online/offline(world, player_id)`, `player_movement_multiplier(player_id)`(기본 1.0, 서버 이동 속도 배율: 모든 시스템 값의 곱을 0~1로 제한), `on_registered(world)`(등록될 때 한 번. 월드를 보관해야 하는 시스템은 약한 참조만, P2-T4), `player_action_block_reason(player_id)`(기본 `""`. 플레이어의 행동(아이템 줍기·내려놓기·사용, 근접 공격)을 막는 사유 코드, 예: `player_dead`(P2-T4, §14.19), `player_resting`(P2-T8, §14.23). 이동은 이 훅이 아니라 `player_movement_multiplier`로 막는다), `to_world_document()`/`restore_world_document(doc)`, `to_player_fragment(player_id)`/`restore_player_fragment(player_id, doc)`. 문서는 JSON-safe + `schema_version` |
 | `ServerWorld` seam | `scripts/services/world/server_world.gd` | `register_system(system) -> Error`, `get_system(id)`, `system_ids()`, `clock`, `step_systems(real_delta) -> world_delta`(시계를 진행하고 각 시스템에 두 증분을 넘긴다). 저장: world_state 스키마 v3(`world_time_sec`, `action_time_sec`), world_state `systems.{id}`, players/<id>.json 스키마 v3(`character_generation`, P2-T4)과 `systems.{id}`. 저장에 없는 시스템은 기본값 유지, 등록되지 않은 시스템 데이터는 경고 후 무시. P2-T4에서 `start_new_character(player_id)`(예전 `respawn_player_at_spawn`을 대체), `player_action_block_reason(player_id)`가 추가됐다(§14.19) |
 | `NetModule` | `scripts/services/multiplayer/net_module.gd` | `NetworkService`의 자식 노드(모든 peer에서 같은 `name`). 훅: `on_server_started(world)`, `on_player_joined/left(peer_id, player_id)`, `server_physics(delta)`, `build_join_fragment(player_id)`(서버), `apply_join_fragment(fragment)`(클라이언트). 자체 `@rpc` 메서드 사용 |
 | `NetworkService` 공개 헬퍼 | `scripts/services/multiplayer/network_service.gd` | `register_module(module)`(시작 전만), `get_module(name)`, `is_server()`, `is_client()`, `is_from_server()`, `sender_player_id()`, `joined_peers()`, `peer_of_player(id)`, `player_of_peer(peer)`, `can_send_to(peer)`, `reject_intent(peer, intent, reason, player_id)`, `count_rejection(reason)`, `rejected_intent_count(reason)`, `persist(reason)`, `get_world()`, `get_settings()` |
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. 시스템 사이의 시그널 연결도 여기서 한다(P2-T5: `SurvivalService.player_died` → `ZombieService.on_player_died`, §14.20). `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
 | 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가), player v2→v3(`character_generation` 추가, 값은 1. P2-T4). `SaveService` 기본 마이그레이터 |
 
-채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 5(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18)).
+채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 6(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23)).
 
 ### 14.6 생존 계약(B1, system id `survival`)
 
@@ -245,7 +245,7 @@ B3에서 `Wound.is_bleeding`과 `PlayerVitals.died_at_world_time`을 저장 상�
 
 B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragment 스키마를 v3으로 올렸다(v1/v2는 경과 시간 0으로 읽음). 서버는 접속 중이고 생존한 플레이어의 활성 월드 시간만 누적해 `LATENT → EARLY → PROGRESSING → SEVERE → TERMINAL → ZOMBIFIED`를 진행한다. 각 단계 시간과 감염 경로별 시간 배율은 `SurvivalSettings`에서 읽으며 감염 단계 경계를 B3의 구간 적분 경계에 포함한다. `ZOMBIFIED` 진입 즉시 원인 `infection`으로 사망시키고 플레이어 좀비는 만들지 않으며, 기존 리스폰이 감염을 해제한다(P2-T5부터는 감염으로 죽은 자리에 좀비가 생긴다, §14.20. 새 캐릭터는 감염 없이 시작한다, §14.19). 단계 변화는 `player_infection_stage_changed` 로그(`player_id`, `from`, `to`, `world_time`)로 남긴다.
 
-단계별 스태미나 회복 배율은 기존 욕구 배율과 곱하고, 단계별 체력 감소율은 출혈·굶주림·탈수 피해와 합산한다. 양수인 감염 체력 감소가 적용되는 동안에는 자연 회복을 허용하지 않는다. 치료 seam `apply_infection_treatment(player_id, source_id)`는 설정된 최대 단계 이하에서 감염을 해제하고 `player_infection_cured`를 반환·기록하며, 아이템·품질·의료 능력 판정은 후속 티켓 소유다. 읽기 전용 `infection_stage(player_id)`는 현재 단계를 반환한다. 임시 수치는 docs/15 P2-7/P2-8/P2-18/P2-19에 기록한다. 감염 복제는 §14.14(P2-N1c), 섭취는 §14.18(P2-T3: `reduce_needs`, `check_reduce_needs`), 붕대는 §14.21(P2-T6: `bleeding_wound_ids`, `check_stop_worst_bleeding`, `stop_worst_bleeding`. 지혈 seam `stop_bleeding`이 아이템과 연결됐다), 치료제는 §14.22(P2-T7: `check_infection_treatment`. 치료 seam `apply_infection_treatment`이 아이템과 연결됐다. 품질·의료 능력 판정은 여전히 없다)에서 추가됐다. 수면은 아직 없다.
+단계별 스태미나 회복 배율은 기존 욕구 배율과 곱하고, 단계별 체력 감소율은 출혈·굶주림·탈수 피해와 합산한다. 양수인 감염 체력 감소가 적용되는 동안에는 자연 회복을 허용하지 않는다. 치료 seam `apply_infection_treatment(player_id, source_id)`는 설정된 최대 단계 이하에서 감염을 해제하고 `player_infection_cured`를 반환·기록하며, 아이템·품질·의료 능력 판정은 후속 티켓 소유다. 읽기 전용 `infection_stage(player_id)`는 현재 단계를 반환한다. 임시 수치는 docs/15 P2-7/P2-8/P2-18/P2-19에 기록한다. 감염 복제는 §14.14(P2-N1c), 섭취는 §14.18(P2-T3: `reduce_needs`, `check_reduce_needs`), 붕대는 §14.21(P2-T6: `bleeding_wound_ids`, `check_stop_worst_bleeding`, `stop_worst_bleeding`. 지혈 seam `stop_bleeding`이 아이템과 연결됐다), 치료제는 §14.22(P2-T7: `check_infection_treatment`. 치료 seam `apply_infection_treatment`이 아이템과 연결됐다. 품질·의료 능력 판정은 여전히 없다), 수면(휴식)은 §14.23(P2-T8: `is_resting`, `start_rest`, `stop_rest`. 쉬는 동안 피로가 줄고, 이 절의 "욕구 증가"는 쉬는 플레이어의 피로에는 적용되지 않는다)에서 추가됐다.
 
 P2-T1부터 이 절의 "월드 시간"은 달력 시간이고, 스태미나 회복·리스폰 대기·피해 이벤트 묶는 간격만 행동 시간(실제 초)이다. 설정 이름은 `stamina_regen_per_sec`, `respawn_delay_sec`, `survival_damage_event_interval_sec`로 바뀌었고 생존 fragment 스키마 v4가 `died_at_action_time`을 추가했다. 구간 적분이 두 축을 함께 다루는 방식은 §14.16.
 
@@ -335,6 +335,7 @@ P2-T4부터 위 B3·B4의 "리스폰"은 **영구 사망 뒤 새 캐릭터 시�
 | `unknown_player` | 이 월드의 플레이어가 아님(빈 ID, 좀비 ID 포함) |
 | `not_online` | 접속 중이 아님 |
 | `player_dead` | 사망 상태 |
+| `player_resting` | 누워 쉬는 중(P2-T8, §14.23). `ServerWorld.player_action_block_reason`이 돌려주는 사유를 그대로 쓰므로 다른 시스템이 행동을 막는 사유가 생기면 이 자리에서 함께 거부된다 |
 | `no_weapon` | 쓸 무기 정의가 없음(맨손 정의 누락 = 설정 오류, 시작 시 `validate()`가 먼저 잡는다) |
 | `attack_on_cooldown` | 직전 공격의 쿨다운(행동 시간, 실제 초)이 남음 |
 | `not_enough_stamina` | 스태미나가 무기 비용보다 적음(`SurvivalService.try_spend_stamina`가 마지막 검사이자 차감) |
@@ -441,44 +442,47 @@ P2-T4부터 위 B3·B4의 "리스폰"은 **영구 사망 뒤 새 캐릭터 시�
 
 ### 14.14 생존 상태 네트워크 복제(P2-N1c)
 
-`SurvivalNetModule`(노드 이름 `SurvivalNet`)은 `ServerComposition.install_net_modules`에서 서버와 모든 클라이언트에 같은 이름으로 설치한다. `NetworkService`는 수정하지 않으며 공개 seam만 쓴다. 방향은 서버→클라이언트뿐이고 세 RPC 모두 채널 0 reliable ordered다. 클라이언트 핸들러는 먼저 `network.is_from_server()`를 확인하며, 발신·타입·범위·공개 범위가 잘못된 DTO는 상태를 바꾸지 않고 경고 로그만 남긴다.
+`SurvivalNetModule`(노드 이름 `SurvivalNet`)은 `ServerComposition.install_net_modules`에서 서버와 모든 클라이언트에 같은 이름으로 설치한다. `NetworkService`는 수정하지 않으며 공개 seam만 쓴다. 이 절의 세 RPC는 서버→클라이언트이고 모두 채널 0 reliable ordered다(P2-T8에서 이 모듈에 클라이언트→서버 휴식 의도 RPC와 그 결과 RPC가 추가됐다, §14.23). 클라이언트 핸들러는 먼저 `network.is_from_server()`를 확인하며, 발신·타입·범위·공개 범위가 잘못된 DTO는 상태를 바꾸지 않고 경고 로그만 남긴다.
 
 | RPC | 수신자 | 페이로드 |
 |---|---|---|
 | `_rpc_survival_owner_snapshot(snapshot)` | 해당 플레이어 본인 | 아래 owner snapshot. 설정 주기마다 비교하고 변경된 경우에만 전송 |
-| `_rpc_survival_status(status)` | 접속 중 클라이언트 | `{player_id: String, alive: bool}`. 새 플레이어 접속 시 기존 미러 보강 |
+| `_rpc_survival_status(status)` | 접속 중 클라이언트 | `{player_id: String, alive: bool, resting: bool}`. 새 플레이어 접속 시 기존 미러 보강 |
 | `_rpc_survival_events(events)` | 이벤트 공개 범위에 따른 본인/타인 | 검증된 이벤트 Dictionary 배열. 한 서버 틱에 peer별로 묶어 전송 |
 
-접속 조각(`snapshot.modules.SurvivalNet`)과 본인 스냅샷의 스키마 버전은 2다(P2-T4에서 `character_generation`을 추가하며 1 → 2. 이전 형식은 클라이언트가 버린다).
+접속 조각(`snapshot.modules.SurvivalNet`)과 본인 스냅샷의 스키마 버전은 3이다(P2-T4에서 `character_generation`을 추가하며 1 → 2, P2-T8에서 `resting`을 추가하며 2 → 3. 이전 형식은 클라이언트가 버린다).
 
 ```text
 {
-  schema_version: 2,
+  schema_version: 3,
   self: <owner snapshot>,
-  players: [{player_id: String, alive: bool}, ...]  # 접속 중인 전 플레이어
+  players: [{player_id: String, alive: bool, resting: bool}, ...]  # 접속 중인 전 플레이어
 }
 
 owner snapshot = {
-  schema_version: 2, player_id: String, alive: bool,
+  schema_version: 3, player_id: String, alive: bool,
   health: float, stamina: float,
   needs: {hunger: "good|caution|danger", thirst: ..., fatigue: ...},
   wounds: [Wound.to_dict(), ...],
   infection_stage: "none|latent|early|progressing|severe|terminal|zombified",
-  character_generation: int >= 1   # 그 플레이어의 몇 번째 캐릭터인지(§14.19). 본인만 받는다
+  character_generation: int >= 1,  # 그 플레이어의 몇 번째 캐릭터인지(§14.19). 본인만 받는다
+  resting: bool                    # 누워 쉬는 중(§14.23). 같은 값이 공개 행에도 있다. 죽은 캐릭터는 항상 false
 }
 ```
 
-공개 범위는 docs/15 P2-9를 따른다. `scope: "owner"` 이벤트는 대상 본인에게만 가며 체력 변화, 상처 상세, 지혈, 생존 피해, 욕구 범주, 감염/저항/단계 변화/치료를 포함할 수 있다. `scope: "public"`은 타인에게만 가며 아래 세 종류뿐이다.
+공개 범위는 docs/15 P2-9를 따른다. `scope: "owner"` 이벤트는 대상 본인에게만 가며 체력 변화, 상처 상세, 지혈, 생존 피해, 욕구 범주, 감염/저항/단계 변화/치료, 눕기·일어나기(일어난 원인 포함)를 포함할 수 있다. `scope: "public"`은 타인에게만 가며 아래 다섯 종류뿐이다(P2-T8에서 뒤의 둘이 추가됐다).
 
 | 공개 이벤트 | 필드(`scope`, `event_type`, `player_id` 공통) |
 |---|---|
 | `player_wounded` | `body_part`, `wound_type`, `died`, `world_time` |
 | `player_died` | `world_time`(원인 제외: 감염 사망 노출 방지) |
 | `player_respawned` | `position: [x,y,z]`, `world_time` |
+| `player_rest_started` | `world_time`(누웠다) |
+| `player_rest_ended` | `world_time`(일어났다. 원인 제외) |
 
 타인용 DTO에는 체력·피해 수치, wound 상세/심각도, 욕구, 감염 여부·단계·노출·원인을 넣지 않는다. `SurvivalService.drain_events()`는 JSON-safe 이벤트를 발생 순서로 반환하고 비우며, 설정 상한을 넘으면 좀비/전투 큐와 같이 가장 오래된 것부터 버리고 `dropped_event_count`를 올린다. `apply_damage`의 기존 `player_wounded` ActionResult 계약은 유지한다.
 
-`ClientSurvivalState`는 권한 없는 순수 미러다. 공개 API는 `health()`, `stamina()`, `need_category(kind)`, `wounds()`, `infection_stage()`, `character_generation()`(P2-T4), `has_player(id)`, `is_alive(id)`, `last_respawn_position(id)`, `recent_events()`이며 변경 알림은 `changed`, `own_vitals_changed`, `player_alive_changed`, `event_received`, `player_respawned` 시그널이다. 최근 이벤트 목록은 설정된 개수만 보관한다. 수치는 `data/tuning/survival_net_settings.tres`와 `survival_settings.tres`에 있고 임시 결정은 docs/15 P2-70~P2-74다.
+`ClientSurvivalState`는 권한 없는 순수 미러다. 공개 API는 `health()`, `stamina()`, `need_category(kind)`, `wounds()`, `infection_stage()`, `character_generation()`(P2-T4), `has_player(id)`, `is_alive(id)`, `is_resting(id)`(P2-T8, 본인과 다른 플레이어 모두), `last_respawn_position(id)`, `recent_events()`이며 변경 알림은 `changed`, `own_vitals_changed`, `player_alive_changed`, `player_resting_changed`(P2-T8), `event_received`, `player_respawned` 시그널이다. 최근 이벤트 목록은 설정된 개수만 보관한다. 수치는 `data/tuning/survival_net_settings.tres`와 `survival_settings.tres`에 있고 임시 결정은 docs/15 P2-70~P2-74다.
 
 ### 14.13 전투 네트워크 계약(P2-N1b, 모듈 `CombatNet`)
 
@@ -619,7 +623,7 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 
 | 메서드 | 대상 | 추가 실패 사유 |
 |---|---|---|
-| `try_drop_item(player_id, item_instance_id)` | 접속 중인 플레이어(의도 처리용) | `not_online`, 시스템이 막는 사유(`player_dead`, P2-T4 §14.19. `try_pickup`도 같다) |
+| `try_drop_item(player_id, item_instance_id)` | 접속 중인 플레이어(의도 처리용) | `not_online`, 시스템이 막는 사유(`player_dead`, P2-T4 §14.19. `player_resting`, P2-T8 §14.23. `try_pickup`도 같다) |
 | `drop_all_player_items(player_id)` | 알려진 플레이어(오프라인 포함, 서버 규칙용) | `unknown_player` |
 | `remove_player_item(player_id, item_instance_id, quantity)` | 알려진 플레이어(오프라인 포함, 서버 규칙용) | `unknown_player` |
 
@@ -922,3 +926,92 @@ P2-T6부터 `ItemConsumption`은 아이템 정의의 사용 효과 전부를 적
 클라이언트 표시: `ConsumeIntentPolicy.Kind.CURE`, 키 `ClientPresentationSettings.cure_key`(기본 V), 액션 `ClientInputActions.USE_CURE`. 사용 키 넷(음식·물·붕대·치료제)은 서로 달라야 한다. 생존 HUD의 치료 줄이 둘이 됐다: "출혈 … | 붕대 M개 [B]"와 "감염: 단계 | 치료제 M개 [V]"(감염이 없으면 "감염 없음"). HUD는 "지금 치료가 듣는 단계인가"를 판단하지 않는다(서버 규칙이고 거부 사유 `too_late`로 알린다).
 
 테스트: `tests/unit/cure_test.gd`(사전 검사와 치료 규칙의 일치, 잠복·초기 단계에서 해제와 이벤트·한 트랜잭션·이후 진행 없음, 진행·중증·말기에서 거부되고 묶음과 감염이 그대로임, 비감염·남의 것·월드의 것·오프라인·죽은 플레이어 거부, 치료 가능 단계가 설정에서 옴, 재감염과 재치료, 지혈+치료 효과 아이템의 네 경우, 정의 데이터, 기본 개발용 월드의 치료제, 저장 → 재생성 → 로드), `tests/integration/cure_net_test.gd`(서버 1 + 클라이언트 2, 실제 ENet: 감염 → 치료제 → 서버와 본인 미러의 감염 단계가 none이고 다른 클라이언트는 아무것도 받지 않음, 비감염 거부, 남을 치료할 수 없음(남의 치료제, 플레이어 ID를 아이템 ID로 보냄, 인자를 더 붙인 호출), 너무 늦은 단계의 거부와 초기 단계의 승인, 저장 방침과 서버 재시작), `tests/unit/client_presentation_test.gd`(치료제 선택·키·검증, 감염·치료제 HUD 줄).
+
+### 14.23 수면(P2-T8, 사용자 결정 2026-11-15)
+
+플레이어가 "눕기"와 "일어나기" 의도를 보내면 서버가 쉬는 동안 그 플레이어의 피로를 낮춘다. 이 절이 §14.6의 "피로는 시간에 따라 증가한다"보다 우선한다(쉬는 플레이어의 피로는 줄어든다). 임시 가정은 docs/15 §12.3 P2-150~P2-158.
+
+구성: `SurvivalSettings`(휴식 수치 2개), `SurvivalService`(휴식 상태와 규칙), `ServerSystem.player_action_block_reason`의 뜻 확장, `CombatService`·`ItemConsumption`(휴식 중 거부), `SurvivalNetModule`(휴식 의도 RPC와 결과, 복제), `SurvivalNetSettings`(요청 빈도), `ClientSurvivalState`(누가 누워 있는지), 클라이언트 휴식 키·HUD·누운 캡슐. `network_service.gd`는 수정하지 않았다.
+
+**프로토콜 변경 있음**: RPC 2개(`_rpc_request_rest`, `_rpc_rest_result`)가 새로 생기고, 생존 본인 스냅샷·공개 행·접속 조각에 `resting`이 추가됐으며(스키마 3, §14.14), 공개·본인 이벤트 `player_rest_started`/`player_rest_ended`가 생겼다. `BuildInfo.PROTOCOL_VERSION`을 6으로 올렸다(P2-T6~T8 묶음에서 한 번).
+
+#### 데이터
+
+`SurvivalSettings`(`data/tuning/survival_settings.tres`):
+
+| 설정 | 기본값 | 뜻 |
+|---|---|---|
+| `rest_fatigue_hours_from_max` | 8.0 | 쉬어서 피로가 최대(100)에서 0이 되는 데 걸리는 **월드 시간(달력 시간)**. 24배속에서 실제 20분. 쉬는 동안의 피로 변화율은 `−need_max / (이 값 × 3600)` 월드초당이고, 쉬는 동안 피로는 오르지 않는다 |
+| `rest_hunger_thirst_rate_multiplier` | 1.0 | 쉬는 동안 허기·갈증 증가율에 곱하는 값. 1 = 깨어 있을 때와 같다(계속 오른다). 0이면 쉬는 동안 오르지 않는다 |
+
+둘 다 유한값이어야 하고 첫째는 0보다 커야 하며 둘째는 0 이상이어야 한다(`validate()`).
+
+#### 서버 규칙(`SurvivalService`, §14.6에 추가)
+
+| API | 계약 |
+|---|---|
+| `is_resting(player_id) -> bool` | 누워 쉬는 중인지. 모르는 플레이어는 false |
+| `start_rest(player_id) -> ActionResult` | 눕는다. 성공 이벤트 `{event_type: "player_rest_started", player_id, world_time}`를 돌려주고 큐·로그에 남긴다. 실패 사유(순서대로): `unknown_player`, `player_dead`, `not_online`, `already_resting`. 실패하면 아무것도 바뀌지 않는다. 피로가 0이어도, 출혈·감염 중이어도 누울 수 있다 |
+| `stop_rest(player_id) -> ActionResult` | 일어난다. 성공 이벤트 `{event_type: "player_rest_ended", player_id, cause: "requested", world_time}`. 실패 사유: `unknown_player`, `not_resting` |
+
+쉬는 동안:
+
+- **피로**: 설정 속도로 줄고 0 아래로 내려가지 않는다. 0이 돼도 일어나지 않는다(일어나기 의도, 피격, 사망, 퇴장으로만 끝난다). 범주가 바뀌면 기존 `need_category_changed` 이벤트가 나간다.
+- **허기·갈증**: 계속 오른다(설정 배율). 그래서 쉬는 중에도 굶주림·탈수 피해와 사망이 가능하다.
+- **이동 불가**: `player_movement_multiplier`가 0을 돌려준다. `ServerWorld.step_movement`가 그 플레이어를 건너뛰므로 이동 의도는 받아들여지지만(요청 자체를 거부하지는 않는다) 위치가 바뀌지 않는다. 이동 의도로는 깨지 않는다. 의도에 실린 yaw는 반영된다(누운 채 방향만 바뀐다). 발소리는 이동 거리로만 생기므로(§14.11) 나지 않는다.
+- **공격·아이템 행동 불가**: `player_action_block_reason`이 `player_resting`을 돌려준다(죽은 플레이어의 `player_dead`가 먼저다). 이 훅을 묻는 곳이 모두 거부한다: 줍기·내려놓기(`ServerWorld.try_pickup`/`try_drop_item`, §14.19와 같은 경로), 근접 공격(`CombatService.request_melee_attack`: `player_dead` 다음에 추가, 스태미나·쿨다운·소음·이벤트 없음, §14.10), 아이템 사용(`ItemConsumption.try_consume`: `player_dead` 다음에 추가). 누운 채로는 먹거나 붕대를 감을 수 없고 먼저 일어나야 한다. 거부된 요청은 플레이어를 깨우지 않는다. 훅의 뜻이 "아이템을 다룰 수 있는가"에서 "행동할 수 있는가"로 넓어졌다(docs/15 P2-129에서 예고한 통합).
+- **피해**: 출혈·굶주림·탈수·감염의 시간 피해는 계속 적용되고 **깨우지 않는다**. 자연 회복도 조건(모든 욕구 양호, 출혈·감염 체력 감소 없음)이 맞으면 쉬는 중에 그대로 일어난다. 피로가 주의 이상이던 플레이어는 쉬어서 피로가 양호가 되는 순간부터 회복이 시작된다.
+
+휴식이 끝나는 경우:
+
+| 원인 | 이벤트 `player_rest_ended`의 `cause` | 설명 |
+|---|---|---|
+| 일어나기 의도 | `requested` | `stop_rest` |
+| 피격 | `damaged` | `apply_damage`가 성공하고 죽지 않았으면 그 자리에서 깬다(좀비 공격 포함). 이벤트 순서는 `player_wounded` → `player_rest_ended` |
+| 사망 | `died` | 어떤 원인의 사망이든. 순서는 (시간 피해 묶음) → `player_rest_ended` → `player_died`. 새 캐릭터는 서서 시작한다 |
+| 퇴장 | 이벤트 없음 | `on_player_offline`에서 조용히 해제한다. 다른 클라이언트는 그 플레이어 자체를 지운다. 다시 접속하면 서 있다 |
+
+구간 적분(§14.6, §14.16): 쉬는 플레이어의 욕구 변화율만 다르다. `_advance_player`가 구간마다 그 플레이어가 쉬는 중인지 읽어 욕구 변화율(`SurvivalSettings.resting_need_rate_per_world_sec`: 피로는 음수)을 고른다. 음수 변화율에 맞춰 세 곳을 일반화했다: (1) 자연 회복 구간은 "모든 욕구가 양호한 시간"인데, 내려가는 욕구가 주의 임계를 지나는 시각부터 열리고 올라가는 욕구가 임계에 닿는 시각에 닫힌다. (2) 스태미나 회복의 욕구 배율 경계는 양방향 임계 통과를 모두 센다. (3) 욕구 값은 0~최대로 자른다. 그래서 큰 틱 하나와 60Hz 틱 여러 개의 결과가 같다(배율 24에서 피로·허기·갈증·체력·스태미나를 비교하는 테스트, 허용 오차 0.01). 한 틱 안에서 휴식이 끝나는 경우는 사망뿐이고(그 뒤 같은 틱에 새 캐릭터가 시작되면 깨어 있는 변화율을 쓴다) 틱 도중에 시작되지는 않는다(시작은 틱 사이의 요청이다).
+
+좀비: 규칙을 바꾸지 않았다. 쉬는 플레이어도 살아 있고 접속 중인 플레이어라서 지금까지와 똑같이 시야에 들면 추격·공격 대상이다. 덜 보이지도 더 잘 보이지도 않고, 소리를 내지 않는다는 것만 다르다(발소리가 없으므로 소리로는 찾아오지 않는다). 첫 공격이 플레이어를 깨운다(docs/15 P2-156).
+
+저장: 쉬는 상태는 **저장하지 않는다**. 생존 fragment(스키마 v4)와 world_state는 그대로다. 근거: 퇴장하면 해제되므로 정상 종료(서버가 플레이어를 내보낸 뒤 저장)로는 "쉬는 중"이 저장될 일이 없고, 자동 저장 직후 비정상 종료한 경우에도 재시작 뒤에는 접속자가 없어 쉬는 사람이 있을 수 없다. 낮아진 피로는 기존 필드 `fatigue`로 저장된다. 눕기·일어나기는 그것만으로 저장을 일으키지 않는다.
+
+#### 네트워크 메시지(`SurvivalNetModule`에 추가)
+
+| 방향 | RPC | 채널/모드 | 받는 쪽 검증 |
+|---|---|---|---|
+| C→S | `_rpc_request_rest(request_id: int, lie_down: bool)` | 0 reliable | 아래 "요청 검증" |
+| S→요청자 | `_rpc_rest_result(request_id: int, ok: bool, reason: String)` | 0 reliable | 서버 발신만 수용, 타입, `request_id` ≥ 0, `reason` 길이 ≤ 64, `ok`일 때만 `reason`이 빈 문자열 |
+
+의도 설계: 토글이 아니라 **원하는 상태**를 보낸다(`lie_down`: true = 눕기, false = 일어나기). 이유: 클라이언트 미러가 한 박자 늦을 때(예: 방금 피격으로 깼는데 일어나기 키를 누름) 토글은 반대 동작(다시 눕기)이 되지만, 원하는 상태를 보내면 `not_resting`으로 거부될 뿐이다. 대상 플레이어 인자는 없다: 행위자는 보낸 peer의 플레이어이고, 다른 플레이어를 눕히거나 깨울 수 없다. 인자를 더 붙인 호출은 엔진이 거부한다(테스트로 고정).
+
+요청 검증(순서대로, 먼저 걸린 것 하나. 거부되면 서버 상태는 바뀌지 않고 `rejected_intent_count(reason)`이 1 오른다):
+
+| 순서 | 사유 코드 | 조건 | 요청자에게 결과 전송 |
+|---|---|---|---|
+| 1 | `not_joined` | join 핸드셰이크를 마치지 않은 peer | 보내지 않음 |
+| 2 | `bad_type` | `request_id`가 int가 아니거나 `lie_down`이 bool이 아님(정수 1, 문자열, null, 배열 모두 거부) | `request_id`가 0 이상 int일 때만 |
+| 3 | `bad_sequence` | `request_id` < 0 | 보내지 않음 |
+| 4 | `rate_limited` | peer별 토큰 버킷(`SurvivalNetSettings.rest_intent_rate_per_sec`/`rest_intent_burst`, 기본 4/s·버스트 4). 형식이 틀린 요청은 토큰을 쓰지 않는다 | 보냄 |
+| 5 | `rest_unavailable` | 월드에 생존 시스템이 없음(조립 오류) | 보냄 |
+| 6 | `SurvivalService`의 사유(`player_dead`, `already_resting`, `not_resting` 등) | 규칙이 거부. 정상 플레이에서 흔하므로 횟수만 센다 | 보냄 |
+
+승인되면 서버는 그 자리에서 대기 중인 생존 이벤트를 내보낸 뒤 결과 `(request_id, true, "")`를 보낸다. 같은 채널이라 요청자는 자기 상태 변화(본인 이벤트)를 결과보다 먼저 받는다.
+
+복제와 정보 공개(ADR-009):
+
+| 받는 쪽 | 받는 것 |
+|---|---|
+| 본인 | 본인 스냅샷의 `resting`, 이벤트 `player_rest_started`(`world_time`), `player_rest_ended`(`cause`, `world_time`), 그리고 기존대로 자기 피로 범주(`need_category_changed`, 본인 스냅샷) |
+| 다른 플레이어 | 공개 이벤트 `player_rest_started`/`player_rest_ended`(`scope`, `event_type`, `player_id`, `world_time`뿐), 접속 조각과 새 접속자 알림의 공개 행 `{player_id, alive, resting}` |
+
+"누워 있음"은 옆에서 보면 보이는 사실이라 공개한다(피격 부위, 사망과 같은 부류). 다른 플레이어가 받지 않는 것: 피로를 비롯한 욕구의 수치와 범주, 일어난 원인(`cause`), 쉬어서 무엇이 회복됐는지. 원인 중 `damaged`와 `died`는 같은 순간의 공개 `player_wounded`/`player_died`로 짐작할 수 있다. 거리·시야 제한은 없다(다른 공개 이벤트와 같다, P2-115). 늦게 접속한 플레이어는 접속 조각으로 누가 누워 있는지 받는다.
+
+`ClientSurvivalState`: `is_resting(player_id) -> bool`(본인과 다른 플레이어 모두), 시그널 `player_resting_changed(player_id, resting)`. 본인 스냅샷과 공개 행에 `resting`이 없거나 bool이 아니면, 또는 죽었는데 `resting`이 true이면 그 페이로드를 통째로 버린다. 사망·새 캐릭터 이벤트는 그 플레이어의 `resting`을 false로 둔다.
+
+클라이언트 표면(`SurvivalNetModule`): `request_rest(lie_down: bool) -> int`(요청 번호, 1부터. join 전이면 `NO_REQUEST`), `signal rest_result(request_id, ok, reason)`, `send_raw_rest_request(request_id, lie_down)`(테스트 전용).
+
+클라이언트 표시(`scripts/presentation/`): 휴식 키(`ClientPresentationSettings.rest_key`, 기본 R)를 누르면 본인 미러가 누워 있으면 "일어나기", 아니면 "눕기"를 보낸다(요청 사이 최소 간격 `rest_min_interval_sec`). 휴식 키는 사용 키 넷과 달라야 한다. 생존 HUD 끝에 "눕기 [R]" 또는 "휴식 중 (피로 회복) | 일어나기 [R]" 줄이 붙는다(죽은 캐릭터에게는 없다). 누워 있는 플레이어의 캡슐은 본인 것이든 남의 것이든 `rest_tilt_rad`만큼 기울여 바닥에 눕히고 색은 살아 있는 색 그대로다(죽은 캡슐은 어두운 색). 결과는 사용 결과와 같은 자리에 "휴식 요청 승인/거부: 사유"로 표시한다.
+
+테스트: `tests/unit/rest_test.gd`(설정 기본값·검증, 눕기·일어나기의 이벤트와 거부 사유, 피로 감소 속도와 깨어 있는 플레이어와의 비교, 0 하한과 범주 이벤트, 허기·갈증 배율 설정, 틱 크기 무관(1틱·1500틱·7틱), 달력 시간 배율(1배와 24배), 이동 불가, 공격·줍기·내려놓기·아이템 사용 거부, 피격 시 깸과 이벤트 순서, 사망·퇴장 해제와 새 캐릭터, 시간 피해로는 깨지 않고 죽을 수 있음, 저장에 들어가지 않음과 재시작), `tests/integration/rest_net_test.gd`(서버 1 + 클라이언트 2~3, 실제 ENet: 눕기 → 서버·본인 미러·다른 클라이언트 미러 일치, 이동 의도 무시, 피로 범주가 본인 미러에만 반영, 다른 클라이언트가 받는 이벤트의 키 목록 고정, 일어나기 뒤 이동 재개, 좀비 공격으로 깸과 양쪽 이벤트, 휴식 중 공격·줍기 거부, 휴식 중 사망, 조작된 요청 8종과 잘못된 상태·남을 깨우려는 요청·인자를 더 붙인 호출·클라이언트가 보낸 서버 메시지, join 전 요청, 빈도 초과, 늦은 접속과 누운 채 퇴장·재접속, 저장되지 않음과 서버 재시작, 설정·검증 규칙과 RPC 구성, 미러의 페이로드 검증), `tests/unit/client_presentation_test.gd`(휴식 키 등록·검증, HUD 줄, 결과 문구, 캡슐 자세).

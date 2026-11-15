@@ -41,6 +41,10 @@ var _item_catalog: ItemCatalog = null
 var _consume_result_until_sec: float = 0.0
 ## Hash of the inventory mirror the HUD summary was built from.
 var _inventory_signature: int = 0
+## Lie down / get up requests go through the survival module (P2-T8).
+var _survival_module: SurvivalNetModule = null
+## Flood guard of the rest key (same rule as the attack guard).
+var _rest_policy: AttackIntentPolicy = null
 
 
 func _ready() -> void:
@@ -64,6 +68,7 @@ func _ready() -> void:
 	)
 	_attack_policy = AttackIntentPolicy.new(_presentation.attack_min_interval_sec)
 	_consume_policy = AttackIntentPolicy.new(_presentation.consume_min_interval_sec)
+	_rest_policy = AttackIntentPolicy.new(_presentation.rest_min_interval_sec)
 	_item_catalog = ItemCatalog.load_directory()
 	ClientInputActions.register(_settings, _presentation)
 	_prepare_player_resources()
@@ -111,6 +116,8 @@ func _physics_process(_delta: float) -> void:
 	for action: StringName in ClientInputActions.USE_ACTION_KINDS:
 		if Input.is_action_just_pressed(action):
 			_request_use(ClientInputActions.USE_ACTION_KINDS[action])
+	if Input.is_action_just_pressed(ClientInputActions.REST):
+		_request_rest()
 	if _network == null or _state == null or _state.local_player_id.is_empty():
 		return
 	var sample: Vector2 = Vector2(
@@ -148,11 +155,13 @@ func _bind_network() -> void:
 			_zombie_state.zombie_removed.connect(_on_zombie_removed)
 		if not _zombie_state.event_received.is_connected(_on_zombie_event):
 			_zombie_state.event_received.connect(_on_zombie_event)
-	var survival_module: SurvivalNetModule = _network.get_module(SurvivalNetModule.MODULE_NAME) as SurvivalNetModule
-	if survival_module != null:
-		_survival_state = survival_module.client_state
+	_survival_module = _network.get_module(SurvivalNetModule.MODULE_NAME) as SurvivalNetModule
+	if _survival_module != null:
+		_survival_state = _survival_module.client_state
 		if not _survival_state.changed.is_connected(_on_survival_state_changed):
 			_survival_state.changed.connect(_on_survival_state_changed)
+		if not _survival_module.rest_result.is_connected(_on_rest_result):
+			_survival_module.rest_result.connect(_on_rest_result)
 	_combat_module = _network.get_module(CombatNetModule.MODULE_NAME) as CombatNetModule
 	if _combat_module != null:
 		if not _combat_module.melee_result.is_connected(_on_melee_result):
@@ -214,6 +223,11 @@ func _on_consume_result(_request_id: int, ok: bool, reason: String) -> void:
 	_show_consume_text(ClientPresentationFormatter.format_consume_result(ok, reason))
 
 
+## The answer to a rest request is shown where the use results are shown.
+func _on_rest_result(_request_id: int, ok: bool, reason: String) -> void:
+	_show_consume_text(ClientPresentationFormatter.format_rest_result(ok, reason))
+
+
 func _show_consume_text(text: String) -> void:
 	_consume_result_label.text = text
 	_consume_result_label.visible = true
@@ -259,9 +273,13 @@ func _sync_player_visuals() -> void:
 			_player_visuals[player_id] = visual
 		var entry: Dictionary = _state.players[player_id]
 		var alive: bool = _survival_state == null or not _survival_state.has_player(player_id) or _survival_state.is_alive(player_id)
-		var center_height: float = _settings.capsule_height_m * 0.5 if alive else _settings.capsule_radius_m
+		# Lying down to rest is visible on every client (P2-T8): the capsule
+		# lies on the ground like a dead one but keeps its living colour.
+		var resting: bool = _survival_state != null and _survival_state.is_resting(player_id)
+		var lying: bool = ClientPresentationFormatter.player_is_lying(alive, resting)
+		var center_height: float = _settings.capsule_radius_m if lying else _settings.capsule_height_m * 0.5
 		visual.position = (entry.get("position", Vector3.ZERO) as Vector3) + Vector3.UP * center_height
-		visual.rotation = Vector3(0.0 if alive else _presentation.dead_tilt_rad, float(entry.get("yaw", 0.0)), 0.0)
+		visual.rotation = Vector3(ClientPresentationFormatter.player_tilt_rad(alive, resting, _presentation), float(entry.get("yaw", 0.0)), 0.0)
 		if not alive:
 			visual.material_override = _dead_player_material
 		else:
@@ -307,10 +325,12 @@ func _refresh_survival_hud() -> void:
 		"wounds": _survival_state.wounds(),
 		"infection_stage": _survival_state.infection_stage(),
 		"character_generation": _survival_state.character_generation(),
+		"resting": _survival_state.is_resting(_survival_state.local_player_id),
 	}
 	var lines: PackedStringArray = ClientPresentationFormatter.build_survival_lines(vitals, _presentation)
 	var carried: Array[Dictionary] = _state.inventory if _state != null else ([] as Array[Dictionary])
 	lines.append_array(ClientPresentationFormatter.build_treatment_lines(vitals, carried, _item_catalog, _presentation))
+	lines.append_array(ClientPresentationFormatter.build_rest_lines(vitals, _presentation))
 	_survival_label.text = "\n".join(lines)
 	_survival_label.visible = true
 
@@ -405,6 +425,23 @@ func _request_use(kind: ConsumeIntentPolicy.Kind) -> void:
 		_show_consume_text(ClientPresentationFormatter.nothing_to_use_text(kind))
 		return
 	_inventory_module.request_consume(item_id)
+
+
+## Rest key (P2-T8): asks the server to lie down, or to get up when the
+## mirror says the local player is lying. Only the wanted state is sent; the
+## server decides.
+func _request_rest() -> void:
+	var connected: bool = (
+		_survival_module != null
+		and _survival_state != null
+		and _network != null
+		and _network.is_client()
+		and _state != null
+		and not _state.local_player_id.is_empty()
+	)
+	if not _rest_policy.should_send(connected, _now_sec()):
+		return
+	_survival_module.request_rest(not _survival_state.is_resting(_state.local_player_id))
 
 
 func _now_sec() -> float:
