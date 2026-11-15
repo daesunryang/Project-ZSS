@@ -232,7 +232,7 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
 | 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), player v1→v2(`systems` 추가). `SaveService` 기본 마이그레이터 |
 
-채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 2.
+채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 3(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3).
 
 ### 14.6 생존 계약(B1, system id `survival`)
 
@@ -429,7 +429,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 - 검증: 클라이언트는 서버가 보낸 RPC만 받는다(`is_from_server()`, 아니면 무시하고 경고 로그). 받은 값은 타입, 길이(ID·문자열 64자, 메시지당 행 64개·이벤트 64개, 미러 1024마리), 유한값, 범위(|yaw| ≤ 2π, 체력 비율 0~1, 상태 번호)를 검사한다. 스냅샷은 한 행이라도 틀리면 메시지 전체를, 이벤트는 틀린 이벤트만 버린다(순번은 소모). 버린 페이로드는 경고 로그와 `rejected_payload_count`에 남고 미러는 바뀌지 않는다.
 - 보간·예측은 없다. 움직이는 좀비의 미러는 `속도 × (스냅샷 주기 + 전달 지연)`만큼 뒤처질 수 있다(테스트 허용 오차: 추격 속도 × 스냅샷 2주기 = 0.64m, 멈춘 좀비는 서버 값과 같음. docs/15 P2-84).
 
-프로토콜: RPC 2개와 join 조각이 추가됐지만 `BuildInfo.PROTOCOL_VERSION`은 이 티켓에서 올리지 않았다. 같은 묶음의 다른 N1 티켓과 함께 조정자가 한 번에 올린다.
+프로토콜: RPC 2개와 join 조각이 추가됐지만 N1 묶음(N1a·N1b·N1c)을 병합하면서 `BuildInfo.PROTOCOL_VERSION`을 3으로 올렸다.
 
 테스트: `tests/integration/zombie_net_test.gd`(서버 1 + 클라이언트 1~2, 실제 localhost ENet: 추격·공격 중 미러 수렴과 이벤트 순서, 늦은 접속, 개발용 좀비 12마리 join, 비공개 필드, 사망·제거, 오래된/위조/잘못된 페이로드, RPC 채널 설정), `tests/integration/zombie_net_state_test.gd`(네트워크 없이 미러·wire 형식: join 조각, tick 폐기, 이벤트 적용, 순번, 잘못된 페이로드, 한도, 메시지 크기).
 
@@ -472,3 +472,68 @@ owner snapshot = {
 타인용 DTO에는 체력·피해 수치, wound 상세/심각도, 욕구, 감염 여부·단계·노출·원인을 넣지 않는다. `SurvivalService.drain_events()`는 JSON-safe 이벤트를 발생 순서로 반환하고 비우며, 설정 상한을 넘으면 좀비/전투 큐와 같이 가장 오래된 것부터 버리고 `dropped_event_count`를 올린다. `apply_damage`의 기존 `player_wounded` ActionResult 계약은 유지한다.
 
 `ClientSurvivalState`는 권한 없는 순수 미러다. 공개 API는 `health()`, `stamina()`, `need_category(kind)`, `wounds()`, `infection_stage()`, `has_player(id)`, `is_alive(id)`, `last_respawn_position(id)`, `recent_events()`이며 변경 알림은 `changed`, `own_vitals_changed`, `player_alive_changed`, `event_received`, `player_respawned` 시그널이다. 최근 이벤트 목록은 설정된 개수만 보관한다. 수치는 `data/tuning/survival_net_settings.tres`와 `survival_settings.tres`에 있고 임시 결정은 docs/15 P2-70~P2-74다.
+
+### 14.13 전투 네트워크 계약(P2-N1b, 모듈 `CombatNet`)
+
+`scripts/services/multiplayer/`: `CombatNetModule`(NetModule, 노드 이름 `CombatNet`: 근접 공격 의도 RPC, 결과 응답, 전투 이벤트 복제, 클라이언트 표면), `ClientCombatState`(공개 전투 이벤트의 형식·검증과 최근 이벤트 목록. 클라이언트에서는 서버가 보낸 것의 미러, 서버 모듈에서는 자신이 보낸 것의 기록이며 어느 쪽도 권한이 없다), `CombatNetSettings`(`data/tuning/combat_net_settings.tres`). 조립은 `ServerComposition.install_net_modules`에서만 하고 `CompositionConfig`에 `combat_net` 필드가 추가됐다(`validate()`에 포함). `network_service.gd`는 수정하지 않았고 §14.5의 공개 헬퍼만 쓴다. 게임 규칙은 전부 `CombatService`(§14.10)에 있고 이 모듈은 전송·검증만 한다. 임시 가정은 docs/15 P2-60~P2-65.
+
+**프로토콜 변경 있음**: 아래 RPC 3개와 join 스냅샷의 `modules.CombatNet` 조각이 새로 생겼다. N1 묶음을 병합하면서 `BuildInfo.PROTOCOL_VERSION`을 3으로 올렸다.
+
+| 방향 | RPC | 채널/모드 | 받는 쪽 검증 |
+|---|---|---|---|
+| C→S | `_rpc_request_melee_attack(request_id: int, aim_yaw: float)` | 0 reliable | 아래 "요청 검증" 표 |
+| S→요청자 | `_rpc_melee_result(request_id: int, ok: bool, reason: String)` | 0 reliable | 서버 발신만 수용, 타입, `request_id` ≥ 0, `reason` 길이 ≤ 64, `ok`일 때만 `reason`이 빈 문자열 |
+| S→전체 | `_rpc_combat_events(events: Array[Dictionary])` | 0 reliable | 서버 발신만 수용, 배열·항목 수 ≤ 64, 항목마다 아래 "공개 이벤트" 형식 검증과 순번 증가 |
+
+요청: 클라이언트는 의도만 보낸다(자신이 붙인 요청 번호와 조준 방향). 플레이어·위치·대상·무기·피해 인자는 없다. 공격자는 보낸 peer의 플레이어(`NetworkService.sender_player_id()`)이고 나머지는 `CombatService.request_melee_attack(world, player_id, aim_yaw)`이 서버 상태에서 정한다. 다른 플레이어를 사칭할 수단이 없다는 것(인자가 둘뿐이고, 인자를 더 붙여 보내면 핸들러가 호출되지 않는다)은 테스트로 고정했다.
+
+요청 검증(순서대로, 먼저 걸린 것 하나. 거부되면 서버 상태는 아무것도 바뀌지 않고 `NetworkService.rejected_intent_count(reason)`이 1 오른다):
+
+| 순서 | 사유 코드 | 조건 | 요청자에게 결과 전송 |
+|---|---|---|---|
+| 1 | `not_joined` | join 핸드셰이크를 마치지 않은 peer | 보내지 않음 |
+| 2 | `bad_type` | `request_id`가 int가 아니거나 `aim_yaw`가 float가 아님(int·문자열·벡터·null 등) | `request_id`가 0 이상 int일 때만 |
+| 3 | `bad_sequence` | `request_id` < 0 | 보내지 않음 |
+| 4 | `bad_aim_yaw` | NaN·무한 또는 `\|aim_yaw\|` > `CombatSettings.max_abs_aim_yaw`(전투 규칙과 같은 값) | 보냄 |
+| 5 | `rate_limited` | peer별 토큰 버킷(`CombatNetSettings.melee_intent_rate_per_sec`/`melee_intent_burst`, 기본 4/s·버스트 4) 초과. 형식이 틀린 요청은 토큰을 쓰지 않는다(줍기와 같은 순서) | 보냄 |
+| 6 | `combat_unavailable` | 월드에 전투 시스템이 없음(조립 오류) | 보냄 |
+| 7 | `CombatService`의 사유(§14.10: `player_dead`, `attack_on_cooldown`, `not_enough_stamina` 등) | 전투 규칙이 거부. 정상 플레이에서 흔하므로 횟수만 세고 경고 로그는 남기지 않는다(`count_rejection`) | 보냄 |
+
+결과는 요청자에게만 간다. 승인되면 `(request_id, true, "")`, 거부되면 `(request_id, false, 사유 코드)`. 결과에는 명중 여부가 없고, 명중·피해는 뒤이어 오는 이벤트로 안다.
+
+전투 이벤트: 모듈은 매 서버 틱(`server_physics`) `CombatService.drain_events()`를 비운다. **이 모듈이 전투 이벤트 큐의 유일한 소비자다**(좀비 이벤트 큐는 건드리지 않는다). 각 이벤트를 공개 형식으로 바꿔 서버 세션 순번(`sequence`, 1부터 1씩 증가, 저장하지 않으며 서버를 다시 시작하면 1부터)을 붙이고, join을 마친 모든 peer에게 같은 내용을 같은 순서로 보낸다. 한 메시지에 `max_events_per_message`(기본 32, 프로토콜 상한 `CombatNetModule.MAX_EVENTS_PER_MESSAGE` = 64)개까지 담고 넘으면 여러 메시지로 나눈다. 서버는 보내기 전에 자기 이벤트를 클라이언트와 같은 검증(`ClientCombatState.validate_event`)에 통과시키며, 통과하지 못하거나 모듈이 모르는 이벤트 종류는 보내지 않고 오류 로그를 남긴다.
+
+공개 이벤트 `melee_attack`(Dictionary, 문자열 키. 모든 클라이언트가 같은 값을 받는다):
+
+| 필드 | 타입/범위 | 내용 |
+|---|---|---|
+| `sequence` | int ≥ 1 | 서버 세션 순번 |
+| `event_type` | `"melee_attack"` | 다른 값은 클라이언트가 버린다 |
+| `attacker_id` | String 1~64자 | 공격한 플레이어 ID |
+| `weapon_id` | String 1~64자 | 무기 정의 ID |
+| `aim_yaw` | float, [−π, π] | 조준 방향 |
+| `position` | Vector3(유한값) | 공격 순간 공격자의 서버 위치(서버 이벤트의 `[x, y, z]`를 Vector3로 바꿔 보낸다) |
+| `hit` | bool | 명중 여부 |
+| `target_id` | String ≤ 64자 | 맞은 좀비 ID. `hit`이 false일 때만 `""` |
+| `target_died` | bool | 이 공격으로 좀비가 죽었는지(`hit`이 false면 항상 false) |
+| `world_time` | float ≥ 0 | 서버 월드 시각 |
+| `damage`, `target_health_after` | float ≥ 0 | 들어간 피해와 맞은 뒤 좀비 체력. 둘은 항상 함께 있거나 함께 없다(`CombatNetSettings.broadcast_damage_numbers`, 기본 true) |
+
+- 정보 공개(docs/15 P2-9, P2-62): `melee_attack`에는 플레이어의 비공개 상태(체력·스태미나·상처·감염)가 없다. 공격자 위치는 위치 스냅샷으로, 좀비 체력 비율은 좀비 스냅샷으로 이미 모두에게 가는 값이라 기본값은 전 필드 공개다. 피해 수치만 감추고 싶으면 `broadcast_damage_numbers`를 끈다(공격자 본인에게도 가지 않는다). 서버 이벤트에 필드가 추가되어도 위 표에 없는 필드는 전송되지 않는다(허용 목록 방식).
+- 순서 보장: 모두 채널 0(reliable ordered)이므로 (1) 한 요청의 결과는 그 공격의 이벤트보다 먼저 도착하고, (2) 이벤트는 서버가 판정한 순서로 모든 클라이언트에 같은 순서로 도착하며, (3) join 스냅샷보다 뒤에 온다. 이벤트에는 요청 번호가 없다. 자기 공격의 이벤트는 `attacker_id`가 자기 ID인 것이고, 승인된 요청 순서와 같은 순서로 온다.
+- 늦게 접속한 클라이언트: 지난 이벤트를 다시 보내지 않는다. join 스냅샷의 `modules.CombatNet` = `{last_sequence: int}`(이미 보낸 가장 새 순번)를 기준으로 그 뒤 순번부터 받는다. 클라이언트는 순번이 마지막으로 받은 것보다 크지 않은 이벤트를 버린다.
+- 거리 필터가 없다: 접속 중인 모든 클라이언트가 월드 어디서 난 전투 이벤트든 받는다(docs/15 P2-62).
+
+클라이언트 표면(`network.get_module(CombatNetModule.MODULE_NAME) as CombatNetModule`, 프레젠테이션이 사용):
+
+| API | 계약 |
+|---|---|
+| `request_melee_attack(aim_yaw: float) -> int` | 요청을 보내고 요청 번호(1부터)를 돌려준다. join 전이거나 클라이언트가 아니면 아무것도 보내지 않고 `CombatNetModule.NO_REQUEST`(0). 쿨다운·스태미나를 클라이언트에서 미리 판단하지 않는다 |
+| `signal melee_result(request_id: int, ok: bool, reason: String)` | 자기 요청의 결과 |
+| `signal combat_event(event: Dictionary)` | 검증을 통과한 공개 이벤트(사본), 서버 순서대로 |
+| `recent_events() -> Array[Dictionary]`, `last_event_sequence() -> int` | 최근 이벤트(사본, 오래된 순, `recent_event_capacity` 기본 64개)와 가장 새 순번. 미러이며 권한이 없다 |
+| `events: ClientCombatState`(`changed` 시그널), `rejected_event_count` | 미러 객체, 형식이 틀려 버린 페이로드 수(진단) |
+| `send_raw_melee_request(request_id, aim_yaw)` | 클라이언트 쪽 검사 없이 그대로 보낸다(테스트 전용: 조작된 요청을 실제 RPC 경로로) |
+
+- 서버 전용 RPC를 클라이언트가 보내는 경우: 결과·이벤트 RPC는 `@rpc("authority")`라 엔진이 서버 아닌 발신자를 거부하고, 핸들러도 `network.is_from_server()`를 다시 확인한다. 클라이언트끼리는 직접 닿지 않는다(서버 relay 비활성). 요청 RPC 핸들러는 서버가 아니면 아무것도 하지 않는다.
+- 테스트: `tests/integration/combat_net_test.gd`(서버 1 + 클라이언트 2~3, 실제 ENet. 공격 → 서버 좀비 체력 감소·요청자만 결과·두 클라이언트와 서버 기록이 같은 이벤트, 좀비가 죽을 때까지의 이벤트 열 일치, 쿨다운·스태미나·사망 거부, 조작된 요청 13종과 거부 카운터·서버 상태 불변, join 전 요청, 빈도 초과와 peer별 버킷, 클라이언트가 보낸 서버 전용 RPC 무시, 사칭 불가, 늦은 접속, 한 틱의 이벤트 분할 전송과 피해 수치 비공개 설정, 서버가 보낸 형식 오류 페이로드를 클라이언트가 버림, 기본 설정·조립·RPC 설정, 공개 형식 변환과 검증 규칙).

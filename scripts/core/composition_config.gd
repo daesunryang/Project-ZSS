@@ -23,6 +23,8 @@ var combat: CombatSettings
 var melee_weapons: MeleeWeaponCatalog
 ## Phase 2-N1a (zombie replication; used by servers and clients).
 var zombie_net: ZombieNetSettings
+## Phase 2-N1b (combat network module).
+var combat_net: CombatNetSettings
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -40,6 +42,7 @@ static func from_defaults() -> CompositionConfig:
 	config.combat = CombatSettings.load_or_default()
 	config.melee_weapons = MeleeWeaponCatalog.load_directory()
 	config.zombie_net = ZombieNetSettings.load_or_default()
+	config.combat_net = CombatNetSettings.load_or_default()
 	return config
 
 
@@ -55,6 +58,9 @@ func validate() -> PackedStringArray:
 	if player_noise == null:
 		errors.append("composition config is incomplete (player_noise)")
 		return errors
+	if combat_net == null:
+		errors.append("composition config is incomplete (combat_net)")
+		return errors
 	errors.append_array(gameplay.validate())
 	errors.append_array(clock.validate())
 	errors.append_array(dev_seed.validate())
@@ -67,4 +73,5 @@ func validate() -> PackedStringArray:
 	errors.append_array(combat.validate())
 	errors.append_array(melee_weapons.validate_against(combat.unarmed_weapon_id, catalog, noise))
 	errors.append_array(zombie_net.validate())
+	errors.append_array(combat_net.validate())
 	return errors

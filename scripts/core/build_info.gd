@@ -16,7 +16,9 @@ const REQUIRED_ENGINE_PATCH: int = 2
 const REQUIRED_ENGINE_STATUS: String = "stable"
 ## Network protocol revision. Bump on any RPC signature/semantics change.
 ## 2: Phase 2 P2-0 (third ENet channel, join snapshot "modules").
-const PROTOCOL_VERSION: int = 2
+## 3: Phase 2 N1 (ZombieNet, SurvivalNet, CombatNet modules: zombie
+##    snapshots/events, survival replication, melee attack intent).
+const PROTOCOL_VERSION: int = 3
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

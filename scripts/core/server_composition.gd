@@ -51,4 +51,11 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	if error != OK:
 		survival_net.free()
 		return error
+	# Phase 2-N1b: melee attack intent + combat event replication. A refused
+	# module never entered the tree, so it is freed here.
+	var combat_net: CombatNetModule = CombatNetModule.new(config.combat_net, config.combat.max_abs_aim_yaw)
+	var combat_net_error: Error = service.register_module(combat_net)
+	if combat_net_error != OK:
+		combat_net.free()
+		return combat_net_error
 	return OK
