@@ -53,6 +53,9 @@ func test_needs_grow_at_configured_rates() -> void:
 
 
 func test_needs_clamp_at_max() -> void:
+	# Isolate B2 need clamping from B3's health damage/respawn cycle.
+	_settings.starvation_health_loss_per_world_sec = 0.0
+	_settings.dehydration_health_loss_per_world_sec = 0.0
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
 	var alice: PlayerState = world.join("alice")
@@ -61,7 +64,7 @@ func test_needs_clamp_at_max() -> void:
 	assert_eq(vitals.hunger, _settings.need_max)
 	assert_eq(vitals.thirst, _settings.need_max)
 	assert_eq(vitals.fatigue, _settings.need_max)
-	assert_true(vitals.is_alive(), "needs alone never kill in B2 (starvation damage is B3)")
+	assert_true(vitals.is_alive(), "disabled B3 damage leaves this B2 clamping test alive")
 
 
 func test_needs_only_progress_for_online_living_players_and_running_clock() -> void:
@@ -79,8 +82,8 @@ func test_needs_only_progress_for_online_living_players_and_running_clock() -> v
 	assert_eq(survival.get_vitals(bob.player_id).thirst, 0.0, "offline player does not age")
 	survival.apply_damage(alice.player_id, DamageInput.create("z", BodyPart.Part.TORSO, Wound.Type.LACERATION, 500.0))
 	var frozen: float = survival.get_vitals(alice.player_id).thirst
-	survival.step(world, 0.0, SECONDS_PER_HOUR)
-	assert_eq(survival.get_vitals(alice.player_id).thirst, frozen, "dead player does not age")
+	survival.step(world, 0.0, _settings.respawn_delay_world_sec * 0.5)
+	assert_eq(survival.get_vitals(alice.player_id).thirst, frozen, "dead player does not age before respawn")
 
 
 func test_categories_follow_thresholds() -> void:

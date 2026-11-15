@@ -139,6 +139,18 @@ func get_player(player_id: String) -> PlayerState:
 	return _players.get(player_id, null)
 
 
+## Restores the authoritative transform at the configured spawn and discards
+## any pre-death movement intent. SurvivalService owns the respawn decision;
+## this hook only changes world-owned player state.
+func respawn_player_at_spawn(player_id: String) -> bool:
+	var state: PlayerState = _players.get(player_id, null)
+	if state == null:
+		return false
+	state.position = clamp_to_world(gameplay.player_spawn_position)
+	_move_inputs.erase(player_id)
+	return true
+
+
 func online_player_ids() -> PackedStringArray:
 	var result: PackedStringArray = PackedStringArray(_online.keys())
 	result.sort()

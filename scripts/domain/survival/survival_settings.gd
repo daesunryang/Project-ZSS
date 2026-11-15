@@ -36,6 +36,27 @@ const SECONDS_PER_HOUR: float = 3600.0
 ## Movement multiplier = 1 - penalty * sum(leg/foot severity), clamped to min.
 @export_range(0.0, 10.0) var movement_penalty_per_severity: float = 0.5
 @export_range(0.0, 1.0) var min_movement_multiplier: float = 0.25
+## B3 bleeding and recovery. A wound starts bleeding when its severity reaches
+## the threshold and its type multiplier is positive. All defaults are
+## PROVISIONAL (docs/15 P2-13..P2-16).
+@export_range(0.0, 1.0) var bleeding_min_severity: float = 0.25
+@export_range(0.0, 1000.0) var bleeding_health_loss_per_severity_per_world_sec: float = 0.01
+@export_range(0.0, 100.0) var bleeding_bruise_multiplier: float = 0.0
+@export_range(0.0, 100.0) var bleeding_laceration_multiplier: float = 1.0
+@export_range(0.0, 100.0) var bleeding_fracture_multiplier: float = 0.0
+@export_range(0.0, 100.0) var bleeding_burn_multiplier: float = 0.0
+@export_range(0.0, 100.0) var bleeding_bite_multiplier: float = 0.75
+@export_range(0.0, 100.0) var bleeding_scratch_multiplier: float = 0.25
+@export_range(0.0, 1000.0) var health_recovery_per_world_sec: float = 0.02
+@export_range(0.0, 1.0) var wound_recovery_per_world_sec: float = 0.0001
+## Health loss while the corresponding need is exactly at need_max.
+@export_range(0.0, 1000.0) var starvation_health_loss_per_world_sec: float = 0.005
+@export_range(0.0, 1000.0) var dehydration_health_loss_per_world_sec: float = 0.01
+## Development respawn policy (docs/15 P2-6/P2-17).
+@export_range(0.0, 1000000.0) var respawn_delay_world_sec: float = 10.0
+@export_range(0.0, 10000.0) var respawn_hunger: float = 0.0
+@export_range(0.0, 10000.0) var respawn_thirst: float = 0.0
+@export_range(0.0, 10000.0) var respawn_fatigue: float = 0.0
 ## Infection chance per exposure (docs/02 §7.1: bites are very high risk).
 @export_range(0.0, 1.0) var infection_chance_bite: float = 0.95
 @export_range(0.0, 1.0) var infection_chance_scratch: float = 0.15
@@ -70,6 +91,31 @@ func validate() -> PackedStringArray:
 			break
 	if min_handling_multiplier < 0.0 or min_handling_multiplier > 1.0 or min_movement_multiplier < 0.0 or min_movement_multiplier > 1.0:
 		errors.append("minimum multipliers must be within [0, 1]")
+	if bleeding_min_severity < 0.0 or bleeding_min_severity > Wound.MAX_SEVERITY:
+		errors.append("bleeding_min_severity must be within [0, 1]")
+	var non_negative_rates: Array[float] = [
+		bleeding_health_loss_per_severity_per_world_sec,
+		health_recovery_per_world_sec, wound_recovery_per_world_sec,
+		starvation_health_loss_per_world_sec, dehydration_health_loss_per_world_sec,
+		respawn_delay_world_sec,
+	]
+	for rate: float in non_negative_rates:
+		if rate < 0.0 or not is_finite(rate):
+			errors.append("B3 rates and respawn delay must be finite and >= 0")
+			break
+	var bleeding_multipliers: Array[float] = [
+		bleeding_bruise_multiplier, bleeding_laceration_multiplier,
+		bleeding_fracture_multiplier, bleeding_burn_multiplier,
+		bleeding_bite_multiplier, bleeding_scratch_multiplier,
+	]
+	for multiplier: float in bleeding_multipliers:
+		if multiplier < 0.0 or not is_finite(multiplier):
+			errors.append("bleeding type multipliers must be finite and >= 0")
+			break
+	for reset_need: float in [respawn_hunger, respawn_thirst, respawn_fatigue]:
+		if reset_need < 0.0 or reset_need > need_max or not is_finite(reset_need):
+			errors.append("respawn needs must be within [0, need_max]")
+			break
 	return errors
 
 
@@ -117,6 +163,27 @@ func infection_chance(exposure: InfectionState.Exposure) -> float:
 			return infection_chance_scratch
 		_:
 			return infection_chance_blood
+
+
+## Bleeding rate factor for one Wound.Type.
+func bleeding_type_multiplier(type: Wound.Type) -> float:
+	match type:
+		Wound.Type.BRUISE:
+			return bleeding_bruise_multiplier
+		Wound.Type.LACERATION:
+			return bleeding_laceration_multiplier
+		Wound.Type.FRACTURE:
+			return bleeding_fracture_multiplier
+		Wound.Type.BURN:
+			return bleeding_burn_multiplier
+		Wound.Type.BITE:
+			return bleeding_bite_multiplier
+		_:
+			return bleeding_scratch_multiplier
+
+
+func wound_starts_bleeding(type: Wound.Type, severity: float) -> bool:
+	return severity >= bleeding_min_severity and bleeding_type_multiplier(type) > 0.0
 
 
 static func load_or_default(path: String = DEFAULT_PATH) -> SurvivalSettings:

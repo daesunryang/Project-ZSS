@@ -6,7 +6,9 @@ extends RefCounted
 ## injuries, infection, per-player RNG. Not yet: body_temperature, stress,
 ## hygiene (later phases).
 
-const SCHEMA_VERSION: int = 1
+const SCHEMA_VERSION: int = 2
+const LEGACY_SCHEMA_VERSION: int = 1
+const NOT_DEAD_TIME: float = -1.0
 
 var health: float = 0.0
 var stamina: float = 0.0
@@ -16,6 +18,8 @@ var thirst: float = 0.0
 var fatigue: float = 0.0
 var injuries: Array[Wound] = []
 var infection: InfectionState = InfectionState.new()
+## World time at death; NOT_DEAD_TIME while alive. Added in schema v2.
+var died_at_world_time: float = NOT_DEAD_TIME
 ## Deterministic per-player RNG (infection rolls). State is saved.
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
@@ -46,6 +50,7 @@ func to_dict() -> Dictionary:
 		"fatigue": fatigue,
 		"injuries": wounds,
 		"infection": infection.to_dict(),
+		"died_at_world_time": died_at_world_time,
 		# 64-bit values are stored as strings: JSON numbers would lose precision.
 		"rng_seed": str(rng.seed),
 		"rng_state": str(rng.state),
@@ -55,18 +60,22 @@ func to_dict() -> Dictionary:
 ## Returns [vitals, errors]. `vitals` is null when errors is non-empty.
 static func from_dict(data: Dictionary, settings: SurvivalSettings) -> Array:
 	var errors: PackedStringArray = []
-	if not ItemInstance.is_integer_value(data.get("schema_version", null)) or int(data["schema_version"]) != SCHEMA_VERSION:
+	if not ItemInstance.is_integer_value(data.get("schema_version", null)) or int(data["schema_version"]) not in [LEGACY_SCHEMA_VERSION, SCHEMA_VERSION]:
 		errors.append("survival: unsupported schema_version")
 		return [null, errors]
+	var schema_version: int = int(data["schema_version"])
 	var vitals: PlayerVitals = PlayerVitals.new()
 	var limits: Dictionary = {
 		"health": settings.max_health, "stamina": settings.max_stamina,
 		"hunger": settings.need_max, "thirst": settings.need_max, "fatigue": settings.need_max,
 	}
+	var health_valid: bool = true
 	for key: String in limits:
 		var value: Variant = data.get(key, null)
 		if not (typeof(value) == TYPE_FLOAT or typeof(value) == TYPE_INT) or not is_finite(float(value)) or float(value) < 0.0 or float(value) > float(limits[key]):
 			errors.append("survival: %s out of range" % key)
+			if key == "health":
+				health_valid = false
 			continue
 		vitals.set(key, float(value))
 	var wounds: Variant = data.get("injuries", [])
@@ -85,6 +94,13 @@ static func from_dict(data: Dictionary, settings: SurvivalSettings) -> Array:
 		errors.append("survival: invalid infection state")
 	else:
 		vitals.infection = infection
+	var died_at: Variant = data.get("died_at_world_time", NOT_DEAD_TIME)
+	if not (typeof(died_at) == TYPE_FLOAT or typeof(died_at) == TYPE_INT) or not is_finite(float(died_at)) or (float(died_at) != NOT_DEAD_TIME and float(died_at) < 0.0):
+		errors.append("survival: died_at_world_time out of range")
+	else:
+		vitals.died_at_world_time = float(died_at)
+		if health_valid and schema_version >= SCHEMA_VERSION and ((vitals.health > 0.0 and vitals.died_at_world_time != NOT_DEAD_TIME) or (vitals.health <= 0.0 and vitals.died_at_world_time == NOT_DEAD_TIME)):
+			errors.append("survival: health/death timestamp mismatch")
 	var seed_text: String = str(data.get("rng_seed", ""))
 	var state_text: String = str(data.get("rng_state", ""))
 	if not seed_text.is_valid_int() or not state_text.is_valid_int():
