@@ -102,7 +102,16 @@ func _start_network(config: LaunchConfig, settings: AppSettings, world_id: Strin
 	if module_result != OK:
 		return module_result
 	if config.is_server():
+		# P2-T9: a dedicated server asks players to create their characters
+		# (data/tuning/character_settings.tres). Compositions built elsewhere
+		# (tests, tools) keep the compatible default (docs/09 §14.24).
+		composition.require_character_creation = composition.character.server_requires_character_creation
 		return _start_server(config, settings, network_settings, composition, world_id)
+	# P2-T9: --character-name= creates the character without the screen.
+	if not config.character_name.is_empty():
+		var character_net: CharacterNetModule = _network.get_module(CharacterNetModule.MODULE_NAME) as CharacterNetModule
+		if character_net != null:
+			character_net.set_auto_create(config.character_name)
 	var port: int = config.connect_port if config.connect_port > 0 else (config.port_override if config.port_override > 0 else network_settings.port)
 	return _network.start_client(config.connect_address, port, config.player_key, network_settings)
 

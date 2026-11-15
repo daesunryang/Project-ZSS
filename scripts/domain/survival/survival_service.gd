@@ -42,6 +42,15 @@ extends ServerSystem
 ## `character_generation`. A dead character cannot pick up or put down
 ## items (player_action_block_reason).
 ##
+## Created characters (P2-T9, docs/09 §14.24): where ServerWorld requires
+## the player to create its characters (require_character_creation), the
+## next character does not start by itself. The dead character stays dead
+## after the delay until ServerWorld.create_character() is called; this
+## system then resets the vitals in on_character_started(). It tells the
+## world when that is allowed through new_character_block_reason():
+## "character_alive" while the character lives, "respawn_wait" until the
+## delay has passed.
+##
 ## Rest (P2-T8, docs/09 §14.23): an online, living player may lie down
 ## (start_rest) and get up (stop_rest). While it rests its fatigue falls at
 ## the configured calendar-time rate (never below 0) instead of rising,
@@ -122,6 +131,12 @@ const REASON_PLAYER_RESTING: String = "player_resting"
 const REASON_ALREADY_RESTING: String = "already_resting"
 const REASON_NOT_RESTING: String = "not_resting"
 const REASON_NOT_ONLINE: String = ServerWorld.REASON_NOT_ONLINE
+## Why a player cannot create its next character yet (P2-T9): the current
+## one is alive / the delay after its death has not passed.
+const REASON_CHARACTER_ALIVE: String = "character_alive"
+const REASON_RESPAWN_WAIT: String = "respawn_wait"
+## Value of _new_character_world_time while no integration starts a character.
+const NO_PENDING_TIME: float = -1.0
 
 const CAUSE_COMBAT: String = "combat"
 const CAUSE_BLEEDING: String = "bleeding"
@@ -170,6 +185,9 @@ var _step_action_per_world_sec: float = 0.0
 ## Whether the player being integrated rests (set by _advance_player before
 ## every living portion; selects the need rates, _need_rate).
 var _step_resting: bool = false
+## Calendar instant of the character the integrator is starting right now
+## (the exact respawn boundary inside a tick), for on_character_started().
+var _new_character_world_time: float = NO_PENDING_TIME
 
 
 func _init(settings: SurvivalSettings, ids: EntityIdGenerator, clock: WorldClock) -> void:
@@ -588,6 +606,56 @@ func player_movement_multiplier(player_id: String) -> float:
 	return movement_speed_multiplier(player_id)
 
 
+## A player that has a character may create the next one only when this one
+## is dead and the delay has passed (P2-T9). Unknown players (no vitals yet:
+## the first character) are not this system's business.
+func new_character_block_reason(player_id: String) -> String:
+	var vitals: PlayerVitals = _vitals.get(player_id, null)
+	if vitals == null:
+		return ""
+	if vitals.is_alive():
+		return REASON_CHARACTER_ALIVE
+	# No action death time yet: the delay starts at the player's next online
+	# instant (on_player_online).
+	if vitals.died_at_action_time == PlayerVitals.NOT_DEAD_TIME:
+		return REASON_RESPAWN_WAIT
+	if _clock.action_time_sec < vitals.died_at_action_time + _settings.respawn_delay_sec:
+		return REASON_RESPAWN_WAIT
+	return ""
+
+
+## The world started the player's next character (ServerWorld.start_new_character,
+## reached from this system's own integration or from a creation request):
+## initial vitals, no wounds, no infection. The infection RNG stream of the
+## player continues. Queues "player_respawned".
+func on_character_started(world: ServerWorld, player_id: String) -> void:
+	var vitals: PlayerVitals = _vitals.get(player_id, null)
+	if vitals == null:
+		return
+	var world_time: float = _new_character_world_time if _new_character_world_time >= 0.0 else _clock.world_time_sec
+	vitals.health = _settings.max_health
+	vitals.stamina = _settings.max_stamina
+	vitals.hunger = _settings.respawn_hunger
+	vitals.thirst = _settings.respawn_thirst
+	vitals.fatigue = _settings.respawn_fatigue
+	vitals.injuries.clear()
+	vitals.infection = InfectionState.new()
+	vitals.died_at_world_time = PlayerVitals.NOT_DEAD_TIME
+	vitals.died_at_action_time = PlayerVitals.NOT_DEAD_TIME
+	_pending_damage.erase(player_id)
+	_resting.erase(player_id)
+	var state: PlayerState = world.get_player(player_id)
+	var event: Dictionary = {
+		"event_type": EVENT_PLAYER_RESPAWNED,
+		"player_id": player_id,
+		"position": [state.position.x, state.position.y, state.position.z],
+		"character_generation": state.character_generation,
+		"world_time": world_time,
+	}
+	_push_event(event)
+	GameLogger.info("survival", "new character started", event)
+
+
 ## A dead character is finished: it can neither pick up nor put down items
 ## while the player waits for the new character (P2-T4). A resting player
 ## must get up first: it cannot attack or handle items (P2-T8).
@@ -688,9 +756,13 @@ func _advance_player(world: ServerWorld, player_id: String, vitals: PlayerVitals
 			var respawn_action_at: float = vitals.died_at_action_time + _settings.respawn_delay_sec
 			if respawn_action_at > _step_action_end:
 				return
+			# Where players create their characters themselves, the dead one
+			# waits for that request (ServerWorld.create_character, P2-T9).
+			if world.require_character_creation:
+				return
 			# A deadline that passed before this tick (offline) fires at once.
 			var respawn_at: float = clampf(_world_time_at(respawn_action_at), cursor, end_time)
-			if not _start_new_character(world, player_id, vitals, respawn_at):
+			if not _start_new_character(world, player_id, respawn_at):
 				return
 			cursor = respawn_at
 			continue
@@ -1009,34 +1081,18 @@ func _leave_belongings(player_id: String) -> void:
 		GameLogger.error("survival", "dead player's items not dropped", {"player_id": player_id, "reason": dropped.reason, "operation": "leave_belongings"})
 
 
-## The player's next character starts (docs/00 ADR-007): spawn point, empty
-## inventory and the next character generation (ServerWorld), initial vitals,
-## no wounds, no infection. The infection RNG stream of the player continues.
-func _start_new_character(world: ServerWorld, player_id: String, vitals: PlayerVitals, world_time: float) -> bool:
+## The player's next character starts by itself (docs/00 ADR-007; only
+## where creation is not required, P2-T9): spawn point, empty inventory and
+## the next character generation (ServerWorld.start_new_character), which
+## calls on_character_started() to reset the vitals. `world_time` is the
+## calendar instant of the start inside the tick.
+func _start_new_character(world: ServerWorld, player_id: String, world_time: float) -> bool:
+	_new_character_world_time = world_time
 	var started: ActionResult = world.start_new_character(player_id)
+	_new_character_world_time = NO_PENDING_TIME
 	if not started.ok:
 		GameLogger.error("survival", "new character rejected", {"player_id": player_id, "reason": started.reason, "operation": "start_new_character"})
 		return false
-	vitals.health = _settings.max_health
-	vitals.stamina = _settings.max_stamina
-	vitals.hunger = _settings.respawn_hunger
-	vitals.thirst = _settings.respawn_thirst
-	vitals.fatigue = _settings.respawn_fatigue
-	vitals.injuries.clear()
-	vitals.infection = InfectionState.new()
-	vitals.died_at_world_time = PlayerVitals.NOT_DEAD_TIME
-	vitals.died_at_action_time = PlayerVitals.NOT_DEAD_TIME
-	_pending_damage.erase(player_id)
-	var state: PlayerState = world.get_player(player_id)
-	var event: Dictionary = {
-		"event_type": EVENT_PLAYER_RESPAWNED,
-		"player_id": player_id,
-		"position": [state.position.x, state.position.y, state.position.z],
-		"character_generation": state.character_generation,
-		"world_time": world_time,
-	}
-	_push_event(event)
-	GameLogger.info("survival", "new character started", event)
 	return true
 
 ## Action time at a calendar instant of the tick set up by step().

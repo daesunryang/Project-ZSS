@@ -1,0 +1,50 @@
+[gd_resource type="Resource" script_class="AppearanceSlot" load_steps=9 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_slot.gd" id="1_slot"]
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_option.gd" id="2_option"]
+
+[sub_resource type="Resource" id="option_slim"]
+script = ExtResource("2_option")
+option_id = "slim"
+display_name = "마른 체형"
+scale = 0.85
+
+[sub_resource type="Resource" id="option_lean"]
+script = ExtResource("2_option")
+option_id = "lean"
+display_name = "호리호리한 체형"
+scale = 0.92
+
+[sub_resource type="Resource" id="option_average"]
+script = ExtResource("2_option")
+option_id = "average"
+display_name = "보통 체형"
+scale = 1.0
+
+[sub_resource type="Resource" id="option_athletic"]
+script = ExtResource("2_option")
+option_id = "athletic"
+display_name = "탄탄한 체형"
+scale = 1.08
+
+[sub_resource type="Resource" id="option_sturdy"]
+script = ExtResource("2_option")
+option_id = "sturdy"
+display_name = "건장한 체형"
+scale = 1.16
+
+[sub_resource type="Resource" id="option_heavy"]
+script = ExtResource("2_option")
+option_id = "heavy"
+display_name = "육중한 체형"
+scale = 1.25
+
+[resource]
+script = ExtResource("1_slot")
+slot_id = "body_type"
+display_name = "체형"
+sort_order = 10
+kind = "scale"
+visual_role = "capsule_radius"
+options = Array[ExtResource("2_option")]([SubResource("option_slim"), SubResource("option_lean"), SubResource("option_average"), SubResource("option_athletic"), SubResource("option_sturdy"), SubResource("option_heavy")])
+default_option_id = "average"

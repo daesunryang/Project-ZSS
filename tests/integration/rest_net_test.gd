@@ -654,7 +654,7 @@ func test_default_settings_protocol_and_request_validation() -> void:
 	var broken: SurvivalNetSettings = SurvivalNetSettings.new()
 	broken.rest_intent_rate_per_sec = 0.0
 	assert_eq(broken.validate().size(), 1, "; ".join(broken.validate()))
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 6, "the rest RPCs and the new survival snapshot format are a protocol change")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 7, "the rest RPCs and the new survival snapshot format were a protocol change (6); 7 since the character RPCs (P2-T9)")
 	assert_eq(SurvivalNetModule.SCHEMA_VERSION, 3, "the owner snapshot and the status rows carry `resting`")
 	assert_eq(SurvivalNetModule.SCHEMA_VERSION, ClientSurvivalState.SCHEMA_VERSION, "server and client agree on the format")
 	assert_eq(SurvivalNetModule.validate_rest_request(1, true), "")

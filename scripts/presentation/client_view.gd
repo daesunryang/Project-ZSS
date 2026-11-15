@@ -11,6 +11,11 @@ extends Node3D
 @onready var _attack_result_label: Label = %AttackResultLabel
 @onready var _inventory_label: Label = %InventoryLabel
 @onready var _consume_result_label: Label = %ConsumeResultLabel
+@onready var _creation_screen: CharacterCreationScreen = %CharacterCreationScreen
+
+## Children of a player's visual.
+const PLAYER_BODY_NODE: String = "Body"
+const PLAYER_TAG_NODE: String = "NameTag"
 
 var _settings: CameraSettings = null
 var _presentation: ClientPresentationSettings = null
@@ -23,12 +28,14 @@ var _intent_sender: MoveIntentSender = null
 var _attack_policy: AttackIntentPolicy = null
 var _yaw: float = 0.0
 var _pitch: float = 0.0
-var _player_visuals: Dictionary[String, MeshInstance3D] = {}
+## player_id -> Node3D "Player_<id>" with the children "Body" (the capsule,
+## MeshInstance3D) and "NameTag" (Label3D).
+var _player_visuals: Dictionary[String, Node3D] = {}
+## player_id -> what the capsule and the name tag were last built from
+## (the mirrors change many times a second; meshes are rebuilt on change).
+var _player_look_keys: Dictionary[String, String] = {}
 var _zombie_visuals: Dictionary[String, MeshInstance3D] = {}
-var _capsule_mesh: CapsuleMesh = null
 var _zombie_capsule_mesh: CapsuleMesh = null
-var _local_material: StandardMaterial3D = null
-var _remote_material: StandardMaterial3D = null
 var _dead_player_material: StandardMaterial3D = null
 var _zombie_materials: Dictionary[String, StandardMaterial3D] = {}
 var _event_lines: PackedStringArray = []
@@ -45,6 +52,12 @@ var _inventory_signature: int = 0
 var _survival_module: SurvivalNetModule = null
 ## Flood guard of the rest key (same rule as the attack guard).
 var _rest_policy: AttackIntentPolicy = null
+## Character names and appearance, and the creation request (P2-T9).
+var _character_module: CharacterNetModule = null
+var _character_state: ClientCharacterState = null
+## Appearance definitions the placeholder look is computed from (the
+## module's when connected, so the client and the mirror agree).
+var _appearance_catalog: AppearanceCatalog = AppearanceCatalog.new()
 
 
 func _ready() -> void:
@@ -73,8 +86,8 @@ func _ready() -> void:
 	ClientInputActions.register(_settings, _presentation)
 	_prepare_player_resources()
 	_prepare_zombie_resources()
-	if DisplayServer.get_name() != "headless":
-		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	_creation_screen.create_requested.connect(_on_create_requested)
+	_apply_mouse_mode()
 	_update_camera()
 	_bind_network.call_deferred()
 	GameLogger.info("presentation", "client view ready", {"display_driver": DisplayServer.get_name()})
@@ -111,6 +124,9 @@ func _process(_delta: float) -> void:
 
 func _physics_process(_delta: float) -> void:
 	_update_camera()
+	# No game input while the character creation screen is open (P2-T9).
+	if not is_game_input_enabled():
+		return
 	if Input.is_action_just_pressed(ClientInputActions.ATTACK):
 		_request_melee_attack()
 	for action: StringName in ClientInputActions.USE_ACTION_KINDS:
@@ -171,6 +187,17 @@ func _bind_network() -> void:
 	_inventory_module = _network.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule
 	if _inventory_module != null and not _inventory_module.consume_result.is_connected(_on_consume_result):
 		_inventory_module.consume_result.connect(_on_consume_result)
+	_character_module = _network.get_module(CharacterNetModule.MODULE_NAME) as CharacterNetModule
+	if _character_module != null:
+		_character_state = _character_module.client_state
+		var rules: CharacterRules = _character_module.character_rules()
+		_appearance_catalog = rules.catalog
+		_creation_screen.setup(rules)
+		if not _character_state.changed.is_connected(_on_character_state_changed):
+			_character_state.changed.connect(_on_character_state_changed)
+		if not _character_module.create_result.is_connected(_on_create_result):
+			_character_module.create_result.connect(_on_create_result)
+	_sync_creation_screen()
 	_sync_player_visuals()
 	_sync_zombie_visuals()
 	_refresh_survival_hud()
@@ -235,13 +262,6 @@ func _show_consume_text(text: String) -> void:
 
 
 func _prepare_player_resources() -> void:
-	_capsule_mesh = CapsuleMesh.new()
-	_capsule_mesh.radius = _settings.capsule_radius_m
-	_capsule_mesh.height = _settings.capsule_height_m
-	_local_material = StandardMaterial3D.new()
-	_local_material.albedo_color = _settings.local_player_color
-	_remote_material = StandardMaterial3D.new()
-	_remote_material.albedo_color = _settings.remote_player_color
 	_dead_player_material = StandardMaterial3D.new()
 	_dead_player_material.albedo_color = _presentation.dead_player_color
 
@@ -261,29 +281,80 @@ func _sync_player_visuals() -> void:
 		return
 	for existing_id: String in _player_visuals.keys():
 		if not _state.players.has(existing_id):
+			# Out of the tree at once (queue_free alone keeps the node, and its
+			# name, until the end of the frame).
+			_players_root.remove_child(_player_visuals[existing_id])
 			_player_visuals[existing_id].queue_free()
 			_player_visuals.erase(existing_id)
+			_player_look_keys.erase(existing_id)
 	for player_id: String in _state.players:
-		var visual: MeshInstance3D = _player_visuals.get(player_id, null)
+		var visual: Node3D = _player_visuals.get(player_id, null)
 		if visual == null:
-			visual = MeshInstance3D.new()
-			visual.name = "Player_" + player_id
-			visual.mesh = _capsule_mesh
+			visual = _make_player_visual(player_id)
 			_players_root.add_child(visual)
 			_player_visuals[player_id] = visual
+		var body: MeshInstance3D = visual.get_node(PLAYER_BODY_NODE) as MeshInstance3D
+		var tag: Label3D = visual.get_node(PLAYER_TAG_NODE) as Label3D
 		var entry: Dictionary = _state.players[player_id]
 		var alive: bool = _survival_state == null or not _survival_state.has_player(player_id) or _survival_state.is_alive(player_id)
 		# Lying down to rest is visible on every client (P2-T8): the capsule
 		# lies on the ground like a dead one but keeps its living colour.
 		var resting: bool = _survival_state != null and _survival_state.is_resting(player_id)
 		var lying: bool = ClientPresentationFormatter.player_is_lying(alive, resting)
-		var center_height: float = _settings.capsule_radius_m if lying else _settings.capsule_height_m * 0.5
-		visual.position = (entry.get("position", Vector3.ZERO) as Vector3) + Vector3.UP * center_height
-		visual.rotation = Vector3(ClientPresentationFormatter.player_tilt_rad(alive, resting, _presentation), float(entry.get("yaw", 0.0)), 0.0)
-		if not alive:
-			visual.material_override = _dead_player_material
-		else:
-			visual.material_override = _local_material if player_id == _state.local_player_id else _remote_material
+		var is_local: bool = player_id == _state.local_player_id
+		# Name and appearance (P2-T9): the top colour is the capsule colour,
+		# height and body type its size. Without a character row the usual
+		# capsule in the local / remote colour is shown and no name.
+		var character_name: String = _character_state.character_name(player_id) if _character_state != null else ""
+		var selection: Dictionary = _character_state.appearance(player_id) if _character_state != null else {}
+		var mesh: CapsuleMesh = body.mesh as CapsuleMesh
+		# The mirrors change many times a second (positions): the capsule and
+		# the name are rebuilt only when what they show changed.
+		var look_key: String = "%s|%d|%s|%s" % [character_name, selection.hash(), str(alive), str(is_local)]
+		if _player_look_keys.get(player_id, "") != look_key:
+			_player_look_keys[player_id] = look_key
+			var look: Dictionary = CharacterCapsuleLook.build(_appearance_catalog, selection, _settings.capsule_radius_m, _settings.capsule_height_m, _settings.local_player_color if is_local else _settings.remote_player_color)
+			mesh.radius = float(look[CharacterCapsuleLook.KEY_RADIUS])
+			mesh.height = float(look[CharacterCapsuleLook.KEY_HEIGHT])
+			if alive:
+				var material: StandardMaterial3D = StandardMaterial3D.new()
+				material.albedo_color = look[CharacterCapsuleLook.KEY_COLOR]
+				body.material_override = material
+			else:
+				body.material_override = _dead_player_material
+			tag.text = character_name
+			tag.visible = not character_name.is_empty()
+			tag.modulate = _presentation.name_tag_dead_color if not alive else (_presentation.name_tag_local_color if is_local else _presentation.name_tag_remote_color)
+		var radius: float = mesh.radius
+		var height: float = mesh.height
+		visual.position = entry.get("position", Vector3.ZERO) as Vector3
+		visual.rotation = Vector3(0.0, float(entry.get("yaw", 0.0)), 0.0)
+		body.position = Vector3.UP * (radius if lying else height * 0.5)
+		body.rotation = Vector3(ClientPresentationFormatter.player_tilt_rad(alive, resting, _presentation), 0.0, 0.0)
+		# The name stays upright above whatever the capsule does.
+		tag.position = Vector3.UP * ((radius * 2.0 if lying else height) + _presentation.name_tag_margin_m)
+
+
+## A player's placeholder: a root that follows position and facing, the
+## capsule (its own mesh: every character has its own size) and the name.
+func _make_player_visual(player_id: String) -> Node3D:
+	var visual: Node3D = Node3D.new()
+	visual.name = "Player_" + player_id
+	var body: MeshInstance3D = MeshInstance3D.new()
+	body.name = PLAYER_BODY_NODE
+	var mesh: CapsuleMesh = CapsuleMesh.new()
+	mesh.radius = _settings.capsule_radius_m
+	mesh.height = _settings.capsule_height_m
+	body.mesh = mesh
+	visual.add_child(body)
+	var tag: Label3D = Label3D.new()
+	tag.name = PLAYER_TAG_NODE
+	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	tag.pixel_size = _presentation.name_tag_pixel_size
+	tag.font_size = _presentation.name_tag_font_size
+	tag.visible = false
+	visual.add_child(tag)
+	return visual
 
 
 func _sync_zombie_visuals() -> void:
@@ -325,6 +396,7 @@ func _refresh_survival_hud() -> void:
 		"wounds": _survival_state.wounds(),
 		"infection_stage": _survival_state.infection_stage(),
 		"character_generation": _survival_state.character_generation(),
+		"character_name": _character_state.character_name(_survival_state.local_player_id) if _character_state != null else "",
 		"resting": _survival_state.is_resting(_survival_state.local_player_id),
 	}
 	var lines: PackedStringArray = ClientPresentationFormatter.build_survival_lines(vitals, _presentation)
@@ -442,6 +514,60 @@ func _request_rest() -> void:
 	if not _rest_policy.should_send(connected, _now_sec()):
 		return
 	_survival_module.request_rest(not _survival_state.is_resting(_state.local_player_id))
+
+
+# ------------------------------------------------------------ character creation (P2-T9)
+
+## False while the character creation screen is open: no move, attack, use,
+## rest or pickup input is sent then.
+func is_game_input_enabled() -> bool:
+	return _creation_screen == null or not _creation_screen.is_open()
+
+
+func _on_character_state_changed() -> void:
+	_sync_player_visuals()
+	_refresh_survival_hud()
+	_sync_creation_screen()
+
+
+## Opens the screen when the server says the local player may create a
+## character (it has none, or its character is dead and the wait is over)
+## and closes it otherwise. A session started with `--character-name=`
+## creates without the screen.
+func _sync_creation_screen() -> void:
+	var can_create: bool = _character_state != null and _character_state.can_create_character()
+	var auto_create: bool = _character_module != null and _character_module.is_auto_create_enabled()
+	var should_open: bool = CharacterCreationScreen.should_open(can_create, auto_create)
+	if should_open and not _creation_screen.is_open():
+		var local_id: String = _state.local_player_id if _state != null else ""
+		_creation_screen.open(not _character_state.has_character(local_id))
+		_apply_mouse_mode()
+	elif not should_open and _creation_screen.is_open():
+		_creation_screen.close()
+		_apply_mouse_mode()
+
+
+## The screen's confirm button: only the intent is sent; the server decides.
+func _on_create_requested(character_name: String, appearance: Dictionary) -> void:
+	if _character_module == null or _character_module.request_create_character(character_name, appearance) == CharacterNetModule.NO_REQUEST:
+		_creation_screen.show_server_reason(NetworkService.NOT_JOINED)
+
+
+## The server's answer. An accepted request closes the screen through the
+## creation state the server sends with it; a refusal is shown.
+func _on_create_result(_request_id: int, ok: bool, reason: String) -> void:
+	if ok:
+		_sync_creation_screen()
+	else:
+		_creation_screen.show_server_reason(reason)
+
+
+## The mouse is free while the creation screen is open and captured for the
+## camera otherwise (never touched on a headless display).
+func _apply_mouse_mode() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if _creation_screen != null and _creation_screen.is_open() else Input.MOUSE_MODE_CAPTURED
 
 
 func _now_sec() -> float:

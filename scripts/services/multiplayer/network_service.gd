@@ -39,6 +39,15 @@ extends Node
 ## paths), receive lifecycle hooks, contribute join snapshot fragments
 ## (snapshot["modules"][name]) and use the public helpers below. This file is
 ## frozen for feature work after P2-0.
+##
+## P2-T9 (docs/09 §14.24, the one change since the freeze): a joined peer
+## whose player has no character yet is connected but not in the world
+## (ServerWorld.is_online is false). Such a player is not announced: the
+## other peers get no _rpc_player_joined / _rpc_player_left for it and the
+## modules get no on_player_joined. When its first character is created the
+## character module calls announce_player_entered(), which does the
+## announcement the handshake skipped. Where every player has a character at
+## join (ServerWorld.require_character_creation false) nothing changed.
 
 signal server_started(port: int)
 signal join_accepted(player_id: String)
@@ -294,15 +303,18 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	_peer_players.erase(peer_id)
 	_move_limiter.forget(peer_id)
 	_pickup_limiter.forget(peer_id)
+	# P2-T9: only a player that was in the world was ever announced.
+	var was_in_world: bool = _world.is_online(player_id)
 	_world.leave(player_id)
 	for module: NetModule in _modules:
 		module.on_player_left(peer_id, player_id)
 	persist("player_left")
 	for other: int in _peer_players:
-		if can_send_to(other):
+		if was_in_world and can_send_to(other):
 			_rpc_player_left.rpc_id(other, player_id)
 	GameLogger.info("net", "player disconnected", {"peer_id": peer_id, "player_id": player_id})
-	player_left.emit(player_id)
+	if was_in_world:
+		player_left.emit(player_id)
 
 
 func _server_process(delta: float) -> void:
@@ -346,13 +358,33 @@ func _rpc_request_join(protocol_version: Variant, game_version: Variant, player_
 	_pending_peers.erase(peer_id)
 	_peer_players[peer_id] = state.player_id
 	_rpc_join_accepted.rpc_id(peer_id, state.player_id, _build_join_snapshot(state.player_id))
-	for other: int in _peer_players:
-		if other != peer_id and can_send_to(other):
-			_rpc_player_joined.rpc_id(other, state.player_id, state.position, state.yaw)
-	for module: NetModule in _modules:
-		module.on_player_joined(peer_id, state.player_id)
 	GameLogger.info("net", "join accepted", {"peer_id": peer_id, "player_id": state.player_id, "client_game_version": str(game_version)})
-	player_joined.emit(state.player_id)
+	# P2-T9: a player without a character is not in the world yet; it is
+	# announced by announce_player_entered() once its character exists.
+	if _world.is_online(state.player_id):
+		_announce_player(peer_id, state.player_id, false)
+
+
+## Server (P2-T9): a joined player that was not in the world entered it (its
+## first character was created). Does what the join handshake does for a
+## player that is in the world at once: every joined peer gets
+## _rpc_player_joined (the player's own peer too: its join snapshot did not
+## contain it), modules get on_player_joined and `player_joined` is emitted.
+func announce_player_entered(player_id: String) -> void:
+	var peer_id: int = peer_of_player(player_id)
+	if _mode != Mode.SERVER or peer_id == 0 or not _world.is_online(player_id):
+		return
+	_announce_player(peer_id, player_id, true)
+
+
+func _announce_player(peer_id: int, player_id: String, include_own_peer: bool) -> void:
+	var state: PlayerState = _world.get_player(player_id)
+	for other: int in _peer_players:
+		if (include_own_peer or other != peer_id) and can_send_to(other):
+			_rpc_player_joined.rpc_id(other, player_id, state.position, state.yaw)
+	for module: NetModule in _modules:
+		module.on_player_joined(peer_id, player_id)
+	player_joined.emit(player_id)
 
 
 @rpc("any_peer", "call_remote", "unreliable_ordered", 1)

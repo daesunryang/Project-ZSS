@@ -31,7 +31,15 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    consume and melee results may say "player_resting". P2-T6 / P2-T7 only
 ##    add result reasons to the consume intent ("not_bleeding",
 ##    "not_infected", "too_late"); its messages are unchanged.
-const PROTOCOL_VERSION: int = 6
+## 7: P2-T9 (character name and appearance). New module CharacterNet: the
+##    creation intent and its result (_rpc_request_create_character,
+##    _rpc_create_result), character rows (_rpc_character_rows), the owner's
+##    creation state (_rpc_creation_state) and a join fragment. A joined peer
+##    may now be without a character: it is in nobody's snapshot, gets a
+##    SurvivalNet join fragment without "self", and other peers get
+##    _rpc_player_joined for it only when its first character exists. Where
+##    creation is required a dead character no longer respawns by itself.
+const PROTOCOL_VERSION: int = 7
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

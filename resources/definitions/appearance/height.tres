@@ -1,0 +1,56 @@
+[gd_resource type="Resource" script_class="AppearanceSlot" load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_slot.gd" id="1_slot"]
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_option.gd" id="2_option"]
+
+[sub_resource type="Resource" id="option_very_short"]
+script = ExtResource("2_option")
+option_id = "very_short"
+display_name = "아주 작은 키"
+scale = 0.88
+
+[sub_resource type="Resource" id="option_short"]
+script = ExtResource("2_option")
+option_id = "short"
+display_name = "작은 키"
+scale = 0.92
+
+[sub_resource type="Resource" id="option_below_average"]
+script = ExtResource("2_option")
+option_id = "below_average"
+display_name = "조금 작은 키"
+scale = 0.96
+
+[sub_resource type="Resource" id="option_average"]
+script = ExtResource("2_option")
+option_id = "average"
+display_name = "보통 키"
+scale = 1.0
+
+[sub_resource type="Resource" id="option_above_average"]
+script = ExtResource("2_option")
+option_id = "above_average"
+display_name = "조금 큰 키"
+scale = 1.04
+
+[sub_resource type="Resource" id="option_tall"]
+script = ExtResource("2_option")
+option_id = "tall"
+display_name = "큰 키"
+scale = 1.08
+
+[sub_resource type="Resource" id="option_very_tall"]
+script = ExtResource("2_option")
+option_id = "very_tall"
+display_name = "아주 큰 키"
+scale = 1.12
+
+[resource]
+script = ExtResource("1_slot")
+slot_id = "height"
+display_name = "키"
+sort_order = 20
+kind = "scale"
+visual_role = "capsule_height"
+options = Array[ExtResource("2_option")]([SubResource("option_very_short"), SubResource("option_short"), SubResource("option_below_average"), SubResource("option_average"), SubResource("option_above_average"), SubResource("option_tall"), SubResource("option_very_tall")])
+default_option_id = "average"

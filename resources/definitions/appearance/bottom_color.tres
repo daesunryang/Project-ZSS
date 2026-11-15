@@ -1,0 +1,74 @@
+[gd_resource type="Resource" script_class="AppearanceSlot" load_steps=13 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_slot.gd" id="1_slot"]
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_option.gd" id="2_option"]
+
+[sub_resource type="Resource" id="option_black"]
+script = ExtResource("2_option")
+option_id = "black"
+display_name = "검정"
+color = Color(0.1373, 0.1412, 0.1529, 1)
+
+[sub_resource type="Resource" id="option_charcoal"]
+script = ExtResource("2_option")
+option_id = "charcoal"
+display_name = "짙은 회색"
+color = Color(0.2706, 0.2824, 0.302, 1)
+
+[sub_resource type="Resource" id="option_gray"]
+script = ExtResource("2_option")
+option_id = "gray"
+display_name = "회색"
+color = Color(0.4941, 0.5059, 0.5255, 1)
+
+[sub_resource type="Resource" id="option_navy"]
+script = ExtResource("2_option")
+option_id = "navy"
+display_name = "남색"
+color = Color(0.149, 0.2275, 0.3608, 1)
+
+[sub_resource type="Resource" id="option_denim"]
+script = ExtResource("2_option")
+option_id = "denim"
+display_name = "청색"
+color = Color(0.2471, 0.3922, 0.5686, 1)
+
+[sub_resource type="Resource" id="option_brown"]
+script = ExtResource("2_option")
+option_id = "brown"
+display_name = "갈색"
+color = Color(0.4196, 0.2902, 0.1843, 1)
+
+[sub_resource type="Resource" id="option_khaki"]
+script = ExtResource("2_option")
+option_id = "khaki"
+display_name = "카키"
+color = Color(0.5412, 0.5098, 0.3373, 1)
+
+[sub_resource type="Resource" id="option_olive"]
+script = ExtResource("2_option")
+option_id = "olive"
+display_name = "올리브"
+color = Color(0.3333, 0.3765, 0.1843, 1)
+
+[sub_resource type="Resource" id="option_beige"]
+script = ExtResource("2_option")
+option_id = "beige"
+display_name = "베이지"
+color = Color(0.7804, 0.7059, 0.5608, 1)
+
+[sub_resource type="Resource" id="option_white"]
+script = ExtResource("2_option")
+option_id = "white"
+display_name = "흰색"
+color = Color(0.8627, 0.8627, 0.8627, 1)
+
+[resource]
+script = ExtResource("1_slot")
+slot_id = "bottom_color"
+display_name = "하의 색"
+sort_order = 70
+kind = "color"
+visual_role = ""
+options = Array[ExtResource("2_option")]([SubResource("option_black"), SubResource("option_charcoal"), SubResource("option_gray"), SubResource("option_navy"), SubResource("option_denim"), SubResource("option_brown"), SubResource("option_khaki"), SubResource("option_olive"), SubResource("option_beige"), SubResource("option_white")])
+default_option_id = "denim"

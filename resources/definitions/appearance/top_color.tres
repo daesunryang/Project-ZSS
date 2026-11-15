@@ -1,0 +1,86 @@
+[gd_resource type="Resource" script_class="AppearanceSlot" load_steps=15 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_slot.gd" id="1_slot"]
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_option.gd" id="2_option"]
+
+[sub_resource type="Resource" id="option_white"]
+script = ExtResource("2_option")
+option_id = "white"
+display_name = "흰색"
+color = Color(0.902, 0.902, 0.902, 1)
+
+[sub_resource type="Resource" id="option_gray"]
+script = ExtResource("2_option")
+option_id = "gray"
+display_name = "회색"
+color = Color(0.549, 0.5608, 0.5804, 1)
+
+[sub_resource type="Resource" id="option_black"]
+script = ExtResource("2_option")
+option_id = "black"
+display_name = "검정"
+color = Color(0.1686, 0.1765, 0.1922, 1)
+
+[sub_resource type="Resource" id="option_red"]
+script = ExtResource("2_option")
+option_id = "red"
+display_name = "빨강"
+color = Color(0.7529, 0.2235, 0.1686, 1)
+
+[sub_resource type="Resource" id="option_orange"]
+script = ExtResource("2_option")
+option_id = "orange"
+display_name = "주황"
+color = Color(0.8784, 0.4824, 0.1569, 1)
+
+[sub_resource type="Resource" id="option_yellow"]
+script = ExtResource("2_option")
+option_id = "yellow"
+display_name = "노랑"
+color = Color(0.8902, 0.7647, 0.2549, 1)
+
+[sub_resource type="Resource" id="option_green"]
+script = ExtResource("2_option")
+option_id = "green"
+display_name = "초록"
+color = Color(0.2471, 0.6078, 0.3098, 1)
+
+[sub_resource type="Resource" id="option_teal"]
+script = ExtResource("2_option")
+option_id = "teal"
+display_name = "청록"
+color = Color(0.1647, 0.6157, 0.5608, 1)
+
+[sub_resource type="Resource" id="option_blue"]
+script = ExtResource("2_option")
+option_id = "blue"
+display_name = "파랑"
+color = Color(0.2039, 0.4706, 0.7765, 1)
+
+[sub_resource type="Resource" id="option_navy"]
+script = ExtResource("2_option")
+option_id = "navy"
+display_name = "남색"
+color = Color(0.1451, 0.251, 0.4314, 1)
+
+[sub_resource type="Resource" id="option_purple"]
+script = ExtResource("2_option")
+option_id = "purple"
+display_name = "보라"
+color = Color(0.4824, 0.3098, 0.6392, 1)
+
+[sub_resource type="Resource" id="option_brown"]
+script = ExtResource("2_option")
+option_id = "brown"
+display_name = "갈색"
+color = Color(0.4784, 0.3333, 0.2118, 1)
+
+[resource]
+script = ExtResource("1_slot")
+slot_id = "top_color"
+display_name = "상의 색"
+sort_order = 60
+kind = "color"
+visual_role = "capsule_color"
+options = Array[ExtResource("2_option")]([SubResource("option_white"), SubResource("option_gray"), SubResource("option_black"), SubResource("option_red"), SubResource("option_orange"), SubResource("option_yellow"), SubResource("option_green"), SubResource("option_teal"), SubResource("option_blue"), SubResource("option_navy"), SubResource("option_purple"), SubResource("option_brown")])
+default_option_id = "blue"

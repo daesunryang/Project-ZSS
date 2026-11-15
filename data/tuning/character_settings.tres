@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="CharacterSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/player/character_settings.gd" id="1_character"]
+
+[resource]
+script = ExtResource("1_character")
+server_requires_character_creation = true
+name_min_length = 2
+name_max_length = 16
+allowed_codepoint_ranges = PackedInt32Array(32, 32, 48, 57, 65, 90, 97, 122, 44032, 55203)
+banned_words = PackedStringArray()
+allow_duplicate_names = true
+default_name = "생존자"
+share_character_generation = false
+create_intent_rate_per_sec = 1.0
+create_intent_burst = 3
+save_after_create = true
+max_player_id_length = 128

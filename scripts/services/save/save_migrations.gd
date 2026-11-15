@@ -9,15 +9,24 @@ extends RefCounted
 ## player       v1 -> v2 (Phase 2 P2-0): adds "systems" (per-system fragments).
 ## player       v2 -> v3 (P2-T4): adds "character_generation" (docs/00
 ##              ADR-007); every player saved before is on its first character.
+## player       v3 -> v4 (P2-T9): adds "character" (docs/00 ADR-015); every
+##              player saved before had a character in the world, which gets
+##              the default name and the default appearance.
 
 const WORLD_SCHEMA_VERSION: int = 3
-const PLAYER_SCHEMA_VERSION: int = 3
+const PLAYER_SCHEMA_VERSION: int = 4
 ## Same keys as ServerWorld.KEY_WORLD_TIME / KEY_ACTION_TIME.
 const KEY_WORLD_TIME: String = "world_time_sec"
 const KEY_ACTION_TIME: String = "action_time_sec"
 ## Same key and first value as PlayerState.
 const KEY_CHARACTER_GENERATION: String = "character_generation"
 const FIRST_CHARACTER_GENERATION: int = 1
+## Same key as PlayerState.KEY_CHARACTER.
+const KEY_CHARACTER: String = "character"
+## Name of a character saved before characters had names. The same text as
+## the default of CharacterSettings.default_name (a migration has no access
+## to settings; a test keeps the two equal).
+const DEFAULT_CHARACTER_NAME: String = "생존자"
 
 
 static func defaults() -> Dictionary[String, SaveMigrator]:
@@ -28,6 +37,7 @@ static func defaults() -> Dictionary[String, SaveMigrator]:
 	var player_steps: Dictionary[int, Callable] = {
 		1: func(doc: Dictionary) -> Dictionary: return player_v1_to_v2(doc),
 		2: func(doc: Dictionary) -> Dictionary: return player_v2_to_v3(doc),
+		3: func(doc: Dictionary) -> Dictionary: return player_v3_to_v4(doc),
 	}
 	var migrators: Dictionary[String, SaveMigrator] = {
 		SaveService.CATEGORY_WORLD: SaveMigrator.new(WORLD_SCHEMA_VERSION, world_steps),
@@ -74,4 +84,16 @@ static func player_v2_to_v3(document: Dictionary) -> Dictionary:
 	if not result.has(KEY_CHARACTER_GENERATION):
 		result[KEY_CHARACTER_GENERATION] = FIRST_CHARACTER_GENERATION
 	result["schema_version"] = 3
+	return result
+
+
+## Before P2-T9 every saved player was in the world with a nameless
+## character. It keeps playing that character: the default name and an empty
+## appearance selection, which ServerWorld fills with the default option of
+## every slot when it loads the world (CharacterRules.restore_profile).
+static func player_v3_to_v4(document: Dictionary) -> Dictionary:
+	var result: Dictionary = document.duplicate(true)
+	if not result.has(KEY_CHARACTER):
+		result[KEY_CHARACTER] = {"name": DEFAULT_CHARACTER_NAME, "appearance": {}}
+	result["schema_version"] = 4
 	return result

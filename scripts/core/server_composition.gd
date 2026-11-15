@@ -13,6 +13,10 @@ extends RefCounted
 static func create_world(world_id: String, config: CompositionConfig) -> ServerWorld:
 	var world: ServerWorld = ServerWorld.new(world_id, config.gameplay, config.catalog)
 	world.clock = config.clock.create_clock()
+	# P2-T9 (docs/09 §14.24): name rules, appearance data and whether players
+	# create their characters themselves (false unless the caller says so).
+	world.character_rules = CharacterRules.new(config.character, config.appearance)
+	world.require_character_creation = config.require_character_creation
 	# --- systems (registration order = step order = save order) ---
 	# Phase 2-B: survival (B1). Registered first so later systems can use it.
 	var survival: SurvivalService = SurvivalService.new(config.survival, world.ids, world.clock)
@@ -71,4 +75,10 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	if inventory_net_error != OK:
 		inventory_net.free()
 		return inventory_net_error
+	# P2-T9: character creation intent + replication of names and appearance.
+	var character_net: CharacterNetModule = CharacterNetModule.new(config.character, config.appearance)
+	var character_net_error: Error = service.register_module(character_net)
+	if character_net_error != OK:
+		character_net.free()
+		return character_net_error
 	return OK

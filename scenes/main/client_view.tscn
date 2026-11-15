@@ -1,6 +1,7 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/presentation/client_view.gd" id="1_view"]
+[ext_resource type="PackedScene" path="res://scenes/ui/character_creation_screen.tscn" id="2_creation"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMaterial_1"]
 
@@ -103,3 +104,7 @@ grow_horizontal = 2
 grow_vertical = 0
 horizontal_alignment = 1
 text = "먹기/마시기 요청 결과"
+
+[node name="CharacterCreationScreen" parent="Hud" instance=ExtResource("2_creation")]
+unique_name_in_owner = true
+visible = false

@@ -71,6 +71,26 @@ func player_action_block_reason(_player_id: String) -> String:
 	return ""
 
 
+## "" when this system lets the player start a NEW character now, replacing
+## the one it has (P2-T9, docs/09 §14.24), otherwise a stable reason code.
+## ServerWorld.create_character asks every system when a player that already
+## has a character wants to create another one and refuses with the first
+## reason. SurvivalService answers "character_alive" while the character
+## lives and "respawn_wait" until the delay after its death has passed. Not
+## asked for a player's first character.
+func new_character_block_reason(_player_id: String) -> String:
+	return ""
+
+
+## Called by ServerWorld.start_new_character() after the world-owned part of
+## the change (spawn position, empty inventory, next generation, name and
+## appearance) is done, so a system can reset what it keeps per character
+## (SurvivalService: fresh vitals, no wounds, no infection). Not called for a
+## player's first character: that one enters through on_player_online().
+func on_character_started(_world: ServerWorld, _player_id: String) -> void:
+	return
+
+
 ## World-level save document ({} = nothing to save).
 func to_world_document() -> Dictionary:
 	return {}

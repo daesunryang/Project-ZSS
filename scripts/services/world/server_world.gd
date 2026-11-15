@@ -11,6 +11,20 @@ extends RefCounted
 ## register_system() are seeded with new worlds, told about players coming
 ## online/offline, stepped by step_systems() every server physics tick and
 ## persisted under "systems" in world_state.json and players/<id>.json.
+##
+## Characters (P2-T9, docs/00 ADR-015, docs/09 §14.24). A player is
+## "connected" from join() to leave() and "online" (in the world: visible,
+## stepped by the systems, able to act) only while it has a character:
+##   - require_character_creation false (the default of this class and of
+##     compositions built directly): join() gives a player without a
+##     character the default one, so connected == online as before P2-T9.
+##   - true (dedicated servers): a new player stays connected but not online
+##     until create_character() succeeds. Every existing rule keys off
+##     is_online() / online_player_ids() / on_player_online(), so such a
+##     player cannot move or act ("not_online"), has no vitals, is no target
+##     and is in no snapshot. A dead character stays online (a body in the
+##     world) and its player creates the next one with create_character()
+##     once the systems allow it (new_character_block_reason).
 
 const SCHEMA_VERSION: int = 3
 const KEY_SYSTEMS: String = "systems"
@@ -24,6 +38,12 @@ const REASON_NOT_ONLINE: String = "not_online"
 const REASON_STALE_SEQUENCE: String = "stale_sequence"
 const REASON_UNKNOWN_PLAYER: String = "unknown_player"
 const EVENT_CHARACTER_STARTED: String = "character_started"
+## A character was created by request (create_character).
+const EVENT_CHARACTER_CREATED: String = "character_created"
+## The player is known but has no connection (create_character).
+const REASON_NOT_CONNECTED: String = "not_connected"
+## Another player's character has this name and duplicates are not allowed.
+const REASON_NAME_TAKEN: String = "name_taken"
 
 var world_id: String
 var gameplay: GameplaySettings
@@ -34,10 +54,19 @@ var inventory: InventoryService
 ## ServerComposition replaces it with a clock built from WorldClockSettings;
 ## this default is a real-time clock (scale 1), paused when empty.
 var clock: WorldClock = WorldClock.new()
+## Name rules and appearance definitions (P2-T9). ServerComposition replaces
+## it with the configured rules; this default has the default name rules and
+## no appearance slots.
+var character_rules: CharacterRules = CharacterRules.new(CharacterSettings.new(), AppearanceCatalog.new())
+## See the header: true = players create their characters themselves.
+var require_character_creation: bool = false
 
 var _players: Dictionary[String, PlayerState] = {}
 var _player_ids_by_key: Dictionary[String, String] = {}
+## Players in the world (connected and with a character).
 var _online: Dictionary[String, bool] = {}
+## Players with a connection, with or without a character (P2-T9).
+var _connected: Dictionary[String, bool] = {}
 ## player_id -> {"direction": Vector2, "sequence": int, "received_msec": int}
 var _move_inputs: Dictionary[String, Dictionary] = {}
 var _systems: Dictionary[String, ServerSystem] = {}
@@ -111,11 +140,14 @@ func step_systems(real_delta: float) -> float:
 	return world_delta
 
 
-## Brings a player online: the existing player for `player_key`, or a new one.
-## Returns null if the key is already online or creation fails.
+## Connects a player: the existing player for `player_key`, or a new one.
+## Returns null if the key is already connected or creation fails. A player
+## with a character is online (in the world) at once. A player without one
+## gets the default character when creation is not required; otherwise it
+## stays connected but not online until create_character() (P2-T9).
 func join(player_key: String) -> PlayerState:
 	var player_id: String = _player_ids_by_key.get(player_key, "")
-	if not player_id.is_empty() and _online.has(player_id):
+	if not player_id.is_empty() and _connected.has(player_id):
 		GameLogger.warning("world", "player key already online", {"world_id": world_id, "player_id": player_id, "operation": "join"})
 		return null
 	var state: PlayerState = null
@@ -125,24 +157,115 @@ func join(player_key: String) -> PlayerState:
 			return null
 	else:
 		state = _players[player_id]
-	_online[state.player_id] = true
-	GameLogger.info("world", "player online", {"world_id": world_id, "player_id": state.player_id})
-	for system: ServerSystem in _system_order:
-		system.on_player_online(self, state.player_id)
+	_connected[state.player_id] = true
+	if not state.has_character() and not require_character_creation:
+		state.character = character_rules.default_profile()
+	if state.has_character():
+		_enter_world(state)
+	else:
+		GameLogger.info("world", "player connected without a character", {"world_id": world_id, "player_id": state.player_id})
 	return state
 
 
 ## Takes a player offline (state is kept for saving and reconnect).
 func leave(player_id: String) -> void:
 	_move_inputs.erase(player_id)
+	var was_connected: bool = _connected.erase(player_id)
 	if _online.erase(player_id):
 		GameLogger.info("world", "player offline", {"world_id": world_id, "player_id": player_id})
 		for system: ServerSystem in _system_order:
 			system.on_player_offline(self, player_id)
+	elif was_connected:
+		GameLogger.info("world", "player disconnected without a character", {"world_id": world_id, "player_id": player_id})
 
 
+## True while the player is in the world: connected and with a character
+## (alive or dead). Every game rule asks this, not is_player_connected().
 func is_online(player_id: String) -> bool:
 	return _online.has(player_id)
+
+
+## True from join() to leave(), with or without a character (P2-T9).
+func is_player_connected(player_id: String) -> bool:
+	return _connected.has(player_id)
+
+
+## True once the player has created a character (alive or dead).
+func has_character(player_id: String) -> bool:
+	var state: PlayerState = _players.get(player_id, null)
+	return state != null and state.has_character()
+
+
+## "" when the player may create a character now (create_character would
+## not be refused for its state), otherwise a reason code: unknown_player,
+## not_connected, or what a system answers for a player that already has a
+## character (ServerSystem.new_character_block_reason: "character_alive",
+## "respawn_wait").
+func character_creation_block_reason(player_id: String) -> String:
+	var state: PlayerState = _players.get(player_id, null)
+	if state == null:
+		return REASON_UNKNOWN_PLAYER
+	if not _connected.has(player_id):
+		return REASON_NOT_CONNECTED
+	if not state.has_character():
+		return ""
+	for system: ServerSystem in _system_order:
+		var reason: String = system.new_character_block_reason(player_id)
+		if not reason.is_empty():
+			return reason
+	return ""
+
+
+## The player creates a character with this name and appearance (docs/00
+## ADR-015, docs/09 §14.24). The arguments are untrusted (Variant): they are
+## checked by CharacterRules. Order of checks: the player's state
+## (character_creation_block_reason), the request (types, name, appearance),
+## then the name of other players' characters when duplicates are not
+## allowed ("name_taken", compared without case; all known players count,
+## also those who are away).
+##   - First character: the player enters the world at the spawn point
+##     (generation 1; systems get on_player_online).
+##   - After a death: start_new_character() with the new profile.
+## Success event:
+##   {event_type: "character_created", player_id, character_generation,
+##    name, appearance: {slot_id: option_id}, position: [x, y, z],
+##    first_character: bool, dropped_item_instance_ids: Array of String}
+## A refused request changes nothing.
+func create_character(player_id: String, raw_name: Variant, raw_appearance: Variant) -> ActionResult:
+	var blocked: String = character_creation_block_reason(player_id)
+	if not blocked.is_empty():
+		return ActionResult.failure(blocked)
+	var checked: ActionResult = character_rules.check_request(raw_name, raw_appearance)
+	if not checked.ok:
+		return checked
+	var profile: CharacterProfile = CharacterRules.profile_of(checked)
+	if not character_rules.settings.allow_duplicate_names and _is_name_taken(profile.name, player_id):
+		return ActionResult.failure(REASON_NAME_TAKEN)
+	var state: PlayerState = _players[player_id]
+	var first_character: bool = not state.has_character()
+	var dropped_ids: Variant = []
+	if first_character:
+		state.character = profile
+		state.character_generation = PlayerState.FIRST_CHARACTER_GENERATION
+		state.position = clamp_to_world(gameplay.player_spawn_position)
+		_move_inputs.erase(player_id)
+		_enter_world(state)
+	else:
+		var started: ActionResult = start_new_character(player_id, profile)
+		if not started.ok:
+			return started
+		dropped_ids = started.event.get("dropped_item_instance_ids", [])
+	GameLogger.info("world", "character created", {"world_id": world_id, "player_id": player_id, "character_generation": state.character_generation, "character_name": state.character.name, "first_character": first_character})
+	return ActionResult.success({
+		"event_type": EVENT_CHARACTER_CREATED,
+		"player_id": player_id,
+		"character_generation": state.character_generation,
+		"name": state.character.name,
+		"appearance": state.character.appearance.duplicate(),
+		"position": [state.position.x, state.position.y, state.position.z],
+		"first_character": first_character,
+		"dropped_item_instance_ids": dropped_ids,
+	})
 
 
 func get_player(player_id: String) -> PlayerState:
@@ -157,13 +280,17 @@ func get_player(player_id: String) -> PlayerState:
 ##     saves written before P2-T4), so a new character always starts empty;
 ##   - the transform returns to the configured spawn and pending movement
 ##     intent is discarded;
-##   - the character generation goes up by one.
+##   - the character generation goes up by one;
+##   - the character gets `profile` (name and appearance, P2-T9). Without
+##     one (a character that starts by itself where creation is not
+##     required) the previous profile carries over;
+##   - every system is told (ServerSystem.on_character_started).
 ## The player id and the inventory container stay. Success event:
 ##   {event_type: "character_started", player_id, character_generation,
 ##    position: [x, y, z], dropped_item_instance_ids: Array of String}
 ## Failure: unknown_player, or the reason the drop was refused; nothing
 ## changes then.
-func start_new_character(player_id: String) -> ActionResult:
+func start_new_character(player_id: String, profile: CharacterProfile = null) -> ActionResult:
 	var state: PlayerState = _players.get(player_id, null)
 	if state == null:
 		return ActionResult.failure(REASON_UNKNOWN_PLAYER)
@@ -173,6 +300,12 @@ func start_new_character(player_id: String) -> ActionResult:
 	state.position = clamp_to_world(gameplay.player_spawn_position)
 	_move_inputs.erase(player_id)
 	state.character_generation += 1
+	if profile != null:
+		state.character = profile.copy()
+	elif not state.has_character():
+		state.character = character_rules.default_profile()
+	for system: ServerSystem in _system_order:
+		system.on_character_started(self, player_id)
 	GameLogger.info("world", "new character started", {"world_id": world_id, "player_id": player_id, "character_generation": state.character_generation})
 	return ActionResult.success({
 		"event_type": EVENT_CHARACTER_STARTED,
@@ -183,8 +316,16 @@ func start_new_character(player_id: String) -> ActionResult:
 	})
 
 
+## Players in the world (see is_online), sorted.
 func online_player_ids() -> PackedStringArray:
 	var result: PackedStringArray = PackedStringArray(_online.keys())
+	result.sort()
+	return result
+
+
+## Players with a connection, with or without a character, sorted (P2-T9).
+func connected_player_ids() -> PackedStringArray:
+	var result: PackedStringArray = PackedStringArray(_connected.keys())
 	result.sort()
 	return result
 
@@ -359,6 +500,9 @@ func restore_documents(world_state: Dictionary, players: Dictionary) -> PackedSt
 			continue
 		if not inventory.has_inventory(state.inventory_id):
 			errors.append("player %s references missing inventory" % state.player_id)
+		# Appearance data may have changed since the save was written.
+		if state.has_character():
+			state.character = character_rules.restore_profile(state.character)
 		_players[state.player_id] = state
 		_player_ids_by_key[state.player_key] = state.player_id
 		registry.register(state.player_id, ENTITY_KIND_PLAYER)
@@ -418,6 +562,27 @@ func _restore_systems(world_state: Dictionary, players: Dictionary) -> PackedStr
 				continue
 			errors.append_array(system.restore_player_fragment(player_id, fragment as Dictionary))
 	return errors
+
+
+## Puts a connected player with a character into the world.
+func _enter_world(state: PlayerState) -> void:
+	_online[state.player_id] = true
+	GameLogger.info("world", "player online", {"world_id": world_id, "player_id": state.player_id})
+	for system: ServerSystem in _system_order:
+		system.on_player_online(self, state.player_id)
+
+
+## True when the current character of another known player has
+## `character_name` (compared without case).
+func _is_name_taken(character_name: String, own_player_id: String) -> bool:
+	var wanted: String = character_name.to_lower()
+	for other_id: String in _players:
+		if other_id == own_player_id:
+			continue
+		var other: PlayerState = _players[other_id]
+		if other.has_character() and other.character.name.to_lower() == wanted:
+			return true
+	return false
 
 
 func _create_player(player_key: String) -> PlayerState:

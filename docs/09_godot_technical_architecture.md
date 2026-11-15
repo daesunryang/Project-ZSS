@@ -177,7 +177,7 @@ res://
 
 Godot 바이너리 경로는 환경 변수 `GODOT`로 지정한다(기본값은 개발 환경 경로). 스크립트는 4.7.2.stable이 아니면 실패한다.
 
-게임 인자(`--` 뒤): `--server`, `--client`, `--log-level=<LEVEL>`, `--world-id=<id>`, `--run-frames=<N>`(N 프레임 후 정상 종료, 0=무한), `--run-seconds=<S>`, `--port=<N>`, `--connect=<host[:port]>`(클라이언트, `--player-key=` 필수), `--player-key=<key>`, `--save-root=user://...`(서버). 알 수 없는 인자는 오류(종료 코드 2).
+게임 인자(`--` 뒤): `--server`, `--client`, `--log-level=<LEVEL>`, `--world-id=<id>`, `--run-frames=<N>`(N 프레임 후 정상 종료, 0=무한), `--run-seconds=<S>`, `--port=<N>`, `--connect=<host[:port]>`(클라이언트, `--player-key=` 필수), `--player-key=<key>`, `--save-root=user://...`(서버), `--character-name=<이름>`(클라이언트, P2-T9: 생성 화면 없이 그 이름과 기본 외형으로 캐릭터를 만든다. 1~64자, 이름 규칙은 서버가 검사한다, §14.24). 알 수 없는 인자는 오류(종료 코드 2).
 
 예: `tools/run_server.sh --port=24680` 후 `godot --path . -- --client --connect=127.0.0.1:24680 --player-key=alice`.
 
@@ -208,7 +208,7 @@ Godot 바이너리 경로는 환경 변수 `GODOT`로 지정한다(기본값은 
 | C→S | `_rpc_request_pickup(request_id, item_instance_id)` | 0 reliable | 타입, ID 길이, 빈도 제한, 서버 위치 기준 거리, 아이템 위치 상태, 슬롯 |
 | S→C | `_rpc_pickup_result`, `_rpc_inventory_item`(소유자), `_rpc_world_item_removed`(전체) | 0 reliable | — |
 
-초기 상태는 `_rpc_join_accepted` 스냅샷(접속 중 플레이어, 월드 아이템, 본인 인벤토리)으로 전달하고, 이후 변경은 같은 reliable 채널로 보내 순서를 보장한다. 클라이언트는 위치/수량/결과를 보내지 않는다.
+초기 상태는 `_rpc_join_accepted` 스냅샷(접속 중 플레이어, 월드 아이템, 본인 인벤토리)으로 전달하고, 이후 변경은 같은 reliable 채널로 보내 순서를 보장한다. 클라이언트는 위치/수량/결과를 보내지 않는다. P2-T9부터 캐릭터가 없는 접속자(§14.24)는 접속 스냅샷의 플레이어 목록과 위치 스냅샷에 없고, 그 플레이어의 `_rpc_player_joined`는 접속 때가 아니라 첫 캐릭터가 만들어질 때 나가며(본인 peer에게도 보낸다), 캐릭터 없이 나가면 `_rpc_player_left`를 보내지 않는다. 이동·줍기 의도는 `not_online`으로 거부된다.
 
 ### 14.3 테스트
 
@@ -220,20 +220,20 @@ Godot 바이너리 경로는 환경 변수 `GODOT`로 지정한다(기본값은 
 
 ### 14.5 Phase 2 확장 지점(P2-0)
 
-Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는 P2-0 이후 기능 작업에서 수정하지 않는다(동결). `server_world.gd`는 Phase 2 동안 B묶음(생존)만 수정한다.
+Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는 P2-0 이후 기능 작업에서 수정하지 않는다(동결. 예외는 P2-T9 한 번: 캐릭터 없는 접속자를 알리지 않는 조건과 `announce_player_entered`, §14.24). `server_world.gd`는 Phase 2 동안 B묶음(생존)만 수정한다.
 
 | 구성 요소 | 파일 | 계약 |
 |---|---|---|
 | `WorldClock` / `WorldClockSettings` | `scripts/core/world_clock.gd`, `world_clock_settings.gd`, `data/tuning/world_clock_settings.tres` | 서버 권한 시계. 달력 시각 `world_time_sec`(실제 초 × `time_scale`, 기본 24)와 행동 시각 `action_time_sec`(실제 초)를 함께 진행한다(§14.16). `step(real_delta, any_online) -> world_delta`, 같은 틱의 증분은 `last_world_delta`/`last_action_delta`. 접속자 0명이면 둘 다 일시정지(설정). world_state `world_time_sec`·`action_time_sec`로 저장 |
 | `BucketScheduler` | `scripts/core/bucket_scheduler.gd` | `new(period_sec, bucket_count)`, `add/remove/has/size/bucket_of`, `advance(delta) -> PackedStringArray`. 등록 순서 라운드로빈(결정론), 주기당 각 id 정확히 1회, 한 호출에서 같은 id 중복 없음 |
-| `ServerSystem` | `scripts/services/world/server_system.gd` | `get_system_id()`(필수, snake_case), `seed_new_world(world)`, `step(world, action_delta, world_delta)`(매 서버 physics tick. `action_delta` = 실제 초, `world_delta` = 달력 초 = `action_delta` × 배율. 일시정지 중에는 둘 다 0. P2-T1에서 두 번째 매개변수의 뜻을 `real_delta`에서 바꿨다, §14.16), `on_player_online/offline(world, player_id)`, `player_movement_multiplier(player_id)`(기본 1.0, 서버 이동 속도 배율: 모든 시스템 값의 곱을 0~1로 제한), `on_registered(world)`(등록될 때 한 번. 월드를 보관해야 하는 시스템은 약한 참조만, P2-T4), `player_action_block_reason(player_id)`(기본 `""`. 플레이어의 행동(아이템 줍기·내려놓기·사용, 근접 공격)을 막는 사유 코드, 예: `player_dead`(P2-T4, §14.19), `player_resting`(P2-T8, §14.23). 이동은 이 훅이 아니라 `player_movement_multiplier`로 막는다), `to_world_document()`/`restore_world_document(doc)`, `to_player_fragment(player_id)`/`restore_player_fragment(player_id, doc)`. 문서는 JSON-safe + `schema_version` |
-| `ServerWorld` seam | `scripts/services/world/server_world.gd` | `register_system(system) -> Error`, `get_system(id)`, `system_ids()`, `clock`, `step_systems(real_delta) -> world_delta`(시계를 진행하고 각 시스템에 두 증분을 넘긴다). 저장: world_state 스키마 v3(`world_time_sec`, `action_time_sec`), world_state `systems.{id}`, players/<id>.json 스키마 v3(`character_generation`, P2-T4)과 `systems.{id}`. 저장에 없는 시스템은 기본값 유지, 등록되지 않은 시스템 데이터는 경고 후 무시. P2-T4에서 `start_new_character(player_id)`(예전 `respawn_player_at_spawn`을 대체), `player_action_block_reason(player_id)`가 추가됐다(§14.19) |
-| `NetModule` | `scripts/services/multiplayer/net_module.gd` | `NetworkService`의 자식 노드(모든 peer에서 같은 `name`). 훅: `on_server_started(world)`, `on_player_joined/left(peer_id, player_id)`, `server_physics(delta)`, `build_join_fragment(player_id)`(서버), `apply_join_fragment(fragment)`(클라이언트). 자체 `@rpc` 메서드 사용 |
-| `NetworkService` 공개 헬퍼 | `scripts/services/multiplayer/network_service.gd` | `register_module(module)`(시작 전만), `get_module(name)`, `is_server()`, `is_client()`, `is_from_server()`, `sender_player_id()`, `joined_peers()`, `peer_of_player(id)`, `player_of_peer(peer)`, `can_send_to(peer)`, `reject_intent(peer, intent, reason, player_id)`, `count_rejection(reason)`, `rejected_intent_count(reason)`, `persist(reason)`, `get_world()`, `get_settings()` |
+| `ServerSystem` | `scripts/services/world/server_system.gd` | `get_system_id()`(필수, snake_case), `seed_new_world(world)`, `step(world, action_delta, world_delta)`(매 서버 physics tick. `action_delta` = 실제 초, `world_delta` = 달력 초 = `action_delta` × 배율. 일시정지 중에는 둘 다 0. P2-T1에서 두 번째 매개변수의 뜻을 `real_delta`에서 바꿨다, §14.16), `on_player_online/offline(world, player_id)`, `player_movement_multiplier(player_id)`(기본 1.0, 서버 이동 속도 배율: 모든 시스템 값의 곱을 0~1로 제한), `on_registered(world)`(등록될 때 한 번. 월드를 보관해야 하는 시스템은 약한 참조만, P2-T4), `player_action_block_reason(player_id)`(기본 `""`. 플레이어의 행동(아이템 줍기·내려놓기·사용, 근접 공격)을 막는 사유 코드, 예: `player_dead`(P2-T4, §14.19), `player_resting`(P2-T8, §14.23). 이동은 이 훅이 아니라 `player_movement_multiplier`로 막는다), `to_world_document()`/`restore_world_document(doc)`, `to_player_fragment(player_id)`/`restore_player_fragment(player_id, doc)`. 문서는 JSON-safe + `schema_version`. P2-T9에서 `new_character_block_reason(player_id)`(기본 `""`. 캐릭터가 있는 플레이어가 새 캐릭터를 만들어도 되는지: `character_alive`, `respawn_wait`)와 `on_character_started(world, player_id)`(`start_new_character`가 끝에 부른다)가 추가됐다(§14.24) |
+| `ServerWorld` seam | `scripts/services/world/server_world.gd` | `register_system(system) -> Error`, `get_system(id)`, `system_ids()`, `clock`, `step_systems(real_delta) -> world_delta`(시계를 진행하고 각 시스템에 두 증분을 넘긴다). 저장: world_state 스키마 v3(`world_time_sec`, `action_time_sec`), world_state `systems.{id}`, players/<id>.json 스키마 v3(`character_generation`, P2-T4)과 `systems.{id}`. 저장에 없는 시스템은 기본값 유지, 등록되지 않은 시스템 데이터는 경고 후 무시. P2-T4에서 `start_new_character(player_id)`(예전 `respawn_player_at_spawn`을 대체), `player_action_block_reason(player_id)`가 추가됐다(§14.19). P2-T9에서 접속과 월드 진입이 나뉘었다(§14.24): `require_character_creation`, `character_rules`, `create_character(player_id, raw_name, raw_appearance)`, `character_creation_block_reason(player_id)`, `is_player_connected`, `has_character`, `connected_player_ids`, `start_new_character(player_id, profile = null)`. `is_online`·`online_player_ids`는 "캐릭터를 가지고 월드 안에 있는 플레이어"이고 플레이어 파일 스키마는 v4(`character`)다 |
+| `NetModule` | `scripts/services/multiplayer/net_module.gd` | `NetworkService`의 자식 노드(모든 peer에서 같은 `name`). 훅: `on_server_started(world)`, `on_player_joined/left(peer_id, player_id)`, `server_physics(delta)`, `build_join_fragment(player_id)`(서버), `apply_join_fragment(fragment)`(클라이언트). 자체 `@rpc` 메서드 사용. P2-T9부터 `on_player_joined`는 "플레이어가 월드에 들어왔다"는 뜻이다: 캐릭터가 있는 플레이어는 핸드셰이크 직후, 캐릭터가 없던 접속자는 첫 캐릭터를 만든 순간 불린다(§14.24). `on_player_left`는 모든 접속자의 퇴장에서 불린다 |
+| `NetworkService` 공개 헬퍼 | `scripts/services/multiplayer/network_service.gd` | `register_module(module)`(시작 전만), `get_module(name)`, `is_server()`, `is_client()`, `is_from_server()`, `sender_player_id()`, `joined_peers()`, `peer_of_player(id)`, `player_of_peer(peer)`, `can_send_to(peer)`, `reject_intent(peer, intent, reason, player_id)`, `count_rejection(reason)`, `rejected_intent_count(reason)`, `persist(reason)`, `get_world()`, `get_settings()`, `announce_player_entered(player_id)`(P2-T9: 접속해 있던 플레이어가 첫 캐릭터로 월드에 들어왔음을 알린다, §14.24) |
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. 시스템 사이의 시그널 연결도 여기서 한다(P2-T5: `SurvivalService.player_died` → `ZombieService.on_player_died`, §14.20). `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
-| 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가), player v2→v3(`character_generation` 추가, 값은 1. P2-T4). `SaveService` 기본 마이그레이터 |
+| 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가), player v2→v3(`character_generation` 추가, 값은 1. P2-T4), player v3→v4(`character` 추가, 값은 기본 이름과 빈 외형. P2-T9, §14.24). `SaveService` 기본 마이그레이터 |
 
-채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 6(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23)).
+채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 7(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24)).
 
 ### 14.6 생존 계약(B1, system id `survival`)
 
@@ -250,6 +250,8 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 P2-T1부터 이 절의 "월드 시간"은 달력 시간이고, 스태미나 회복·리스폰 대기·피해 이벤트 묶는 간격만 행동 시간(실제 초)이다. 설정 이름은 `stamina_regen_per_sec`, `respawn_delay_sec`, `survival_damage_event_interval_sec`로 바뀌었고 생존 fragment 스키마 v4가 `died_at_action_time`을 추가했다. 구간 적분이 두 축을 함께 다루는 방식은 §14.16.
 
 P2-T4부터 위 B3·B4의 "리스폰"은 **영구 사망 뒤 새 캐릭터 시작**이다(§14.19가 우선): 사망 순간 소지품이 전부 죽은 자리에 놓이고, 대기 시간 뒤 스폰 지점에서 빈 인벤토리·다음 세대 번호로 시작한다. "인벤토리 유지"와 `ServerWorld.respawn_player_at_spawn`은 더 이상 없다(`start_new_character`). 대기 시간·초기 욕구 설정(`respawn_delay_sec`, `respawn_hunger` 등)과 이벤트 이름 `player_respawned`는 그대로 쓴다. 죽은 캐릭터는 아이템을 줍거나 내려놓을 수 없다(`player_action_block_reason`).
+
+P2-T9부터 전용 서버에서는 새 캐릭터가 저절로 시작하지 않는다(§14.24가 우선): 대기 시간이 지난 뒤 플레이어가 이름과 외형을 정해 새 캐릭터를 만들어야 시작하고, 그때까지 죽은 상태가 유지된다. 생존 상태 초기화는 `ServerSystem.on_character_started` 훅으로 옮겨져 자동 시작과 요청에 의한 시작이 같은 코드를 지난다. 접속했지만 캐릭터가 없는 플레이어는 생존 상태 자체가 없다(`has_player`가 false).
 
 테스트 더블: `tests/framework/test_counter_system.gd`, `tests/framework/test_echo_module.gd`(배포 코드 아님). `NetTestCluster.extra_module_factories`로 테스트 전용 모듈을 추가할 수 있다.
 
@@ -450,7 +452,7 @@ P2-T4부터 위 B3·B4의 "리스폰"은 **영구 사망 뒤 새 캐릭터 시�
 | `_rpc_survival_status(status)` | 접속 중 클라이언트 | `{player_id: String, alive: bool, resting: bool}`. 새 플레이어 접속 시 기존 미러 보강 |
 | `_rpc_survival_events(events)` | 이벤트 공개 범위에 따른 본인/타인 | 검증된 이벤트 Dictionary 배열. 한 서버 틱에 peer별로 묶어 전송 |
 
-접속 조각(`snapshot.modules.SurvivalNet`)과 본인 스냅샷의 스키마 버전은 3이다(P2-T4에서 `character_generation`을 추가하며 1 → 2, P2-T8에서 `resting`을 추가하며 2 → 3. 이전 형식은 클라이언트가 버린다).
+접속 조각(`snapshot.modules.SurvivalNet`)과 본인 스냅샷의 스키마 버전은 3이다(P2-T4에서 `character_generation`을 추가하며 1 → 2, P2-T8에서 `resting`을 추가하며 2 → 3. 이전 형식은 클라이언트가 버린다). P2-T9부터 캐릭터가 없는 접속자(§14.24)의 접속 조각에는 `self`가 없다(`{schema_version, players}`). 미러는 이 형식을 받아 다른 플레이어의 공개 행만 채우고, 본인의 공개 행과 본인 스냅샷은 캐릭터가 생긴 뒤에 받는다.
 
 ```text
 {
@@ -561,7 +563,7 @@ owner snapshot = {
 | `SurvivalNetModule.client_state` | `changed`, `health/stamina/need_category/wounds/infection_stage/is_alive` | 플레이어 생존/사망 캡슐과 본인 HUD 갱신 |
 | `CombatNetModule` / `ClientCombatState` | `request_melee_attack`, `melee_result`, `combat_event`, `recent_events` | 카메라 yaw 의도 전송, 서버 결과와 공개 전투 이벤트 표시 |
 
-좀비와 플레이어 캡슐은 미러의 가장 최근 위치를 그대로 사용한다. 프레젠테이션 보간·외삽·예측은 없고, 시체는 X축으로 기울여 눕힌다. 좀비의 `idle/investigate/chase/attack/search/dormant/dead` 색과 임시 크기, 사망 플레이어 색은 `data/tuning/client_presentation_settings.tres`에 있다. 플레이어의 살아 있는 로컬/원격 색과 크기는 기존 `camera_settings.tres`를 유지한다.
+좀비와 플레이어 캡슐은 미러의 가장 최근 위치를 그대로 사용한다. 프레젠테이션 보간·외삽·예측은 없고, 시체는 X축으로 기울여 눕힌다. 좀비의 `idle/investigate/chase/attack/search/dormant/dead` 색과 임시 크기, 사망 플레이어 색은 `data/tuning/client_presentation_settings.tres`에 있다. 플레이어의 살아 있는 로컬/원격 색과 크기는 기존 `camera_settings.tres`를 유지한다. P2-T9부터 플레이어 캡슐의 색과 크기는 캐릭터의 외형(상의 색, 키, 체형)에서 오고 캡슐 위에 이름표가 붙는다(§14.24). `camera_settings.tres`의 색과 크기는 캐릭터 행이 없는 플레이어의 기본 캡슐과 배율의 기준값으로 쓰인다.
 
 HUD는 owner 미러가 존재할 때만 체력·스태미나 수치, 세 욕구 범주, 감염 단계, 상처 수/출혈, 사망 문구를 만든다. P2-T4부터 첫 줄에 "캐릭터 #N"(본인 미러의 세대 번호)이 붙고 사망 문구는 영구 사망 안내다(§14.19). 다른 플레이어의 owner 상태를 추론하거나 표시하지 않는다. 최근 이벤트 로그는 `ClientCombatState`와 `ClientZombieState`가 보관한 서버 이벤트만 사용하며, 좀비 공격의 `infection`은 `target_id == local_player_id`이고 해당 필드가 있을 때만 문자열로 만든다.
 
@@ -766,7 +768,7 @@ P2-T6부터 `ItemConsumption`은 아이템 정의의 사용 효과 전부를 적
 
 ### 14.19 영구 사망(P2-T4, docs/00 ADR-007)
 
-캐릭터가 죽으면 그 캐릭터는 끝난다. 소지품은 죽은 자리의 월드에 남고, 플레이어는 설정된 대기 시간 뒤 새 캐릭터로 시작한다. Phase 2의 개발용 리스폰(인벤토리 유지, §14.6의 B3 서술)을 대체하며 이 절이 §14.6보다 우선한다. 임시 가정은 docs/15 §11.2 P2-126~P2-131.
+캐릭터가 죽으면 그 캐릭터는 끝난다. 소지품은 죽은 자리의 월드에 남고, 플레이어는 설정된 대기 시간 뒤 새 캐릭터로 시작한다. Phase 2의 개발용 리스폰(인벤토리 유지, §14.6의 B3 서술)을 대체하며 이 절이 §14.6보다 우선한다. 임시 가정은 docs/15 §11.2 P2-126~P2-131. P2-T9부터 전용 서버에서는 "대기 시간 뒤 저절로 새 캐릭터가 시작한다"가 "대기 시간 뒤 플레이어가 새 캐릭터를 만들면 시작한다"로 바뀌었고 그 부분은 §14.24가 우선한다. 이 절의 자동 시작은 캐릭터 생성이 필요 없는 조립(테스트·도구의 호환 기본값)에 그대로 적용된다.
 
 구성: `SurvivalService`(사망 시 소지품 내려놓기, 새 캐릭터 시작), `ServerWorld.start_new_character`·`player_action_block_reason`, `ServerSystem.on_registered`·`player_action_block_reason`(새 훅 2개), `PlayerState.character_generation`(플레이어 파일 스키마 v3), `SurvivalNetModule`/`ClientSurvivalState`(본인 스냅샷에 세대 번호), HUD. `network_service.gd`는 수정하지 않았다. 새 RPC는 없다. 본인 스냅샷과 접속 조각의 형식이 바뀌었고(아래), 프로토콜 버전은 P2-T3에서 올린 5를 그대로 쓴다(같은 브랜치에서 한 번만 올림).
 
@@ -1015,3 +1017,221 @@ P2-T6부터 `ItemConsumption`은 아이템 정의의 사용 효과 전부를 적
 클라이언트 표시(`scripts/presentation/`): 휴식 키(`ClientPresentationSettings.rest_key`, 기본 R)를 누르면 본인 미러가 누워 있으면 "일어나기", 아니면 "눕기"를 보낸다(요청 사이 최소 간격 `rest_min_interval_sec`). 휴식 키는 사용 키 넷과 달라야 한다. 생존 HUD 끝에 "눕기 [R]" 또는 "휴식 중 (피로 회복) | 일어나기 [R]" 줄이 붙는다(죽은 캐릭터에게는 없다). 누워 있는 플레이어의 캡슐은 본인 것이든 남의 것이든 `rest_tilt_rad`만큼 기울여 바닥에 눕히고 색은 살아 있는 색 그대로다(죽은 캡슐은 어두운 색). 결과는 사용 결과와 같은 자리에 "휴식 요청 승인/거부: 사유"로 표시한다.
 
 테스트: `tests/unit/rest_test.gd`(설정 기본값·검증, 눕기·일어나기의 이벤트와 거부 사유, 피로 감소 속도와 깨어 있는 플레이어와의 비교, 0 하한과 범주 이벤트, 허기·갈증 배율 설정, 틱 크기 무관(1틱·1500틱·7틱), 달력 시간 배율(1배와 24배), 이동 불가, 공격·줍기·내려놓기·아이템 사용 거부, 피격 시 깸과 이벤트 순서, 사망·퇴장 해제와 새 캐릭터, 시간 피해로는 깨지 않고 죽을 수 있음, 저장에 들어가지 않음과 재시작), `tests/integration/rest_net_test.gd`(서버 1 + 클라이언트 2~3, 실제 ENet: 눕기 → 서버·본인 미러·다른 클라이언트 미러 일치, 이동 의도 무시, 피로 범주가 본인 미러에만 반영, 다른 클라이언트가 받는 이벤트의 키 목록 고정, 일어나기 뒤 이동 재개, 좀비 공격으로 깸과 양쪽 이벤트, 휴식 중 공격·줍기 거부, 휴식 중 사망, 조작된 요청 8종과 잘못된 상태·남을 깨우려는 요청·인자를 더 붙인 호출·클라이언트가 보낸 서버 메시지, join 전 요청, 빈도 초과, 늦은 접속과 누운 채 퇴장·재접속, 저장되지 않음과 서버 재시작, 설정·검증 규칙과 RPC 구성, 미러의 페이로드 검증), `tests/unit/client_presentation_test.gd`(휴식 키 등록·검증, HUD 줄, 결과 문구, 캡슐 자세).
+### 14.24 캐릭터 이름·외형 커스터마이징(P2-T9, docs/00 ADR-015)
+
+플레이어는 캐릭터를 만들 때 이름과 외형을 정한다. 서버가 검증하고 저장하며, 월드에 있는 모든 캐릭터의 이름과 외형을 모든 접속자에게 복제한다. 캐릭터가 아직 없는 접속자는 월드에 존재하지 않는다. 영구 사망(§14.19) 뒤의 새 캐릭터는 대기 시간이 지난 뒤 **플레이어가 만들어야** 시작한다. 전용 서버에서는 이 절이 §14.19의 "대기 시간 뒤 새 캐릭터가 저절로 시작한다"보다 우선한다. 임시 가정은 docs/15 §13 P2-160~P2-179.
+
+구성: 외형 정의 `AppearanceOption`·`AppearanceSlot`(정적 Resource)과 `AppearanceCatalog`, `CharacterSettings`(이름 규칙 등), `CharacterNameRules`, `CharacterProfile`(런타임 상태), `CharacterRules`(모두 `scripts/domain/player/`), `PlayerState.character`(플레이어 파일 스키마 v4), `ServerWorld`(접속과 월드 진입의 분리, `create_character`), `ServerSystem` 훅 2개, `SurvivalService`(생성 필수일 때 자동 시작하지 않음), NetModule `CharacterNetModule`과 미러 `ClientCharacterState`, `SurvivalNetModule`·`ClientSurvivalState`(캐릭터 없는 접속자의 접속 조각), 클라이언트 생성 화면·캡슐 외형·이름표, 실행 인자 `--character-name=`.
+
+**프로토콜 변경 있음**: 새 모듈 `CharacterNet`(RPC 4개와 접속 조각), 캐릭터가 없는 접속자라는 새 상태(누구의 스냅샷에도 없고, `_rpc_player_joined`는 첫 캐릭터가 생길 때 나간다), `SurvivalNet` 접속 조각의 `self` 생략 형식. `BuildInfo.PROTOCOL_VERSION`을 7로 올렸다.
+
+**`network_service.gd`를 수정했다**(P2-0 동결 이후 처음, 아래 "접속과 월드 진입" 참조). 접속 핸드셰이크의 인자와 응답 형식은 그대로이고, "캐릭터 없는 접속자를 다른 peer에게 알리지 않는다"는 조건과 공개 헬퍼 `announce_player_entered(player_id)` 하나가 추가됐다.
+
+#### 실제 서버에 적용되는 기본 동작
+
+| 실행 방식 | 캐릭터 생성 | 어디서 정해지나 |
+|---|---|---|
+| 전용 서버(`tools/run_server.sh`, `--server`, 서버 빌드) | **필수**. 처음 접속한 플레이어는 캐릭터를 만들기 전까지 월드 밖이고, 죽은 뒤에는 대기 시간이 지나고 플레이어가 새 캐릭터를 만들어야 시작한다 | `data/tuning/character_settings.tres`의 `server_requires_character_creation`(기본 true). `GameBootstrap`이 서버를 시작할 때 이 값을 `CompositionConfig.require_character_creation`에 넣는다 |
+| 조립을 직접 만드는 코드(`CompositionConfig.from_defaults()`를 쓰는 테스트·도구, `ServerWorld.new()`) | **불필요(호환 기본값)**. `ServerWorld.join()`이 캐릭터 없는 플레이어에게 기본 캐릭터(기본 이름 + 항목별 기본 선택지)를 바로 주고, 죽은 뒤에는 P2-T4처럼 대기 시간 뒤 저절로 다음 캐릭터가 시작한다(이름·외형은 그대로) | `CompositionConfig.require_character_creation`의 기본값 false, `ServerWorld.require_character_creation`의 기본값 false |
+
+호환 기본값을 둔 이유: P2-T9 이전의 단위·통합 테스트 수백 개가 "`world.join()` 직후 플레이어가 월드에 있다"를 전제로 한다. 생성 필수 동작은 새 테스트(`character_creation_test`, `character_net_test`, `character_creation_screen_test`)와 프로세스 3개 스모크가 확인한다. Phase 1·2 수용 시나리오는 호환 기본값으로 실행된다.
+
+화면 없이 만드는 경로(헤드리스·자동 클라이언트): 클라이언트 실행 인자 `--character-name=<이름>`. 서버가 "만들 수 있다"고 알릴 때마다(접속 직후, 죽은 뒤 대기 시간이 지났을 때) 그 이름과 기본 외형으로 생성 의도를 자동으로 보낸다. 서버가 거부하면(예: 이름 규칙 위반) 오류 로그를 남기고 자동 경로를 끈다(요청 반복 없음). 이 인자가 없으면 생성 화면이 뜬다. `tools/smoke_test.sh`의 두 클라이언트가 이 인자를 쓴다. 코드에서는 `CharacterNetModule.set_auto_create(name, appearance = {})`.
+
+#### 데이터: 외형 정의
+
+`resources/definitions/appearance/*.tres`에 항목(`AppearanceSlot`) 하나당 파일 하나. 선택지(`AppearanceOption`)는 그 파일의 하위 Resource다. `AppearanceCatalog.load_directory()`가 폴더의 모든 파일을 읽고 `sort_order`(같으면 ID) 순으로 정렬한다. **항목이나 선택지를 늘리려면 파일만 고치면 된다**: 서버 검증, 저장, 복제, 생성 화면이 모두 카탈로그에서 읽는다(생성 화면에 새 항목 행이 생기는 것을 테스트로 고정).
+
+| `AppearanceSlot` 필드 | 뜻 |
+|---|---|
+| `slot_id` | 안정된 snake_case ID(저장·전송에 쓰인다. 이름을 바꾸지 않는다) |
+| `display_name` | 생성 화면에 표시하는 문구 |
+| `sort_order` | 생성 화면에서의 순서 |
+| `kind` | `style`(이름만 있는 모양), `color`(선택지의 `color`), `scale`(선택지의 `scale`) |
+| `visual_role` | 임시 캡슐에 나타나는 방식: `""`(아직 표시 불가), `capsule_color`(`color` 항목만), `capsule_height`·`capsule_radius`(`scale` 항목만). 역할 하나에 항목 하나 |
+| `options` | `AppearanceOption` 목록: `option_id`(안정된 ID), `display_name`, `color`, `scale` |
+| `default_option_id` | 고르지 않았을 때의 선택지(이전 저장, 화면 없는 클라이언트, 나중에 추가된 항목) |
+
+검증(`AppearanceSlot.validate`, `AppearanceCatalog.add`): ID 형식과 길이(64자 이하), 중복 선택지 ID, 기본값이 선택지에 있는지, 종류·역할 값, 역할과 종류의 짝, `scale` 범위(0.25~4), 표시 문구 유무, 중복 항목 ID, 같은 역할의 항목 둘, 항목 수 상한 64.
+
+기본 데이터(수량과 값은 PROVISIONAL, docs/15 P2-163):
+
+| 항목 ID | 표시 | 종류 | 선택지 수 | 기본값 | 캡슐 표시 |
+|---|---|---|---|---|---|
+| `body_type` | 체형 | scale | 6(0.85~1.25) | `average` | 반지름 |
+| `height` | 키 | scale | 7(0.88~1.12) | `average` | 높이 |
+| `skin_tone` | 피부색 | color | 8 | `tone_3` | 표시 불가 |
+| `hair_style` | 머리 모양 | style | 9 | `short` | 표시 불가 |
+| `hair_color` | 머리색 | color | 9 | `black` | 표시 불가 |
+| `top_color` | 상의 색 | color | 12 | `blue` | 캡슐 색 |
+| `bottom_color` | 하의 색 | color | 10 | `denim` | 표시 불가 |
+
+색은 **선택지 팔레트**다. 클라이언트는 색 값이 아니라 선택지 ID만 보내고, 서버는 그 ID가 정의에 있는지만 확인한다. 임의 RGB는 받지 않는다(docs/15 P2-161).
+
+선택(`{항목 ID: 선택지 ID}`, 둘 다 문자열)을 다루는 세 규칙:
+
+| 함수 | 쓰는 곳 | 규칙 |
+|---|---|---|
+| `check_selection(raw)` | 클라이언트가 보낸 요청 | Dictionary가 아니거나 키·값이 문자열이 아니면 `bad_type`, 항목 수보다 많으면 `appearance_too_large`(순회 전에 판정), 없는 항목 `unknown_appearance_slot`, 없는 선택지 `unknown_appearance_option`. **빠진 항목은 그 항목의 기본값으로 채운다**(거부하지 않는다, docs/15 P2-162) |
+| `restore_selection(saved)` | 저장을 읽을 때 | 실패하지 않는다. 없어진 항목은 버리고, 없어진 선택지와 새로 생긴 항목은 기본값. 데이터를 고쳤다고 저장이 안 읽히는 일이 없게 한다 |
+| `is_complete_selection(selection)` | 클라이언트 미러 | 모든 항목이 있고 그 밖의 키가 없으며 선택지가 모두 유효 |
+
+#### 데이터: 이름 규칙
+
+`CharacterSettings`(`data/tuning/character_settings.tres`). 모든 값이 PROVISIONAL이다.
+
+| 설정 | 기본값 | 뜻 |
+|---|---|---|
+| `server_requires_character_creation` | true | 전용 서버가 캐릭터 생성을 요구하는지(위 표) |
+| `name_min_length` / `name_max_length` | 2 / 16 | 정리한 뒤의 글자 수(유니코드 코드 포인트. 한글 한 글자 = 1). 상한은 프로토콜 한계 64 이하 |
+| `allowed_codepoint_ranges` | 공백, 0-9, A-Z, a-z, 한글 음절(가-힣) | 허용 문자를 `[처음, 끝]` 코드 포인트 쌍으로 적는다. 쌍을 추가하면 다른 문자도 허용된다. 제어 문자가 든 범위는 설정 검증에서 거부한다 |
+| `banned_words` | 빈 목록 | 금칙어(대소문자 무시, 글자 사이 공백 무시). 지금은 seam만 있다 |
+| `allow_duplicate_names` | true | false면 다른 플레이어의 현재 캐릭터와 같은 이름(대소문자 무시)을 `name_taken`으로 거부한다. 접속하지 않은 플레이어의 캐릭터도 포함한다 |
+| `default_name` | `생존자` | 이름을 정한 적 없는 캐릭터의 이름(P2-T9 이전 저장, 호환 기본값의 기본 캐릭터). 이름 규칙을 통과해야 한다 |
+| `share_character_generation` | false | 다른 플레이어에게 세대 번호를 알릴지(아래 "복제와 정보 공개") |
+| `create_intent_rate_per_sec` / `create_intent_burst` | 1 / 3 | 생성 의도 빈도 제한(peer별 토큰 버킷) |
+| `save_after_create` | true | 캐릭터가 만들어지면 결과를 보내기 전에 월드를 저장 |
+| `max_player_id_length` | 128 | 클라이언트 미러의 방어용 길이 한계 |
+
+`CharacterNameRules`(순수 함수. 생성 화면과 서버가 같은 코드를 쓰고 서버의 판정이 최종이다):
+
+1. 원문이 64자를 넘으면 처리하기 전에 `name_too_long`.
+2. 정리: 앞뒤의 공백·탭·줄바꿈·제어 문자를 잘라내고, 이름 안의 연속된 공백을 하나로 줄인다. **그 밖의 문자는 지우거나 바꾸지 않는다.**
+3. 검사(순서대로): 빈 이름 `name_empty`, 짧음 `name_too_short`, 김 `name_too_long`, 허용 범위 밖 문자(이름 안의 제어 문자·탭·줄바꿈, 문장 부호, 한글 자모, 한자·가나, 전각 공백, 이모지 등) `name_bad_characters`, 금칙어 `name_banned`.
+
+서버가 저장하고 복제하는 이름은 정리된 이름이다. 유니코드 정규화는 하지 않는다(분해된 자모로 들어온 한글은 허용 범위 밖이라 거부된다, docs/15 P2-177).
+
+#### 상태 모델
+
+`PlayerState.character: CharacterProfile`(이름 + 외형 선택). null이면 아직 캐릭터를 만든 적이 없다. `character_generation`(§14.19)은 그대로 1부터이고, 캐릭터가 없을 수 있는 것은 세대 1뿐이다(저장 검증).
+
+`ServerWorld`는 **접속**과 **월드 진입**을 나눈다.
+
+| 상태 | `is_player_connected` | `is_online` | 뜻 |
+|---|---|---|---|
+| 접속하지 않음 | false | false | |
+| 접속했고 캐릭터 없음 | true | false | 월드 밖. 생성 필수일 때만 있는 상태 |
+| 접속했고 캐릭터 있음(살았거나 죽음) | true | true | 월드 안 |
+
+기존 규칙은 전부 `is_online()`·`online_player_ids()`·`on_player_online()`으로 플레이어를 본다. 그래서 캐릭터가 없는 접속자는 다른 코드 수정 없이: 이동 의도가 `not_online`으로 거부되고, 줍기·내려놓기·아이템 사용·근접 공격이 `not_online`으로 거부되며, 생존 상태(욕구·체력)가 없어 욕구가 오르지 않고 눕기도 거부되고(`unknown_player`), 좀비의 시야·공격 대상이 아니며, 발소리를 내지 않고, 위치 스냅샷과 접속 스냅샷에 없다. 좀비·소음·전투 코드는 수정하지 않았다. 월드 시계는 "월드 안에 누가 있는가"로 일시정지를 판단하므로, 캐릭터 없는 접속자만 있으면 멈춘다.
+
+흐름:
+
+| 순간 | 서버 동작 |
+|---|---|
+| 처음 접속(생성 필수) | `join()`이 플레이어를 만들고 접속 상태로만 둔다. `character_creation_block_reason` = `""`(만들 수 있음) |
+| 첫 캐릭터 생성 | `create_character()` 성공 → 이름·외형 저장, 세대 1, 스폰 지점, 월드 진입(`on_player_online`: 생존 상태가 새로 만들어진다). `player_respawned` 이벤트는 없다 |
+| 살아 있는 동안 | 생성 요청은 `character_alive`로 거부. 이름·외형 변경 기능은 없다(docs/15 P2-166) |
+| 사망 | §14.19 그대로(소지품이 죽은 자리에 놓이고 죽은 캐릭터는 월드에 남는다). 이름·외형은 죽은 캐릭터의 것으로 남는다 |
+| 대기 시간 동안 | 생성 요청은 `respawn_wait`로 거부 |
+| 대기 시간 뒤(생성 필수) | **아무 일도 일어나지 않는다.** 플레이어가 만들 때까지 죽은 상태다(시간 제한 없음). 요청이 오면 `start_new_character(player_id, profile)`: 스폰 지점, 빈 인벤토리, 세대 +1, 새 이름·외형, 생존 상태 초기화, `player_respawned` 이벤트 |
+| 대기 시간 뒤(호환 기본값) | P2-T4처럼 그 틱에 저절로 시작. 이름·외형은 이전 캐릭터의 것을 이어 쓴다 |
+| 캐릭터 없이 퇴장 → 재접속 | 다시 "접속했고 캐릭터 없음" |
+| 캐릭터를 가진 채 퇴장 → 재접속 | 접속 즉시 월드 안(생성 불필요). 죽은 캐릭터면 죽은 채로 들어오고, 대기 시간이 지났으면 바로 만들 수 있다 |
+
+#### 서버 API
+
+| API | 계약 |
+|---|---|
+| `ServerWorld.create_character(player_id, raw_name, raw_appearance) -> ActionResult` | 인자는 신뢰하지 않는 값(Variant). 검사 순서: 플레이어 상태(`character_creation_block_reason`) → 요청(`CharacterRules.check_request`: 타입, 이름, 외형) → 이름 중복. 성공 이벤트 `{event_type: "character_created", player_id, character_generation, name, appearance, position: [x, y, z], first_character: bool, dropped_item_instance_ids}`. 거부되면 아무것도 바뀌지 않는다 |
+| `ServerWorld.character_creation_block_reason(player_id) -> String` | `""`이면 지금 만들 수 있다. 사유: `unknown_player`, `not_connected`, 캐릭터가 있는 플레이어에 대해 시스템이 답한 사유(`character_alive`, `respawn_wait`) |
+| `ServerWorld.is_player_connected`, `has_character`, `connected_player_ids` | 조회 |
+| `ServerWorld.start_new_character(player_id, profile = null)` | §14.19의 것에 `profile` 인자가 생겼다(없으면 이전 이름·외형 유지). 끝에 모든 시스템의 `on_character_started`를 부른다 |
+| `ServerSystem.new_character_block_reason(player_id) -> String` | 새 훅(기본 `""`). 캐릭터가 있는 플레이어가 새 캐릭터를 만들어도 되는지. `SurvivalService`: 살아 있으면 `character_alive`, 죽었고 `died_at_action_time + respawn_delay_sec`이 지나지 않았으면 `respawn_wait` |
+| `ServerSystem.on_character_started(world, player_id)` | 새 훅(기본 no-op). `start_new_character`가 월드 쪽 변경을 마친 뒤 부른다. `SurvivalService`가 여기서 생존 상태를 초기화하고 `player_respawned`를 낸다(예전에는 `SurvivalService`가 직접 했다. 자동 시작과 요청에 의한 시작이 같은 코드를 지난다) |
+| `CharacterRules(settings, catalog)` | `check_request(raw_name, raw_appearance)`, `default_profile()`, `restore_profile(saved)`. `ServerWorld.character_rules`에 들어 있고 생성 화면도 같은 것을 쓴다 |
+
+#### 접속과 월드 진입(`network_service.gd`의 변경)
+
+P2-0 이후 동결된 `NetworkService`는 접속 핸드셰이크가 끝나면 무조건 다른 모든 peer에게 `_rpc_player_joined`를 보내고 모든 모듈의 `on_player_joined`를 불렀다. 캐릭터가 없는 접속자를 숨기려면 이 자리를 고칠 수밖에 없어 최소한으로 고쳤다.
+
+| 변경 | 내용 |
+|---|---|
+| 핸드셰이크 끝 | 접속 스냅샷(`_rpc_join_accepted`)은 그대로 보낸다. `_rpc_player_joined` 방송, 모듈 `on_player_joined`, `player_joined` 시그널은 그 플레이어가 월드 안(`ServerWorld.is_online`)일 때만 한다 |
+| 새 공개 헬퍼 `announce_player_entered(player_id)` | 접속해 있던 플레이어가 월드에 들어왔을 때(첫 캐릭터 생성) `CharacterNetModule`이 부른다. 핸드셰이크가 건너뛴 일을 한다: 모든 peer에게 `_rpc_player_joined`(본인 peer 포함. 본인의 접속 스냅샷에는 자기가 없었다), 모듈 `on_player_joined`, `player_joined` 시그널 |
+| 퇴장 | 월드 안에 있던 플레이어의 퇴장만 다른 peer에게 `_rpc_player_left`로 알리고 서버의 `player_left` 시그널을 낸다. 모듈 `on_player_left`와 저장은 모든 퇴장에서 그대로 한다 |
+
+모든 플레이어가 접속 순간 캐릭터를 갖는 호환 기본값에서는 동작이 달라지지 않는다. `NetModule.on_player_joined`의 뜻은 "peer가 핸드셰이크를 마쳤다"에서 "플레이어가 월드에 들어왔다"로 바뀌었다.
+
+캐릭터 없는 접속자도 접속 스냅샷과 그 뒤의 방송(다른 플레이어의 위치, 좀비, 월드 아이템, 공개 이벤트)은 받는다. 만드는 즉시 월드가 보이게 하기 위해서이고, 받는 정보는 월드 안의 플레이어가 받는 공개 정보와 같다(docs/15 P2-169).
+
+#### 네트워크 메시지(`CharacterNetModule`, 노드 이름 `CharacterNet`)
+
+| 방향 | RPC | 채널/모드 | 받는 쪽 검증 |
+|---|---|---|---|
+| C→S | `_rpc_request_create_character(request_id: int, name: String, appearance: Dictionary)` | 0 reliable | 아래 "요청 검증" |
+| S→요청자 | `_rpc_create_result(request_id: int, ok: bool, reason: String)` | 0 reliable | 서버 발신만 수용, 타입, `request_id` ≥ 0, `reason` 길이 ≤ 64, `ok`일 때만 `reason`이 빈 문자열 |
+| S→접속자 | `_rpc_character_rows(rows: Array)` | 0 reliable | 서버 발신만 수용. 행 256개 초과면 통째로 버리고, 행은 하나씩 검증해 잘못된 행만 버린다 |
+| S→본인 | `_rpc_creation_state(can_create: bool, reason: String)` | 0 reliable | 서버 발신만 수용, 타입, `reason` 길이, `can_create`일 때만 `reason`이 빈 문자열 |
+
+요청에는 대상 플레이어 인자가 없다. 행위자는 보낸 peer의 플레이어다. 인자를 더 붙인 호출은 엔진이 거부한다(테스트로 고정).
+
+```text
+접속 조각(snapshot.modules.CharacterNet) = {
+  schema_version: 1,
+  characters: [row, ...],          # 월드 안의 모든 플레이어(본인이 월드 안이면 본인 포함)
+  self: {can_create: bool, reason: String}   # 본인이 지금 캐릭터를 만들 수 있는지
+}
+row = {
+  player_id: String,
+  name: String,                    # 정리된 이름
+  appearance: {slot_id: option_id},  # 모든 항목
+  character_generation: int        # 본인에게는 실제 값, 다른 사람에게는 0(설정으로 공개 가능)
+}
+```
+
+요청 검증(순서대로, 먼저 걸린 것 하나. 거부되면 서버 상태는 바뀌지 않고 `rejected_intent_count(reason)`이 1 오른다):
+
+| 순서 | 사유 코드 | 조건 | 요청자에게 결과 전송 |
+|---|---|---|---|
+| 1 | `not_joined` | join 핸드셰이크를 마치지 않은 peer | 보내지 않음 |
+| 2 | `bad_type` | `request_id`가 int가 아님, `name`이 String이 아님, `appearance`가 Dictionary가 아니거나 키·값이 String이 아님(색 값, 숫자, null, 배열 모두 거부) | `request_id`가 0 이상 int일 때만 |
+| 3 | `bad_sequence` | `request_id` < 0 | 보내지 않음 |
+| 4 | `payload_too_large` | 이름이 64자 초과, 외형 항목이 64개 초과, 항목·선택지 ID가 64자 초과. 규칙 코드에 닿기 전에 걸러낸다 | 보냄 |
+| 5 | `rate_limited` | peer별 토큰 버킷. 형식이 틀린 요청은 토큰을 쓰지 않는다 | 보냄 |
+| 6 | `character_alive`, `respawn_wait` | 지금 만들 수 없는 상태 | 보냄 |
+| 7 | `name_empty`, `name_too_short`, `name_too_long`, `name_bad_characters`, `name_banned` | 이름 규칙 | 보냄 |
+| 8 | `appearance_too_large`, `unknown_appearance_slot`, `unknown_appearance_option` | 외형 선택 | 보냄 |
+| 9 | `name_taken` | 중복을 허용하지 않을 때 | 보냄 |
+
+6~9는 정상 플레이에서도 생기므로 경고 로그 없이 횟수만 센다. 승인되면 서버는 복제를 먼저 하고 결과를 나중에 보낸다(같은 채널): 캐릭터 행 → 요청자의 생성 가능 상태 → 저장(`save_after_create`) → 결과 `(request_id, true, "")`. 첫 캐릭터면 행 앞에 `_rpc_player_joined`와 생존 공개 행(`SurvivalNet`)이 나간다. 죽은 뒤의 새 캐릭터면 생존 쪽 변화(`player_respawned`, 다시 살아남)는 `SurvivalNet`의 다음 틱에 나가므로 결과보다 한 틱 늦을 수 있다.
+
+#### 복제와 정보 공개(ADR-009)
+
+| 받는 쪽 | 받는 것 |
+|---|---|
+| 모든 접속자(캐릭터가 없는 접속자 포함) | 월드 안의 모든 플레이어의 캐릭터 행: 접속 조각, 플레이어가 월드에 들어올 때, 다음 캐릭터가 시작될 때(요청으로 만들었든 호환 기본값에서 저절로 시작했든. 모듈이 서버 틱마다 세대 번호를 비교한다) |
+| 본인 | 자기 행의 실제 `character_generation`, 자기가 지금 만들 수 있는지와 그 사유(`_rpc_creation_state`: 접속 조각, 그리고 바뀔 때마다. 대기 시간의 끝은 시간으로 오므로 서버 틱마다 확인한다), 자기 요청의 결과 |
+| 아무도 받지 않는 것 | 캐릭터가 없는 접속자의 존재(접속·퇴장 알림, 위치, 생존 행, 캐릭터 행 어디에도 없다) |
+
+판단:
+
+- **이름과 외형은 공개한다.** 캐릭터를 보면 보이는 것이므로 ADR-009의 "관찰 가능한 사실"이다. 거리·시야 제한은 없다(다른 공개 정보와 같다, P2-115).
+- **세대 번호는 기본값에서 본인에게만 알린다**(`share_character_generation` false, 다른 사람의 행에는 0). "이 플레이어가 지금까지 몇 번 죽었는가"는 캐릭터를 봐서 알 수 있는 사실이 아니고, P2-T4의 결정(docs/15 P2-130)과 같다. 다른 플레이어는 같은 `player_id`의 이름·외형이 바뀌고 `player_respawned`가 오는 것으로 새 캐릭터임을 안다. 설정을 켜면 모든 접속자가 받는다. **[사용자 확인 필요]**(docs/15 P2-168. 작업 지시에는 "이름·외형·세대를 모든 접속자에게"와 "세대 공개 여부를 정하라"가 함께 있었다)
+- 죽은 캐릭터의 이름은 새 캐릭터가 만들어질 때까지 그대로 보인다.
+
+`ClientCharacterState`(권한 없는 미러): `has_character(id)`, `character_name(id)`, `appearance(id)`(사본), `character_generation(id)`(0 = 모름·비공개), `player_ids()`, `can_create_character()`, `creation_block_reason()`(접속 전에는 `not_joined`). 시그널 `changed`, `character_changed(player_id)`, `character_removed(player_id)`, `creation_state_changed(can_create, reason)`. 행 검증: 키 네 개가 정확히 있고, `player_id` 길이, 이름(1~64자, 앞뒤 공백·연속 공백·제어 문자 없음), 외형이 **이 클라이언트의 외형 데이터**로 완전한 선택인지, 세대 ≥ 0. 이름의 허용 문자 범위는 클라이언트가 다시 검사하지 않는다(서버 설정이 기준). 서버와 클라이언트의 외형 데이터가 다르면 그 행은 버려진다(docs/15 P2-176).
+
+#### `SurvivalNet`의 변경(§14.14)
+
+캐릭터 없는 접속자의 접속 조각은 `{schema_version: 3, players: [...]}`로 `self`가 없다(예전에는 생존 상태가 없으면 빈 조각이었다). `ClientSurvivalState.apply_join`은 이 형식을 받아 다른 플레이어의 공개 행만 채우며, 그 목록에 본인이 있으면 거부한다. 본인의 공개 행과 본인 스냅샷은 캐릭터가 생긴 뒤에 온다(`on_player_joined`의 공개 행 방송, 주기적인 본인 스냅샷 비교). 스키마 버전은 3 그대로다(`self`가 있는 형식은 바뀌지 않았다).
+
+#### 저장
+
+- players/<id>.json 스키마 v4가 `character`를 추가한다: `null` 또는 `{name: String, appearance: {slot_id: option_id}}`. 현재 스키마 문서에 이 키가 없거나 형식이 틀리면(이름이 비었거나 64자 초과, 외형이 문자열 → 문자열 맵이 아님, 64개 초과) 그 플레이어 문서는 거부된다. 세대가 2 이상인데 `character`가 null이어도 거부된다.
+- v3 → v4 마이그레이션(`SaveMigrations.player_v3_to_v4`): P2-T9 이전에 저장된 플레이어는 모두 월드에 캐릭터가 있었으므로 `{name: "생존자", appearance: {}}`를 넣는다. 빈 외형은 월드를 읽을 때 `CharacterRules.restore_profile`이 항목별 기본값으로 채운다. 그래서 이전 저장의 플레이어는 생성 화면 없이 바로 월드에 들어온다.
+- 저장된 이름은 이름 규칙이 나중에 바뀌어도 그대로 읽는다(저장을 못 읽게 만들지 않는다). 저장된 외형은 위 `restore_selection` 규칙으로 고친다.
+- 캐릭터 생성은 결과를 보내기 전에 저장한다(`save_after_create`). P2-T4의 "새 캐릭터 시작은 다음 저장에 들어간다"는 요청으로 만든 캐릭터에는 해당하지 않는다(호환 기본값의 자동 시작은 그대로다).
+- 캐릭터를 만들지 않고 나간 플레이어는 `character: null`로 저장되고, 다시 접속하면 생성부터 한다. 죽은 캐릭터로 저장된 플레이어는 재시작 뒤 남은 대기 시간이 지나야 만들 수 있다(§14.16의 행동 시각 기한).
+
+#### 클라이언트(`scripts/presentation/`, `scenes/ui/character_creation_screen.tscn`)
+
+- **생성 화면**(`CharacterCreationScreen`, Control): 이름 입력, 항목마다 한 줄(항목 이름, 이전 ◀, 색 견본(색 항목만), 선택지 이름, 다음 ▶), 무작위 버튼, 만들기 버튼, 거부 사유 줄. 줄은 `CharacterNetModule.character_rules()`의 카탈로그에서 만들고 항목·선택지 문구는 데이터의 `display_name`이다. 확인하면 서버와 같은 `CharacterRules`로 먼저 검사해 틀린 이름은 보내지 않고 사유를 표시하며, 통과하면 `create_requested(이름, 외형 선택)` 시그널만 낸다. 화면은 아무것도 결정하지 않는다.
+- **언제 뜨나**: `ClientView`가 미러의 `can_create_character()`를 보고 연다(`CharacterCreationScreen.should_open`). 처음 접속했을 때와, 죽은 뒤 서버가 만들 수 있다고 알렸을 때다. 서버가 요청을 승인하면 함께 온 생성 가능 상태(false)로 닫힌다. `--character-name=`으로 시작한 세션에서는 뜨지 않는다. 다시 열릴 때 지난번의 이름과 선택이 남아 있다.
+- **입력**: 화면이 떠 있는 동안 마우스 캡처를 풀고(`MOUSE_MODE_VISIBLE`), 이동·공격·사용·휴식·줍기 입력을 보내지 않는다(`ClientView.is_game_input_enabled()`).
+- **월드 표시**: 플레이어마다 노드 `Player_<id>`(위치·방향) 아래에 `Body`(캡슐)와 `NameTag`(Label3D, 빌보드)를 둔다. `CharacterCapsuleLook.build`(순수 함수)가 외형 선택을 캡슐로 바꾼다: `capsule_color` 항목(상의 색) → 캡슐 색, `capsule_height` 항목(키) → 높이 배율, `capsule_radius` 항목(체형) → 반지름 배율, 높이는 반지름의 2배 이상으로 보정. **피부색·머리 모양·머리색·하의 색은 저장·복제까지만 되고 지금은 보이지 않는다**(캐릭터 모델이 들어오면 연결). 이름은 캡슐 위에 표시하고 본인·다른 플레이어·죽은 캐릭터의 색이 다르다. 죽은 캡슐은 기존대로 어두운 색으로 눕고 이름은 남는다. 누워 쉬는 캡슐은 자기 색 그대로 눕는다. 캐릭터 행이 아직 없는 플레이어는 예전의 기본 캡슐(본인/타인 색)로 이름 없이 표시한다.
+- 생존 HUD 첫 줄이 "이름 | 캐릭터 #N"이 됐다(이름을 모르면 예전대로 "캐릭터 #N").
+
+#### 테스트
+
+`tests/unit/character_rules_test.gd`(이름 정리·검증: 길이 경계, 글자 수 단위, 허용·금지 문자, 한글, 앞뒤·연속 공백, 이름 안의 제어 문자, 빈 이름, 거대한 이름, 허용 범위 설정, 금칙어 seam / 외형 정의 검증: 중복 ID, 기본값이 선택지에 없음, 종류·역할, 카탈로그의 중복·순서 / 선택 검증: 없는 항목·선택지, 빠진 항목, 타입 오류, 과도한 크기, 무작위 선택, 저장 복구 / 프로필 문서 / 기본 데이터와 설정 파일), `tests/unit/character_creation_test.gd`(서버 상태 모델: 호환 기본값과 생성 필수의 접속, 캐릭터 없는 플레이어의 이동·줍기·내려놓기·공격·소비·휴식 거부, 욕구, 월드 시계, 좀비, 발소리, 첫 캐릭터, 살아 있는 캐릭터의 거부, 거부된 요청 14종의 상태 불변, 사망 → 대기 전 거부 → 대기 뒤에도 자동 시작 없음 → 생성과 세대 증가, 사망 중 퇴장·재접속, 호환 기본값의 자동 시작과 프로필 유지, 이름 중복 설정, 캐릭터 없는 퇴장·재접속, 저장 → 재시작(`WorldPersistence`), 죽은 채 저장, 플레이어 파일 v4와 마이그레이션, 데이터가 바뀐 저장의 복구, 훅 기본값과 조립 없는 월드), `tests/integration/character_net_test.gd`(서버 1 + 클라이언트 2~3, 실제 ENet: 만들기 전에는 서로 보이지 않음 → 생성 뒤 서버·본인·상대가 같은 이름·외형, 늦게 접속한 클라이언트와 캐릭터 없는 퇴장·재접속, 사망 → 대기 → 다른 이름·외형으로 생성 → 모두에게 반영, 조작된 요청 20종과 인자를 더 붙인 호출·살아 있는 캐릭터·클라이언트가 보낸 서버 메시지, join 전 요청, 빈도 초과, 캐릭터 없는 플레이어의 이동·줍기·공격·휴식·내려놓기·소비, 저장 → 서버 재시작 → 재접속, 호환 기본값, 세대 공개 설정, 이름 중복 거부, 화면 없는 자동 생성과 거부 시 중단, RPC 구성, 미러의 페이로드 검증), `tests/unit/character_presentation_test.gd`(외형 → 캡슐, 생성 화면의 선택 모델, 거부 사유 문구, 화면이 뜨는 조건, HUD 이름 줄, 이름표 설정, `--character-name=` 인자), `tests/integration/character_creation_screen_test.gd`(headless: 생성 화면 씬 인스턴스화, 데이터에서 만든 항목 줄, 데이터에 추가한 항목의 줄, 이전·다음·무작위, 확인 시 페이로드, 틀린 이름은 나가지 않음, 서버 사유 표시 / 실제 클라이언트 세션(`GameBootstrap` + `ClientView`)과 실제 서버: 접속 뒤 화면이 뜨고 입력이 꺼짐 → 화면의 위젯으로 생성 → 캡슐 색·크기와 이름표 → 사망 뒤 화면이 다시 뜸 → 두 번째 캐릭터, `--character-name=` 세션), `tools/smoke_test.sh`(서버 1 + 클라이언트 2 프로세스: 두 플레이어가 캐릭터 없이 접속하고 `--character-name=`으로 만든다. 한 이름은 한글).

@@ -22,13 +22,18 @@ func on_server_started(_world: ServerWorld) -> void:
 	return
 
 
-## Server: a peer completed the join handshake (called after the join
-## snapshot was sent, so module messages arrive after it).
+## Server: a player is in the world now. Called after the join handshake of
+## a peer whose player has a character (after the join snapshot was sent, so
+## module messages arrive after it), or later, when a joined player without
+## a character created its first one (P2-T9,
+## NetworkService.announce_player_entered). Not called for a joined peer
+## while its player has no character.
 func on_player_joined(_peer_id: int, _player_id: String) -> void:
 	return
 
 
-## Server: a joined peer left (after ServerWorld.leave()).
+## Server: a joined peer left (after ServerWorld.leave()). Called for every
+## joined peer, also one whose player never had a character.
 func on_player_left(_peer_id: int, _player_id: String) -> void:
 	return
 

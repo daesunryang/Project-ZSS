@@ -37,8 +37,15 @@ func _init(net_settings: SurvivalNetSettings, survival_settings: SurvivalSetting
 
 
 ## Applies the module join fragment atomically. Invalid fragments are ignored.
+## A fragment without "self" is the one of a player that has no character
+## yet (P2-T9): it only carries the other players' rows and must not list
+## the local player.
 func apply_join(player_id: String, fragment: Dictionary) -> bool:
-	if not _valid_player_id(player_id) or not _has_exact_keys(fragment, ["schema_version", "self", "players"]):
+	if not _valid_player_id(player_id):
+		return _reject("join_fragment")
+	if _has_exact_keys(fragment, ["schema_version", "players"]):
+		return _apply_join_without_character(player_id, fragment)
+	if not _has_exact_keys(fragment, ["schema_version", "self", "players"]):
 		return _reject("join_fragment")
 	if typeof(fragment["schema_version"]) != TYPE_INT or int(fragment["schema_version"]) != SCHEMA_VERSION:
 		return _reject("join_schema")
@@ -63,6 +70,37 @@ func apply_join(player_id: String, fragment: Dictionary) -> bool:
 	alive_by_player = statuses
 	resting_by_player = resting
 	_own_vitals = own.duplicate(true)
+	_recent_events.clear()
+	_respawn_positions.clear()
+	changed.emit()
+	own_vitals_changed.emit()
+	for status_id: String in alive_by_player:
+		player_alive_changed.emit(status_id, alive_by_player[status_id])
+	for status_id: String in resting_by_player:
+		player_resting_changed.emit(status_id, resting_by_player[status_id])
+	return true
+
+
+## The join fragment of a local player that is not in the world yet.
+func _apply_join_without_character(player_id: String, fragment: Dictionary) -> bool:
+	if typeof(fragment["schema_version"]) != TYPE_INT or int(fragment["schema_version"]) != SCHEMA_VERSION:
+		return _reject("join_schema")
+	if typeof(fragment["players"]) != TYPE_ARRAY:
+		return _reject("join_types")
+	var statuses: Dictionary[String, bool] = {}
+	var resting: Dictionary[String, bool] = {}
+	for value: Variant in fragment["players"] as Array:
+		if typeof(value) != TYPE_DICTIONARY:
+			return _reject("join_player_type")
+		var row: Dictionary = value
+		if not _validate_status(row) or statuses.has(str(row["player_id"])) or str(row["player_id"]) == player_id:
+			return _reject("join_player")
+		statuses[str(row["player_id"])] = bool(row["alive"])
+		resting[str(row["player_id"])] = bool(row["resting"])
+	local_player_id = player_id
+	alive_by_player = statuses
+	resting_by_player = resting
+	_own_vitals = {}
 	_recent_events.clear()
 	_respawn_positions.clear()
 	changed.emit()

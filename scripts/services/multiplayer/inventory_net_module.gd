@@ -216,7 +216,9 @@ func _rpc_request_drop(request_id: Variant, item_instance_id: Variant) -> void:
 		_send_result(peer_id, int(request_id), false, NetworkService.RATE_LIMITED)
 		return
 	# Refusals by game state are normal play: counted, not logged as warnings.
-	if _survival != null and not _survival.is_alive(player_id):
+	# (A player without a character is not in the world: it is refused as
+	# "not_online" by try_drop_item below, not as dead. P2-T9.)
+	if _survival != null and _world.is_online(player_id) and not _survival.is_alive(player_id):
 		network.count_rejection(REASON_PLAYER_DEAD)
 		_send_result(peer_id, int(request_id), false, REASON_PLAYER_DEAD)
 		return

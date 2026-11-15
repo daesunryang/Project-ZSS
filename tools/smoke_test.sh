@@ -3,7 +3,10 @@
 #  1. server alone and offline client alone boot and shut down cleanly
 #     (client uses the headless display driver: no real rendering);
 #  2. one server process + two client processes: both clients join the
-#     server over ENet on localhost and all three exit cleanly.
+#     server over ENet on localhost and all three exit cleanly. A dedicated
+#     server asks every player to create a character (P2-T9); the headless
+#     clients have no creation screen to click, so each gets its character
+#     with --character-name= (name given, default appearance).
 source "$(dirname "${BASH_SOURCE[0]}")/_godot_env.sh"
 require_godot
 import_project
@@ -49,17 +52,21 @@ set +e
 run_game "$WORK/mp_server.log" --server "--port=$PORT" "--save-root=$SAVE_ROOT/mp" --run-seconds=7 &
 SERVER_PID=$!
 sleep 2
-run_game "$WORK/mp_client_a.log" --client "--connect=127.0.0.1:$PORT" --player-key=smoke_a --run-seconds=3 &
+run_game "$WORK/mp_client_a.log" --client "--connect=127.0.0.1:$PORT" --player-key=smoke_a "--character-name=Smoke A" --run-seconds=3 &
 A_PID=$!
-run_game "$WORK/mp_client_b.log" --client "--connect=127.0.0.1:$PORT" --player-key=smoke_b --run-seconds=3 &
+run_game "$WORK/mp_client_b.log" --client "--connect=127.0.0.1:$PORT" --player-key=smoke_b "--character-name=스모크 B" --run-seconds=3 &
 B_PID=$!
 wait $A_PID; A=$?
 wait $B_PID; B=$?
 wait $SERVER_PID; S=$?
 set -e
-check_log mp_client_a "$WORK/mp_client_a.log" $A "joined world" "[main] shutdown | exit_code=0"
-check_log mp_client_b "$WORK/mp_client_b.log" $B "joined world" "[main] shutdown | exit_code=0"
+check_log mp_client_a "$WORK/mp_client_a.log" $A "joined world" "character created without a creation screen" "[main] shutdown | exit_code=0"
+check_log mp_client_b "$WORK/mp_client_b.log" $B "joined world" "character created without a creation screen" "[main] shutdown | exit_code=0"
 check_log mp_server "$WORK/mp_server.log" $S "server listening" "[main] shutdown | exit_code=0"
 JOINS=$(grep -c "join accepted" "$WORK/mp_server.log" || true)
 if [[ "$JOINS" -ne 2 ]]; then echo "[smoke] FAIL mp_server: expected 2 joins, got $JOINS" >&2; FAILED=1; else echo "[smoke] PASS mp_server_two_joins"; fi
+# Both players joined without a character and created one by request.
+WAITING=$(grep -c "player connected without a character" "$WORK/mp_server.log" || true)
+CREATED=$(grep -cF "[net] character created" "$WORK/mp_server.log" || true)
+if [[ "$WAITING" -ne 2 || "$CREATED" -ne 2 ]]; then echo "[smoke] FAIL mp_server: expected 2 players without a character and 2 created characters, got $WAITING and $CREATED" >&2; cat "$WORK/mp_server.log"; FAILED=1; else echo "[smoke] PASS mp_server_two_characters"; fi
 exit "$FAILED"

@@ -1,0 +1,62 @@
+[gd_resource type="Resource" script_class="AppearanceSlot" load_steps=11 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_slot.gd" id="1_slot"]
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_option.gd" id="2_option"]
+
+[sub_resource type="Resource" id="option_tone_1"]
+script = ExtResource("2_option")
+option_id = "tone_1"
+display_name = "아주 밝은 톤"
+color = Color(0.9843, 0.8902, 0.8314, 1)
+
+[sub_resource type="Resource" id="option_tone_2"]
+script = ExtResource("2_option")
+option_id = "tone_2"
+display_name = "밝은 톤"
+color = Color(0.9529, 0.8157, 0.7098, 1)
+
+[sub_resource type="Resource" id="option_tone_3"]
+script = ExtResource("2_option")
+option_id = "tone_3"
+display_name = "밝은 웜 톤"
+color = Color(0.9098, 0.7255, 0.5961, 1)
+
+[sub_resource type="Resource" id="option_tone_4"]
+script = ExtResource("2_option")
+option_id = "tone_4"
+display_name = "중간 톤"
+color = Color(0.8314, 0.6118, 0.4706, 1)
+
+[sub_resource type="Resource" id="option_tone_5"]
+script = ExtResource("2_option")
+option_id = "tone_5"
+display_name = "올리브 톤"
+color = Color(0.7255, 0.5412, 0.3686, 1)
+
+[sub_resource type="Resource" id="option_tone_6"]
+script = ExtResource("2_option")
+option_id = "tone_6"
+display_name = "구릿빛 톤"
+color = Color(0.6039, 0.4157, 0.2667, 1)
+
+[sub_resource type="Resource" id="option_tone_7"]
+script = ExtResource("2_option")
+option_id = "tone_7"
+display_name = "갈색 톤"
+color = Color(0.4588, 0.2902, 0.1804, 1)
+
+[sub_resource type="Resource" id="option_tone_8"]
+script = ExtResource("2_option")
+option_id = "tone_8"
+display_name = "짙은 갈색 톤"
+color = Color(0.2902, 0.1804, 0.1137, 1)
+
+[resource]
+script = ExtResource("1_slot")
+slot_id = "skin_tone"
+display_name = "피부색"
+sort_order = 30
+kind = "color"
+visual_role = ""
+options = Array[ExtResource("2_option")]([SubResource("option_tone_1"), SubResource("option_tone_2"), SubResource("option_tone_3"), SubResource("option_tone_4"), SubResource("option_tone_5"), SubResource("option_tone_6"), SubResource("option_tone_7"), SubResource("option_tone_8")])
+default_option_id = "tone_3"

@@ -427,6 +427,9 @@ func test_character_generation_is_saved_and_older_player_files_are_migrated() ->
 	state.inventory_id = "inventory_000002"
 	assert_eq(state.character_generation, PlayerState.FIRST_CHARACTER_GENERATION)
 	assert_eq(PlayerState.FIRST_CHARACTER_GENERATION, 1)
+	# P2-T9: only a player's first character can be missing, so a player at
+	# generation 4 has a character.
+	state.character = CharacterProfile.create("Alice", {})
 	state.character_generation = 4
 	var document: Dictionary = state.to_dict()
 	assert_eq(int(document["schema_version"]), PlayerState.SCHEMA_VERSION)

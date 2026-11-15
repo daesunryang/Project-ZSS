@@ -42,6 +42,9 @@ func test_server_session_has_world_and_no_presentation() -> void:
 	assert_not_null(_bootstrap.get_network())
 	assert_true(_bootstrap.get_network().is_server())
 	assert_true(SaveService.new(_save_root).has_save("dev_empty_world"), "new world is saved immediately")
+	# P2-T9: a dedicated server asks every player to create its character.
+	assert_true(_bootstrap.get_network().get_world().require_character_creation, "the real server requires character creation")
+	assert_not_null(_bootstrap.get_network().get_module(CharacterNetModule.MODULE_NAME))
 
 
 func test_client_session_has_world_and_presentation() -> void:

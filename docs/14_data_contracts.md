@@ -16,7 +16,15 @@
 ## 3. 핵심 엔티티 계약
 
 ### PlayerState
-`player_id`, `peer_id`(런타임 연결 정보), `position`, `rotation`, `health`, `injuries`, `needs`, `infection`, `inventory_id`, `shelter_membership`, `last_saved_at`, `character_generation`(P2-T4 임시안: 같은 `player_id`의 몇 번째 캐릭터인지. 첫 캐릭터 1, 영구 사망 뒤 새 캐릭터마다 +1. docs/09 §14.19).
+`player_id`, `peer_id`(런타임 연결 정보), `position`, `rotation`, `health`, `injuries`, `needs`, `infection`, `inventory_id`, `shelter_membership`, `last_saved_at`, `character_generation`(P2-T4 임시안: 같은 `player_id`의 몇 번째 캐릭터인지. 첫 캐릭터 1, 영구 사망 뒤 새 캐릭터마다 +1. docs/09 §14.19), `character`(P2-T9 임시안: 현재 캐릭터의 `CharacterProfile`, 아직 캐릭터를 만든 적이 없으면 null. null은 세대 1에서만 가능하다. 죽은 캐릭터의 값은 새 캐릭터가 만들어질 때까지 남는다. docs/09 §14.24).
+
+플레이어 파일(players/<id>.json) 스키마는 v4다: v2 `systems`, v3 `character_generation`, v4 `character`. `character`가 null인 접속자는 월드 밖이다(다른 플레이어에게 보이지 않고 행동할 수 없다).
+
+### CharacterProfile (동적, PlayerState의 일부)
+`name`(서버가 이름 규칙으로 정리·검증한 문자열, 1~64자), `appearance`(`{slot_id: option_id}`: 외형 항목마다 고른 선택지의 안정된 ID. 색도 팔레트의 선택지 ID이며 임의 RGB는 저장하지 않는다). 다른 플레이어에게 공개되는 정보다(이름과 외형은 관찰 가능한 사실, docs/00 ADR-009).
+
+### AppearanceSlot / AppearanceOption (정적)
+`slot_id`, `display_name`, `sort_order`, `kind`(`style`/`color`/`scale`), `visual_role`(임시 캡슐에 나타나는 방식, 비어 있으면 아직 표시 불가), `default_option_id`, `options`[`option_id`, `display_name`, `color`, `scale`]. `resources/definitions/appearance/*.tres`에 항목 하나당 파일 하나. 항목과 선택지는 파일만 고쳐서 늘린다. ID는 저장과 전송에 쓰이므로 바꾸지 않는다. 없어진 ID를 가진 저장은 기본 선택지로 읽는다.
 
 ### NPCDefinition (정적)
 `npc_definition_id`, 외형/초기 특성/기본 능력/시작 장비/배경 태그.

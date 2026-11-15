@@ -1,0 +1,68 @@
+[gd_resource type="Resource" script_class="AppearanceSlot" load_steps=12 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_slot.gd" id="1_slot"]
+[ext_resource type="Script" path="res://scripts/domain/player/appearance_option.gd" id="2_option"]
+
+[sub_resource type="Resource" id="option_black"]
+script = ExtResource("2_option")
+option_id = "black"
+display_name = "검정"
+color = Color(0.0824, 0.0745, 0.0588, 1)
+
+[sub_resource type="Resource" id="option_dark_brown"]
+script = ExtResource("2_option")
+option_id = "dark_brown"
+display_name = "짙은 갈색"
+color = Color(0.2314, 0.1647, 0.1176, 1)
+
+[sub_resource type="Resource" id="option_brown"]
+script = ExtResource("2_option")
+option_id = "brown"
+display_name = "갈색"
+color = Color(0.4157, 0.2902, 0.1961, 1)
+
+[sub_resource type="Resource" id="option_light_brown"]
+script = ExtResource("2_option")
+option_id = "light_brown"
+display_name = "밝은 갈색"
+color = Color(0.6039, 0.451, 0.3137, 1)
+
+[sub_resource type="Resource" id="option_auburn"]
+script = ExtResource("2_option")
+option_id = "auburn"
+display_name = "적갈색"
+color = Color(0.4784, 0.2078, 0.1255, 1)
+
+[sub_resource type="Resource" id="option_red"]
+script = ExtResource("2_option")
+option_id = "red"
+display_name = "붉은색"
+color = Color(0.6588, 0.2588, 0.1216, 1)
+
+[sub_resource type="Resource" id="option_blonde"]
+script = ExtResource("2_option")
+option_id = "blonde"
+display_name = "금발"
+color = Color(0.851, 0.7059, 0.4157, 1)
+
+[sub_resource type="Resource" id="option_gray"]
+script = ExtResource("2_option")
+option_id = "gray"
+display_name = "회색"
+color = Color(0.5569, 0.5569, 0.5569, 1)
+
+[sub_resource type="Resource" id="option_white"]
+script = ExtResource("2_option")
+option_id = "white"
+display_name = "흰색"
+color = Color(0.9098, 0.902, 0.8784, 1)
+
+[resource]
+script = ExtResource("1_slot")
+slot_id = "hair_color"
+display_name = "머리색"
+sort_order = 50
+kind = "color"
+visual_role = ""
+options = Array[ExtResource("2_option")]([SubResource("option_black"), SubResource("option_dark_brown"), SubResource("option_brown"), SubResource("option_light_brown"), SubResource("option_auburn"), SubResource("option_red"), SubResource("option_blonde"), SubResource("option_gray"), SubResource("option_white")])
+default_option_id = "black"

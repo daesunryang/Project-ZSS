@@ -28,7 +28,11 @@ static func build_survival_lines(vitals: Dictionary, settings: ClientPresentatio
 	# Which character of the player this is (permanent death, ADR-007); only
 	# shown once the server has told the owner.
 	var generation: int = int(vitals.get("character_generation", 0))
-	if generation > 0:
+	# The name of the local character (P2-T9), when the mirror has it.
+	var character_name: String = str(vitals.get("character_name", ""))
+	if generation > 0 and not character_name.is_empty():
+		lines.append("%s | 캐릭터 #%d" % [character_name, generation])
+	elif generation > 0:
 		lines.append("캐릭터 #%d" % generation)
 	lines.append("체력 %.1f | 스태미나 %.1f" % [float(vitals.get("health", 0.0)), float(vitals.get("stamina", 0.0))])
 	var needs: Dictionary = vitals.get("needs", {})
@@ -238,3 +242,49 @@ static func _infection_stage_text(stage: String) -> String:
 		"zombified":
 			return "좀비화"
 	return "-"
+
+
+# ------------------------------------------------------------ character creation (P2-T9)
+
+## Text for the reason code of a refused character creation, from the local
+## check or from the server ("" for ""). A code this client does not know is
+## shown as it is, so nothing is hidden from the player.
+static func format_creation_reason(reason: String, settings: CharacterSettings) -> String:
+	match reason:
+		"":
+			return ""
+		CharacterNameRules.REASON_EMPTY:
+			return "이름을 입력하세요."
+		CharacterNameRules.REASON_TOO_SHORT:
+			return "이름이 너무 짧습니다. %d자 이상이어야 합니다." % settings.name_min_length
+		CharacterNameRules.REASON_TOO_LONG:
+			return "이름이 너무 깁니다. %d자 이하여야 합니다." % settings.name_max_length
+		CharacterNameRules.REASON_BAD_CHARACTERS:
+			return "이름에 쓸 수 없는 문자가 있습니다."
+		CharacterNameRules.REASON_BANNED:
+			return "이 이름은 사용할 수 없습니다."
+		ServerWorld.REASON_NAME_TAKEN:
+			return "이미 다른 캐릭터가 쓰는 이름입니다."
+		AppearanceCatalog.REASON_UNKNOWN_SLOT, AppearanceCatalog.REASON_UNKNOWN_OPTION, AppearanceCatalog.REASON_TOO_LARGE:
+			return "서버가 모르는 외형 선택입니다. 게임 버전을 확인하세요."
+		SurvivalService.REASON_CHARACTER_ALIVE:
+			return "이미 살아 있는 캐릭터가 있습니다."
+		SurvivalService.REASON_RESPAWN_WAIT:
+			return "아직 새 캐릭터를 만들 수 없습니다. 잠시 기다리세요."
+		NetworkService.RATE_LIMITED:
+			return "요청이 너무 잦습니다. 잠시 뒤 다시 시도하세요."
+		CharacterNetModule.REASON_PAYLOAD_TOO_LARGE, IntentValidator.REASON_BAD_TYPE, IntentValidator.REASON_BAD_SEQUENCE:
+			return "요청 형식이 잘못되었습니다."
+	return "서버가 거부했습니다: %s" % reason
+
+
+## One line about what a name may be (shown under the name field).
+static func format_name_rule(settings: CharacterSettings) -> String:
+	return "이름은 %d~%d자입니다. 앞뒤 공백은 지워집니다." % [settings.name_min_length, settings.name_max_length]
+
+
+## The line under the title of the creation screen.
+static func creation_hint(first_character: bool) -> String:
+	if first_character:
+		return "이름과 외형을 정하면 스폰 지점에서 시작합니다."
+	return "이전 캐릭터는 끝났습니다. 새 캐릭터의 이름과 외형을 정하세요."

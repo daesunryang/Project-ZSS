@@ -22,7 +22,7 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.01, 1.0) var attack_min_interval_sec: float = 0.15
 @export_range(0.1, 10.0) var attack_result_duration_sec: float = 2.0
 @export_range(1, 20) var hud_event_line_count: int = 5
-@export var death_message: String = "사망했습니다. 이 캐릭터는 끝났습니다. 소지품은 죽은 자리에 남고, 잠시 뒤 새 캐릭터로 시작합니다."
+@export var death_message: String = "사망했습니다. 이 캐릭터는 끝났습니다. 소지품은 죽은 자리에 남고, 잠시 뒤 새 캐릭터를 만들어 다시 시작합니다."
 
 ## Use keys (P2-T3, P2-T6, P2-T7; docs/15 P2-125, P2-144): each asks the server to
 ## use the first item of its kind in the mirrored inventory. `consume_key` is
@@ -45,6 +45,17 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.01, 5.0) var rest_min_interval_sec: float = 0.5
 ## How far a resting player's capsule is tilted (PI / 2 = lying flat).
 @export_range(0.0, PI) var rest_tilt_rad: float = PI * 0.5
+
+## Name tag above a player's capsule (P2-T9, docs/15 P2-170): a billboard
+## Label3D. Distance above the top of the capsule, world size of one font
+## pixel, font size, and the colours of the local player's name, other
+## players' names and the name of a dead character.
+@export_range(0.0, 5.0) var name_tag_margin_m: float = 0.25
+@export_range(0.0001, 0.1) var name_tag_pixel_size: float = 0.006
+@export_range(1, 256) var name_tag_font_size: int = 40
+@export var name_tag_local_color: Color = Color(0.55, 0.95, 1.0, 1.0)
+@export var name_tag_remote_color: Color = Color(1.0, 1.0, 1.0, 1.0)
+@export var name_tag_dead_color: Color = Color(0.6, 0.6, 0.6, 1.0)
 
 
 func validate() -> PackedStringArray:
@@ -81,6 +92,8 @@ func validate() -> PackedStringArray:
 		errors.append("rest_min_interval_sec must be > 0")
 	if rest_tilt_rad <= 0.0 or rest_tilt_rad > PI:
 		errors.append("rest_tilt_rad must be within (0, PI]")
+	if name_tag_margin_m < 0.0 or name_tag_pixel_size <= 0.0 or name_tag_font_size < 1:
+		errors.append("name tag margin must be >= 0, pixel size > 0 and font size >= 1")
 	if not _are_distinct([consume_key, drink_key, bandage_key, cure_key, rest_key]):
 		errors.append("use keys (consume, drink, bandage, cure) and the rest key must be different keys")
 	return errors

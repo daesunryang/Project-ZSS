@@ -9,11 +9,13 @@ extends RefCounted
 ## v2 (Phase 2): the player file may carry "systems" fragments written by
 ## ServerWorld; PlayerState itself ignores that key.
 ## v3 (P2-T4): adds "character_generation".
-const SCHEMA_VERSION: int = 3
+## v4 (P2-T9): adds "character" (name and appearance; null = none yet).
+const SCHEMA_VERSION: int = 4
 const PLAYER_ID_PATTERN: String = "^player_[0-9]+$"
 ## Generation of a player's first character.
 const FIRST_CHARACTER_GENERATION: int = 1
 const KEY_CHARACTER_GENERATION: String = "character_generation"
+const KEY_CHARACTER: String = "character"
 
 var player_id: String = ""
 ## PROVISIONAL client-chosen identity key used to find the same player on
@@ -30,8 +32,20 @@ var inventory_id: String = ""
 ## (docs/15 P2-128): the minimum needed so later systems (NPC relationships)
 ## can attach to a character instead of a player.
 var character_generation: int = FIRST_CHARACTER_GENERATION
+## The name and appearance of the player's current character (docs/00
+## ADR-015, docs/09 §14.24), or null while the player has not created its
+## first character. Without a character a connected player is not in the
+## world (ServerWorld.is_online is false). A dead character stays here until
+## the next one is created; then `character_generation` goes up. Null is only
+## possible at generation 1.
+var character: CharacterProfile = null
 ## Real-time (UTC unix seconds) of the last save. Not world time (docs/14 §2).
 var last_saved_at_utc: int = 0
+
+
+## True once the player has created a character (alive or dead).
+func has_character() -> bool:
+	return character != null
 
 
 func to_dict() -> Dictionary:
@@ -43,6 +57,7 @@ func to_dict() -> Dictionary:
 		"yaw": yaw,
 		"inventory_id": inventory_id,
 		KEY_CHARACTER_GENERATION: character_generation,
+		KEY_CHARACTER: character.to_dict() if character != null else null,
 		"last_saved_at_utc": last_saved_at_utc,
 	}
 
@@ -61,13 +76,14 @@ static func from_dict(data: Dictionary) -> PlayerState:
 	state.yaw = float(data["yaw"])
 	state.inventory_id = str(data["inventory_id"])
 	state.character_generation = int(data[KEY_CHARACTER_GENERATION])
+	state.character = CharacterProfile.from_dict(data[KEY_CHARACTER]) if data[KEY_CHARACTER] != null else null
 	state.last_saved_at_utc = int(data.get("last_saved_at_utc", 0))
 	return state
 
 
 static func validate_dict(data: Dictionary) -> PackedStringArray:
 	var errors: PackedStringArray = []
-	for key: String in ["schema_version", "player_id", "player_key", "position", "yaw", "inventory_id", KEY_CHARACTER_GENERATION]:
+	for key: String in ["schema_version", "player_id", "player_key", "position", "yaw", "inventory_id", KEY_CHARACTER_GENERATION, KEY_CHARACTER]:
 		if not data.has(key):
 			errors.append("missing " + key)
 	if not errors.is_empty():
@@ -93,6 +109,13 @@ static func validate_dict(data: Dictionary) -> PackedStringArray:
 	var generation: Variant = data[KEY_CHARACTER_GENERATION]
 	if not ItemInstance.is_integer_value(generation) or int(generation) < FIRST_CHARACTER_GENERATION:
 		errors.append("character_generation must be an integer >= %d" % FIRST_CHARACTER_GENERATION)
+	if data[KEY_CHARACTER] == null:
+		# Only the first character can still be missing: a later generation
+		# exists because an earlier character died.
+		if ItemInstance.is_integer_value(generation) and int(generation) > FIRST_CHARACTER_GENERATION:
+			errors.append("a player without a character must be at generation %d" % FIRST_CHARACTER_GENERATION)
+	else:
+		errors.append_array(CharacterProfile.validate_dict(data[KEY_CHARACTER]))
 	return errors
 
 

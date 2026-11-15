@@ -112,13 +112,19 @@ func on_player_left(peer_id: int, player_id: String) -> void:
 
 
 func build_join_fragment(player_id: String) -> Dictionary:
-	if _world == null or _survival == null or not _survival.has_player(player_id):
+	if _world == null or _survival == null:
 		return {}
-	var own: Dictionary = _make_owner_snapshot(player_id)
-	_last_owner_snapshots[player_id] = own.duplicate(true)
 	var statuses: Array[Dictionary] = []
 	for online_id: String in _world.online_player_ids():
 		statuses.append(_make_status(online_id))
+	# P2-T9: a player without a character has no vitals and is not in the
+	# world. It still learns who is: the fragment has no "self" then. Its own
+	# status row and owner snapshot follow once its character exists
+	# (on_player_joined, _send_changed_owner_snapshots).
+	if not _survival.has_player(player_id) or not _world.is_online(player_id):
+		return {"schema_version": SCHEMA_VERSION, "players": statuses}
+	var own: Dictionary = _make_owner_snapshot(player_id)
+	_last_owner_snapshots[player_id] = own.duplicate(true)
 	return {"schema_version": SCHEMA_VERSION, "self": own, "players": statuses}
 
 

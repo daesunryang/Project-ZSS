@@ -23,6 +23,10 @@ const ARG_PORT: String = "--port="
 const ARG_CONNECT: String = "--connect="
 const ARG_PLAYER_KEY: String = "--player-key="
 const ARG_SAVE_ROOT: String = "--save-root="
+## Client (P2-T9): create the character with this name and the default
+## appearance without showing the creation screen (headless clients, quick
+## starts). The server still checks the name.
+const ARG_CHARACTER_NAME: String = "--character-name="
 ## Saves may only be redirected inside the user data directory.
 const SAVE_ROOT_PREFIX: String = "user://"
 const MIN_PORT: int = 1
@@ -53,6 +57,9 @@ var connect_port: int = 0
 var player_key: String = ""
 ## Server: save root override ("" = SaveSettings default).
 var save_root_override: String = ""
+## Client: name of the character to create without a creation screen
+## ("" = show the screen).
+var character_name: String = ""
 ## Parse problems. A non-empty list means the launch must be aborted.
 var errors: PackedStringArray = []
 
@@ -110,6 +117,12 @@ static func parse(user_args: PackedStringArray, is_dedicated_build: bool) -> Lau
 				config.save_root_override = root
 			else:
 				config.errors.append("save root must be inside user:// ('%s')" % root)
+		elif arg.begins_with(ARG_CHARACTER_NAME):
+			var given_name: String = arg.substr(ARG_CHARACTER_NAME.length())
+			if given_name.strip_edges().is_empty() or given_name.length() > CharacterNameRules.HARD_MAX_LENGTH:
+				config.errors.append("character name must have 1..%d characters" % CharacterNameRules.HARD_MAX_LENGTH)
+			else:
+				config.character_name = given_name
 		else:
 			config.errors.append("unknown argument '%s'" % arg)
 
@@ -128,6 +141,8 @@ static func parse(user_args: PackedStringArray, is_dedicated_build: bool) -> Lau
 		config.role_source = "feature_tag"
 	if config.role == Role.SERVER and not config.connect_address.is_empty():
 		config.errors.append("--connect is only valid for clients")
+	if config.role == Role.SERVER and not config.character_name.is_empty():
+		config.errors.append("--character-name is only valid for clients")
 	if not config.connect_address.is_empty() and config.player_key.is_empty():
 		config.errors.append("--connect requires --player-key")
 	return config

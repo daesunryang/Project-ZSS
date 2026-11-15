@@ -1,0 +1,105 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/presentation/character_creation_screen.gd" id="1_screen"]
+
+[node name="CharacterCreationScreen" type="Control"]
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_screen")
+
+[node name="Dim" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.6)
+
+[node name="Center" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Panel" type="PanelContainer" parent="Center"]
+layout_mode = 2
+
+[node name="Margin" type="MarginContainer" parent="Center/Panel"]
+layout_mode = 2
+theme_override_constants/margin_left = 24
+theme_override_constants/margin_top = 20
+theme_override_constants/margin_right = 24
+theme_override_constants/margin_bottom = 20
+
+[node name="Rows" type="VBoxContainer" parent="Center/Panel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Title" type="Label" parent="Center/Panel/Margin/Rows"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "캐릭터 만들기"
+horizontal_alignment = 1
+
+[node name="HintLabel" type="Label" parent="Center/Panel/Margin/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+horizontal_alignment = 1
+
+[node name="NameRow" type="HBoxContainer" parent="Center/Panel/Margin/Rows"]
+layout_mode = 2
+
+[node name="NameLabel" type="Label" parent="Center/Panel/Margin/Rows/NameRow"]
+custom_minimum_size = Vector2(110, 0)
+layout_mode = 2
+text = "이름"
+
+[node name="NameEdit" type="LineEdit" parent="Center/Panel/Margin/Rows/NameRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(260, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "캐릭터 이름"
+
+[node name="NameRuleLabel" type="Label" parent="Center/Panel/Margin/Rows"]
+unique_name_in_owner = true
+modulate = Color(1, 1, 1, 0.7)
+layout_mode = 2
+
+[node name="SlotRows" type="VBoxContainer" parent="Center/Panel/Margin/Rows"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="ErrorLabel" type="Label" parent="Center/Panel/Margin/Rows"]
+unique_name_in_owner = true
+modulate = Color(1, 0.45, 0.4, 1)
+custom_minimum_size = Vector2(0, 26)
+layout_mode = 2
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="Buttons" type="HBoxContainer" parent="Center/Panel/Margin/Rows"]
+layout_mode = 2
+theme_override_constants/separation = 16
+alignment = 1
+
+[node name="RandomButton" type="Button" parent="Center/Panel/Margin/Rows/Buttons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(120, 0)
+layout_mode = 2
+text = "무작위"
+
+[node name="ConfirmButton" type="Button" parent="Center/Panel/Margin/Rows/Buttons"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(120, 0)
+layout_mode = 2
+text = "만들기"
