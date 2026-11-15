@@ -181,7 +181,7 @@ Phase 2는 단일 조정자(Opus)가 티켓을 쪼개고 병합한다. 설계 �
 
 | 티켓 | 핵심 목표 | 소유 영역 | 담당 | 상태 |
 |---|---|---|---|---|
-| P3-1 | 월드 셀 격자와 셀 생명주기(서버, ADR-023): 셀 좌표·ID, 플레이어 위치 기반 활성/사전 로딩/비활성, 엔티티의 셀 색인, 비활성 셀의 시뮬레이션 정지, 셀 단위 저장·복구 | `scripts/domain/world_cells/`, `scripts/services/world/`, `scripts/services/save/` | Fable | 완료 대기(병합 전) |
+| P3-1 | 월드 셀 격자와 셀 생명주기(서버, ADR-023): 셀 좌표·ID, 플레이어 위치 기반 활성/사전 로딩/비활성, 엔티티의 셀 색인, 비활성 셀의 시뮬레이션 정지, 셀 단위 저장·복구 | `scripts/domain/world_cells/`, `scripts/services/world/`, `scripts/services/save/` | Fable | 완료 |
 | P3-2 | 셀 기반 복제 범위: 클라이언트는 주변 셀의 월드 아이템·좀비만 받고 셀 진입·이탈 때 추가·제거, 500m × 500m 테스트 맵 바닥과 경계 | `scripts/services/multiplayer/`, `scripts/presentation/` | Fable | 대기 |
 | P3-3 | 건물과 보관함: 테스트 맵 건물 배치 데이터, 보관함 인벤토리, 수색·넣기·꺼내기 의도(창고를 거쳐 아이템 옮기기), 서버 시드 루팅(셀 재활성화로 다시 생기지 않음) | `scripts/domain/containers/`, `resources/definitions/` | Fable | 대기 |
 | P3-4 | 격자 구조물: 바닥·벽·문 정의, 배치 검증(격자·겹침·거리), 배치 의도, 복제·저장, 서버 이동 충돌, 문 여닫기 | `scripts/domain/building/`, `resources/definitions/structures/` | Fable | 대기 |
