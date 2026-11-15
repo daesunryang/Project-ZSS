@@ -20,8 +20,9 @@ const REDACTED_KEYS: PackedStringArray = ["password", "token", "secret", "auth",
 const REDACTED_VALUE: String = "<redacted>"
 
 static var _min_level: Level = Level.INFO
-## When non-null, formatted lines are appended here instead of printed.
-static var _capture: Variant = null
+## When true, formatted lines are appended to `_captured` instead of printed.
+static var _capture_enabled: bool = false
+static var _captured: PackedStringArray = []
 
 
 ## Sets the minimum level that will be emitted.
@@ -44,14 +45,13 @@ static func level_name(level: Level) -> String:
 
 ## Redirects output into an in-memory array (for tests). Pass `false` to restore printing.
 static func set_capture(enabled: bool) -> void:
-	_capture = PackedStringArray() if enabled else null
+	_capture_enabled = enabled
+	_captured = PackedStringArray()
 
 
 ## Lines captured since `set_capture(true)`.
 static func captured_lines() -> PackedStringArray:
-	if _capture == null:
-		return PackedStringArray()
-	return _capture as PackedStringArray
+	return _captured
 
 
 static func debug(subsystem: String, message: String, context: Dictionary = {}) -> void:
@@ -79,8 +79,8 @@ static func write(level: Level, subsystem: String, message: String, context: Dic
 	if level < _min_level:
 		return
 	var line: String = format_line(level, subsystem, message, context, _utc_timestamp())
-	if _capture != null:
-		(_capture as PackedStringArray).append(line)
+	if _capture_enabled:
+		_captured.append(line)
 		return
 	if level >= Level.ERROR:
 		printerr(line)
