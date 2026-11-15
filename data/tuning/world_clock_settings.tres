@@ -4,5 +4,5 @@
 
 [resource]
 script = ExtResource("1_clock")
-time_scale = 1.0
+time_scale = 24.0
 pause_when_empty = true

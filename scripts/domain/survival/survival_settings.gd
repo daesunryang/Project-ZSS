@@ -3,6 +3,12 @@ extends Resource
 ## Survival tuning (docs/02 §2.1: units/ranges in settings). Defaults in
 ## `res://data/tuning/survival_settings.tres`. Every value is PROVISIONAL
 ## (docs/15 §6) and must be balanced by play-testing.
+##
+## Time units (docs/00 ADR-006, docs/09 §14.16): names with `world_sec` or
+## `hours` are calendar time (world seconds / world hours; with the default
+## time scale 24 one world hour is 2.5 real minutes). Names ending in plain
+## `_sec` are action time (real seconds): stamina regeneration, the respawn
+## delay and the damage event interval.
 
 const DEFAULT_PATH: String = "res://data/tuning/survival_settings.tres"
 const SECONDS_PER_HOUR: float = 3600.0
@@ -24,18 +30,18 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(0.0, 1.0) var danger_stamina_regen_multiplier: float = 0.4
 @export_range(0.0, 1.0) var caution_movement_multiplier: float = 0.9
 @export_range(0.0, 1.0) var danger_movement_multiplier: float = 0.6
-## Stamina regained per world second while alive.
-@export_range(0.0, 1000.0) var stamina_regen_per_world_sec: float = 5.0
+## Stamina regained per real second (action time) while alive.
+@export_range(0.0, 1000.0) var stamina_regen_per_sec: float = 5.0
 ## Damage amount that produces a severity-1.0 wound (severity = amount / this).
 @export_range(0.1, 10000.0) var wound_severity_reference_damage: float = 50.0
 ## Wounds kept per player; further wounds still deal damage but are not listed.
 @export_range(1, 1000) var max_wounds_per_player: int = 64
 ## Undrained survival events kept for the network layer; oldest are dropped.
 @export_range(1, 1000000) var max_pending_events: int = 256
-## World seconds of time-based damage (bleeding, starvation, dehydration,
-## infection) summed into one "player_survival_damage" event. 0 = one event
-## per tick. Health is applied every tick regardless (docs/15 P2-88).
-@export_range(0.0, 3600.0) var survival_damage_event_interval_world_sec: float = 1.0
+## Real seconds (action time) of time-based damage (bleeding, starvation,
+## dehydration, infection) summed into one "player_survival_damage" event.
+## 0 = one event per tick. Health is applied every tick regardless (docs/15 P2-88).
+@export_range(0.0, 3600.0) var survival_damage_event_interval_sec: float = 1.0
 ## Handling multiplier = 1 - penalty * sum(arm/hand severity), clamped to min.
 @export_range(0.0, 10.0) var handling_penalty_per_severity: float = 0.5
 @export_range(0.0, 1.0) var min_handling_multiplier: float = 0.25
@@ -58,8 +64,9 @@ const SECONDS_PER_HOUR: float = 3600.0
 ## Health loss while the corresponding need is exactly at need_max.
 @export_range(0.0, 1000.0) var starvation_health_loss_per_world_sec: float = 0.005
 @export_range(0.0, 1000.0) var dehydration_health_loss_per_world_sec: float = 0.01
-## Development respawn policy (docs/15 P2-6/P2-17).
-@export_range(0.0, 1000000.0) var respawn_delay_world_sec: float = 10.0
+## Development respawn policy (docs/15 P2-6/P2-17). The delay is real
+## seconds (action time).
+@export_range(0.0, 1000000.0) var respawn_delay_sec: float = 10.0
 @export_range(0.0, 10000.0) var respawn_hunger: float = 0.0
 @export_range(0.0, 10000.0) var respawn_thirst: float = 0.0
 @export_range(0.0, 10000.0) var respawn_fatigue: float = 0.0
@@ -99,8 +106,8 @@ func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
 	if max_health <= 0.0 or max_stamina <= 0.0 or need_max <= 0.0:
 		errors.append("max_health, max_stamina and need_max must be > 0")
-	if stamina_regen_per_world_sec < 0.0:
-		errors.append("stamina_regen_per_world_sec must be >= 0")
+	if stamina_regen_per_sec < 0.0:
+		errors.append("stamina_regen_per_sec must be >= 0")
 	if hunger_hours_to_max <= 0.0 or thirst_hours_to_max <= 0.0 or fatigue_hours_to_max <= 0.0:
 		errors.append("need *_hours_to_max must be > 0")
 	if need_caution_threshold < 0.0 or need_caution_threshold >= need_danger_threshold or need_danger_threshold > need_max:
@@ -117,8 +124,8 @@ func validate() -> PackedStringArray:
 		errors.append("max_wounds_per_player must be >= 1")
 	if max_pending_events < 1:
 		errors.append("survival max_pending_events must be >= 1")
-	if not is_finite(survival_damage_event_interval_world_sec) or survival_damage_event_interval_world_sec < 0.0:
-		errors.append("survival_damage_event_interval_world_sec must be >= 0")
+	if not is_finite(survival_damage_event_interval_sec) or survival_damage_event_interval_sec < 0.0:
+		errors.append("survival_damage_event_interval_sec must be >= 0")
 	for chance: float in [infection_chance_bite, infection_chance_scratch, infection_chance_blood]:
 		if chance < 0.0 or chance > 1.0:
 			errors.append("infection chances must be within [0, 1]")
@@ -153,7 +160,7 @@ func validate() -> PackedStringArray:
 		bleeding_health_loss_per_severity_per_world_sec,
 		health_recovery_per_world_sec, wound_recovery_per_world_sec,
 		starvation_health_loss_per_world_sec, dehydration_health_loss_per_world_sec,
-		respawn_delay_world_sec,
+		respawn_delay_sec,
 	]
 	for rate: float in non_negative_rates:
 		if rate < 0.0 or not is_finite(rate):

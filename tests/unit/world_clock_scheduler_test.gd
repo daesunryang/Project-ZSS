@@ -8,6 +8,7 @@ func test_clock_scales_and_pauses_when_empty() -> void:
 	assert_true(clock.is_paused(false))
 	assert_eq(clock.step(0.5, true), 30.0)
 	assert_eq(clock.world_time_sec, 30.0)
+	assert_eq(clock.action_time_sec, 0.5, "action time is not scaled")
 	assert_eq(clock.step(-1.0, true), 0.0, "negative delta ignored")
 	assert_eq(clock.step(NAN, true), 0.0, "NaN delta ignored")
 	var always_on: WorldClock = WorldClock.new(1.0, false)

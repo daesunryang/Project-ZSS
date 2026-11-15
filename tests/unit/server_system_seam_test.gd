@@ -44,6 +44,7 @@ func test_hooks_and_clock_stepping() -> void:
 	assert_eq(world_delta, 0.5 * world.clock.time_scale)
 	assert_eq(system.steps, 2, "systems step even while paused")
 	assert_eq(system.world_time_seen, world_delta)
+	assert_eq(system.action_time_seen, 0.5, "the first delta is real seconds and 0 while paused")
 	world.leave(alice.player_id)
 	assert_eq(system.online_events, PackedStringArray(["online:" + alice.player_id, "offline:" + alice.player_id]))
 
@@ -69,6 +70,7 @@ func test_system_state_survives_save_and_restart() -> void:
 	assert_eq(restored.total, 42, "world document restored")
 	assert_eq(restored.per_player.get(alice.player_id, 0), 1, "player fragment restored")
 	assert_eq(restored_world.clock.world_time_sec, world.clock.world_time_sec, "world time restored")
+	assert_eq(restored_world.clock.action_time_sec, world.clock.action_time_sec, "action time restored")
 	assert_true(restored_world.clock.world_time_sec > 0.0)
 
 
@@ -120,8 +122,14 @@ func test_phase1_v1_save_is_migrated() -> void:
 	if restored == null:
 		return
 	assert_eq(restored.clock.world_time_sec, 0.0)
+	assert_eq(restored.clock.action_time_sec, 0.0)
 	assert_eq(restored.get_player(alice.player_id).position, Vector3(2, 0, 3))
 	assert_eq(restored.inventory.world_item_ids().size(), 1)
 	var migrated: Dictionary = SaveMigrations.world_v1_to_v2({"schema_version": 1})
 	assert_eq(int(migrated["schema_version"]), 2)
 	assert_eq(migrated["systems"], {})
+	# The whole chain: v1 -> v2 -> v3 (P2-T1 adds the action clock).
+	var current: Dictionary = SaveMigrations.defaults()[SaveService.CATEGORY_WORLD].migrate({"schema_version": 1})
+	assert_eq(int(current["schema_version"]), ServerWorld.SCHEMA_VERSION)
+	assert_eq(current[ServerWorld.KEY_WORLD_TIME], 0.0)
+	assert_eq(current[ServerWorld.KEY_ACTION_TIME], 0.0)

@@ -56,8 +56,8 @@ func before_each() -> void:
 	_config.survival = SurvivalSettings.new()
 	_config.survival.health_recovery_per_world_sec = 0.0
 	_config.survival.wound_recovery_per_world_sec = 0.0
-	_config.survival.stamina_regen_per_world_sec = 0.0
-	_config.survival.respawn_delay_world_sec = NEVER
+	_config.survival.stamina_regen_per_sec = 0.0
+	_config.survival.respawn_delay_sec = NEVER
 	_config.noise = NoiseSettings.new()
 	_config.player_noise = PlayerNoiseSettings.new()
 	_config.player_noise.footstep_loudness = 0.0

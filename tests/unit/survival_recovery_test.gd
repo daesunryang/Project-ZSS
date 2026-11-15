@@ -23,6 +23,11 @@ func after_each() -> void:
 func _config() -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
 	config.survival = _settings
+	# These tests state calendar rules in world seconds. A 1x clock makes
+	# step_systems(x) advance exactly x world seconds; the 24x default and the
+	# action-time rules are covered by time_axes_test (P2-T1).
+	config.clock = WorldClockSettings.new()
+	config.clock.time_scale = 1.0
 	return config
 
 
@@ -130,7 +135,7 @@ func test_paused_and_offline_players_have_no_time_based_change() -> void:
 
 
 func test_death_records_time_and_respawn_resets_state_position_and_input() -> void:
-	_settings.respawn_delay_world_sec = 10.0
+	_settings.respawn_delay_sec = 10.0
 	_settings.respawn_hunger = 1.0
 	_settings.respawn_thirst = 2.0
 	_settings.respawn_fatigue = 3.0
@@ -192,7 +197,7 @@ func test_health_and_wound_progression_are_independent_of_tick_size() -> void:
 func test_survival_death_and_respawn_boundaries_are_independent_of_tick_size() -> void:
 	_settings.starvation_health_loss_per_world_sec = 0.05
 	_settings.dehydration_health_loss_per_world_sec = 0.05
-	_settings.respawn_delay_world_sec = 10.0
+	_settings.respawn_delay_sec = 10.0
 	var results: Array[Array] = []
 	for tick_sec: float in [0.1, 1.0, 25.0]:
 		var world: ServerWorld = _world()

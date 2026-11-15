@@ -78,7 +78,7 @@ func test_invalid_damage_is_rejected_without_change() -> void:
 	assert_eq(survival.to_player_fragment(alice.player_id), before)
 
 
-func test_stamina_spend_and_regen_follow_world_clock() -> void:
+func test_stamina_spend_and_regen_follow_action_clock() -> void:
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
 	var alice: PlayerState = world.join("alice")
@@ -87,8 +87,12 @@ func test_stamina_spend_and_regen_follow_world_clock() -> void:
 	assert_false(survival.try_spend_stamina(alice.player_id, -1.0), "negative refused")
 	assert_eq(survival.get_vitals(alice.player_id).stamina, _settings.max_stamina - 40.0)
 	world.step_systems(2.0)
-	var expected: float = minf(_settings.max_stamina - 40.0 + _settings.stamina_regen_per_world_sec * 2.0 * world.clock.time_scale, _settings.max_stamina)
-	assert_true(is_equal_approx(survival.get_vitals(alice.player_id).stamina, expected))
+	# Regeneration is per real second: the calendar scale (24 by default) does
+	# not speed it up (P2-T1).
+	assert_true(world.clock.time_scale > 1.0, "default clock is accelerated")
+	var expected: float = _settings.max_stamina - 40.0 + _settings.stamina_regen_per_sec * 2.0
+	assert_true(expected < _settings.max_stamina, "not capped, so the rate is visible")
+	assert_true(is_equal_approx(survival.get_vitals(alice.player_id).stamina, expected), "stamina %f, expected %f" % [survival.get_vitals(alice.player_id).stamina, expected])
 	world.leave(alice.player_id)
 	var offline_stamina: float = survival.get_vitals(alice.player_id).stamina
 	world.step_systems(10.0)

@@ -16,7 +16,6 @@ func before_each() -> void:
 	_config.survival_net = SurvivalNetSettings.new()
 	_config.survival_net.owner_snapshot_rate_hz = 20.0
 	_config.clock = WorldClockSettings.new()
-	_config.clock.time_scale = 20.0
 	_config.zombie = ZombieSettings.new()
 	_config.zombie.dev_spawn_count = 0
 	_cluster = NetTestCluster.new(tree, network_settings, _config)
@@ -107,7 +106,8 @@ func test_infection_is_owner_only_and_never_appears_in_other_payloads() -> void:
 
 
 func test_death_and_respawn_are_public_with_position() -> void:
-	_config.survival.respawn_delay_world_sec = 2.0
+	# Real seconds (action time): short, so the test does not wait.
+	_config.survival.respawn_delay_sec = 0.1
 	_config.gameplay = GameplaySettings.new()
 	_config.gameplay.player_spawn_position = Vector3(7.0, 0.0, -3.0)
 	_start()
@@ -129,7 +129,7 @@ func test_death_and_respawn_are_public_with_position() -> void:
 
 
 func test_late_join_fragment_has_other_status_and_own_full_state() -> void:
-	_config.survival.respawn_delay_world_sec = 1000.0
+	_config.survival.respawn_delay_sec = 1000.0
 	_start()
 	var a: NetworkService = await _cluster.join_client("alice")
 	if a == null:

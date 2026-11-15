@@ -3,7 +3,8 @@ extends Resource
 ## Static definition of one melee weapon (docs/02 §5.1, docs/00 ADR-005).
 ## Files live in `res://resources/definitions/melee_weapons/*.tres` and are
 ## loaded by MeleeWeaponCatalog. Every number is PROVISIONAL (docs/15 §6.3
-## P2-40) and must be balanced by play-testing. Times are world seconds.
+## P2-40) and must be balanced by play-testing. Times are real seconds (action
+## time, docs/09 §14.16).
 
 enum Category { UNARMED, BLUNT, BLADE, AXE }
 
@@ -25,7 +26,7 @@ const FULL_CIRCLE_DEG: float = 360.0
 @export_range(0.01, 100.0) var range_m: float = 1.0
 ## Full opening angle of the swing, centred on the aim direction, degrees.
 @export_range(0.0, 360.0) var arc_angle_deg: float = 90.0
-## World seconds before the same player may attack again.
+## Real seconds before the same player may attack again.
 @export_range(0.0, 1000.0) var cooldown_sec: float = 1.0
 ## Stamina spent per swing (hit or miss).
 @export_range(0.0, 10000.0) var stamina_cost: float = 0.0

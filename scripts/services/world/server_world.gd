@@ -12,9 +12,12 @@ extends RefCounted
 ## online/offline, stepped by step_systems() every server physics tick and
 ## persisted under "systems" in world_state.json and players/<id>.json.
 
-const SCHEMA_VERSION: int = 2
+const SCHEMA_VERSION: int = 3
 const KEY_SYSTEMS: String = "systems"
+## WorldClock calendar time and action time (docs/09 §14.16). The action
+## time was added in schema v3 (P2-T1).
 const KEY_WORLD_TIME: String = "world_time_sec"
+const KEY_ACTION_TIME: String = "action_time_sec"
 const SYSTEM_ID_PATTERN: String = "^[a-z][a-z0-9_]*$"
 const ENTITY_KIND_PLAYER: String = "player"
 const REASON_NOT_ONLINE: String = "not_online"
@@ -26,8 +29,9 @@ var gameplay: GameplaySettings
 var ids: EntityIdGenerator = EntityIdGenerator.new()
 var registry: EntityRegistry = EntityRegistry.new()
 var inventory: InventoryService
-## Authoritative world time. ServerComposition replaces it with a clock built
-## from WorldClockSettings; the default is real time, paused when empty.
+## Authoritative world clock (calendar time and action time).
+## ServerComposition replaces it with a clock built from WorldClockSettings;
+## this default is a real-time clock (scale 1), paused when empty.
 var clock: WorldClock = WorldClock.new()
 
 var _players: Dictionary[String, PlayerState] = {}
@@ -94,11 +98,14 @@ func system_ids() -> PackedStringArray:
 
 
 ## Advances the world clock and every system. Called once per server
-## physics tick (after movement). Returns the world-time delta applied.
+## physics tick (after movement). Systems get the action delta (real
+## seconds) and the calendar delta of the tick; both are 0 while the clock
+## is paused (ServerSystem.step). Returns the calendar delta applied.
 func step_systems(real_delta: float) -> float:
 	var world_delta: float = clock.step(real_delta, not _online.is_empty())
+	var action_delta: float = clock.last_action_delta
 	for system: ServerSystem in _system_order:
-		system.step(self, real_delta, world_delta)
+		system.step(self, action_delta, world_delta)
 	return world_delta
 
 
@@ -258,6 +265,7 @@ func to_documents() -> Dictionary:
 		"player_keys": keys,
 		"inventory": inventory.to_snapshot(),
 		KEY_WORLD_TIME: clock.world_time_sec,
+		KEY_ACTION_TIME: clock.action_time_sec,
 	}
 	var system_docs: Dictionary = {}
 	for system: ServerSystem in _system_order:
@@ -322,6 +330,12 @@ func restore_documents(world_state: Dictionary, players: Dictionary) -> PackedSt
 	var world_time: Variant = world_state.get(KEY_WORLD_TIME, 0.0)
 	if not (typeof(world_time) == TYPE_FLOAT or typeof(world_time) == TYPE_INT) or clock.restore(float(world_time)) != OK:
 		errors.append("invalid world_time_sec")
+	# No default: saved action-time deadlines (zombies, respawn) are only
+	# valid against the clock they were written with. Older documents get
+	# the key from SaveMigrations.world_v2_to_v3.
+	var action_time: Variant = world_state.get(KEY_ACTION_TIME, null)
+	if not (typeof(action_time) == TYPE_FLOAT or typeof(action_time) == TYPE_INT) or clock.restore_action_time(float(action_time)) != OK:
+		errors.append("invalid action_time_sec")
 	errors.append_array(_restore_systems(world_state, players))
 	return errors
 

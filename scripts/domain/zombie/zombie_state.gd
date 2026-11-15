@@ -3,6 +3,10 @@ extends RefCounted
 ## Server-side state of one zombie (docs/02 §6.1). Plain data, saved in
 ## world_state.json `systems.zombie.zombies[]`. Other systems treat it as
 ## read-only; all changes go through ZombieService.
+## Every timestamp here is action time (WorldClock.action_time_sec, real
+## seconds, docs/09 §14.16). Saves written before P2-T1 stored them in the
+## single real-time world clock; the world migration starts the action clock
+## at that value, so they keep their meaning.
 
 enum State { IDLE, INVESTIGATE, CHASE, ATTACK, SEARCH, DORMANT, DEAD }
 
@@ -35,15 +39,16 @@ var focus_position: Vector3 = Vector3.ZERO
 ## Current wander/search waypoint (valid while has_move_target).
 var has_move_target: bool = false
 var move_target: Vector3 = Vector3.ZERO
-## World time when investigate/search gives up.
+## Action time when investigate/search gives up.
 var state_until: float = 0.0
-## World time of the earliest next attack.
+## Action time of the earliest next attack.
 var attack_ready_at: float = 0.0
-## World time of the earliest next wander step.
+## Action time of the earliest next wander step.
 var next_wander_at: float = 0.0
-## Newest noise event time already reacted to (NoiseService `since`).
+## Newest noise event time (action time) already reacted to (NoiseService
+## `since_time`).
 var last_noise_time: float = NO_TIME
-## World time of death (NO_TIME while alive).
+## Action time of death (NO_TIME while alive).
 var died_at: float = NO_TIME
 ## Attacker to notice at the next AI decision ("" = none).
 var alerted_by: String = ""

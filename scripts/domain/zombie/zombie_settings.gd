@@ -3,7 +3,8 @@ extends Resource
 ## Common infected ("zombie") tuning (docs/02 §6). Defaults in
 ## `res://data/tuning/zombie_settings.tres`. Every value is PROVISIONAL
 ## (docs/15 §6.1 P2-24..P2-32) and must be balanced by play-testing.
-## All times are world seconds, speeds are metres per world second.
+## All times are real seconds and speeds are metres per real second (action
+## time, docs/09 §14.16): the calendar time scale does not change them.
 
 const DEFAULT_PATH: String = "res://data/tuning/zombie_settings.tres"
 

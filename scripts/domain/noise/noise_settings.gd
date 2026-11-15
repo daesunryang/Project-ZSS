@@ -19,7 +19,8 @@ const DEFAULT_PATH: String = "res://data/tuning/noise_settings.tres"
 @export_range(1.0, 100000.0) var max_loudness: float = 100.0
 ## Intensity lost per metre between source and listener.
 @export_range(0.001, 1000.0) var distance_attenuation_per_m: float = 1.0
-## World seconds until a noise has faded completely (linear decay).
+## Real seconds (action time) until a noise has faded completely (linear
+## decay).
 @export_range(0.01, 100000.0) var event_lifetime_sec: float = 8.0
 ## Weakest intensity a listener still notices.
 @export_range(0.001, 100000.0) var min_audible_intensity: float = 1.0

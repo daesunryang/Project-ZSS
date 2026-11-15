@@ -8,6 +8,7 @@ const SYSTEM_ID: String = "test_counter"
 var seeded: int = 0
 var steps: int = 0
 var world_time_seen: float = 0.0
+var action_time_seen: float = 0.0
 var total: int = 0
 var per_player: Dictionary[String, int] = {}
 var online_events: PackedStringArray = []
@@ -22,8 +23,9 @@ func seed_new_world(_world: ServerWorld) -> Error:
 	return OK
 
 
-func step(_world: ServerWorld, _real_delta: float, world_delta: float) -> void:
+func step(_world: ServerWorld, action_delta: float, world_delta: float) -> void:
 	steps += 1
+	action_time_seen += action_delta
 	world_time_seen += world_delta
 
 

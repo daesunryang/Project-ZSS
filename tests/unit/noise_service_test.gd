@@ -1,11 +1,14 @@
 extends TestCase
 ## P2-A1: NoiseService — emit validation, distance/time attenuation, expiry
-## on world time, spatial grid query == brute-force query, per-cell cache.
+## on action time (real seconds; the clock here runs its calendar 24x faster
+## to show that the scale does not matter, P2-T1), spatial grid query ==
+## brute-force query, per-cell cache.
 
 const WORLD: String = "noise_test_world"
 const SOURCE: String = "player_000001"
 const HALF_EXTENT: float = 250.0
 const EPSILON: float = 0.0001
+const CALENDAR_SCALE: float = 24.0
 
 var _settings: NoiseSettings = null
 var _clock: WorldClock = null
@@ -15,12 +18,19 @@ var _noise: NoiseService = null
 func before_each() -> void:
 	GameLogger.set_capture(true)
 	_settings = NoiseSettings.new()
-	_clock = WorldClock.new(1.0, true)
+	_clock = WorldClock.new(CALENDAR_SCALE, true)
 	_noise = NoiseService.new(_settings, _clock, HALF_EXTENT)
 
 
 func after_each() -> void:
 	GameLogger.set_capture(false)
+
+
+## Advances the clock by `seconds` of real time and steps the noise system
+## the way ServerWorld does (action delta, calendar delta).
+func _advance(seconds: float) -> void:
+	var world_delta: float = _clock.step(seconds, true)
+	_noise.step(null, _clock.last_action_delta, world_delta)
 
 
 func _emit(position: Vector3, loudness: float, source: String = SOURCE) -> ActionResult:
@@ -127,12 +137,11 @@ func test_distance_boundary() -> void:
 	assert_eq(_noise.max_audible_distance(40.0, _settings.max_hearing_multiplier * 10.0), capped)
 
 
-func test_intensity_decays_with_world_time_and_expires() -> void:
+func test_intensity_decays_with_action_time_and_expires() -> void:
 	_emit(Vector3.ZERO, 40.0)
 	var listener: Vector3 = Vector3(10, 0, 0)
 	var fresh: float = _noise.query_audible(listener, 1.0, NoiseService.SINCE_ALWAYS)[0].intensity
-	_clock.step(_settings.event_lifetime_sec * 0.5, true)
-	_noise.step(null, 0.0, _settings.event_lifetime_sec * 0.5)
+	_advance(_settings.event_lifetime_sec * 0.5)
 	var half: Array[NoisePerception] = _noise.query_audible(listener, 1.0, NoiseService.SINCE_ALWAYS)
 	assert_eq(half.size(), 1)
 	assert_true(absf(half[0].intensity - (40.0 * 0.5 - 10.0 * _settings.distance_attenuation_per_m)) < EPSILON, "linear time decay")
@@ -140,8 +149,7 @@ func test_intensity_decays_with_world_time_and_expires() -> void:
 	# A faded noise is no longer audible far away although it still exists.
 	assert_eq(_noise.query_audible(Vector3(30, 0, 0), 1.0, NoiseService.SINCE_ALWAYS).size(), 0)
 	assert_eq(_noise.active_count(), 1)
-	_clock.step(_settings.event_lifetime_sec * 0.5, true)
-	_noise.step(null, 0.0, _settings.event_lifetime_sec * 0.5)
+	_advance(_settings.event_lifetime_sec * 0.5)
 	assert_eq(_noise.query_audible(Vector3.ZERO, 1.0, NoiseService.SINCE_ALWAYS).size(), 0, "expired")
 	assert_eq(_noise.active_count(), 0, "expired events are removed")
 
@@ -161,7 +169,9 @@ func test_no_expiry_while_world_clock_is_paused() -> void:
 	for tick: int in range(600):
 		var world_delta: float = _clock.step(1.0, false)  # nobody online -> paused
 		assert_eq(world_delta, 0.0)
-		_noise.step(null, 1.0, world_delta)
+		assert_eq(_clock.last_action_delta, 0.0, "action time is paused too")
+		_noise.step(null, _clock.last_action_delta, world_delta)
+	assert_eq(_clock.action_time_sec, 0.0)
 	assert_eq(_noise.active_count(), 1, "real time alone never expires noise")
 	assert_eq(_noise.query_audible(Vector3(3, 0, 0), 1.0, NoiseService.SINCE_ALWAYS)[0].intensity, before)
 
@@ -200,7 +210,7 @@ func test_grid_query_matches_brute_force() -> void:
 		if index % 10 == 0:
 			listener = Vector3(snappedf(listener.x, _settings.cell_size_m), 0.0, snappedf(listener.z, _settings.cell_size_m))
 		var hearing: float = [0.5, 1.0, 2.0, _settings.max_hearing_multiplier][index % 4]
-		var since: float = NoiseService.SINCE_ALWAYS if index % 3 == 0 else _clock.world_time_sec * 0.5
+		var since: float = NoiseService.SINCE_ALWAYS if index % 3 == 0 else _clock.action_time_sec * 0.5
 		var grid: Array[NoisePerception] = _noise.query_audible(listener, hearing, since)
 		var brute: Array[NoisePerception] = _noise.query_audible_brute_force(listener, hearing, since)
 		if _ids(grid) != _ids(brute):
@@ -236,8 +246,7 @@ func test_same_cell_queries_share_cached_candidates() -> void:
 	assert_true(_ids(_noise.query_audible(base, 1.0, NoiseService.SINCE_ALWAYS)).has(fresh))
 	assert_eq(_noise.cache_miss_count, 2)
 	# Expiry invalidates it as well.
-	_clock.step(_settings.event_lifetime_sec + 1.0, true)
-	_noise.step(null, 0.0, _settings.event_lifetime_sec + 1.0)
+	_advance(_settings.event_lifetime_sec + 1.0)
 	assert_eq(_noise.query_audible(base, 1.0, NoiseService.SINCE_ALWAYS).size(), 0)
 
 

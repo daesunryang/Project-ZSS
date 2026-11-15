@@ -1,13 +1,15 @@
 class_name WorldClockSettings
 extends Resource
 ## WorldClock tuning. Defaults in `res://data/tuning/world_clock_settings.tres`.
-## PROVISIONAL (docs/15 §6 P2-1): the real/world time scale is undecided.
+## docs/00 ADR-006 (user decision): one world day per real hour (scale 24).
+## The scale applies to calendar time only; action time is always real
+## seconds (docs/09 §14.16).
 
 const DEFAULT_PATH: String = "res://data/tuning/world_clock_settings.tres"
 
-## World seconds per real second.
-@export_range(0.01, 1000.0) var time_scale: float = 1.0
-## Stop world time while no player is online.
+## World (calendar) seconds per real second. Action time ignores it.
+@export_range(0.01, 1000.0) var time_scale: float = 24.0
+## Stop both times while no player is online.
 @export var pause_when_empty: bool = true
 
 

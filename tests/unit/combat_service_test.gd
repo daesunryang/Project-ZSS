@@ -69,8 +69,8 @@ func before_each() -> void:
 	# Isolate combat from survival time rules (see zombie_service_test).
 	_survival_settings.health_recovery_per_world_sec = 0.0
 	_survival_settings.wound_recovery_per_world_sec = 0.0
-	_survival_settings.stamina_regen_per_world_sec = 0.0
-	_survival_settings.respawn_delay_world_sec = NEVER
+	_survival_settings.stamina_regen_per_sec = 0.0
+	_survival_settings.respawn_delay_sec = NEVER
 	_noise_settings = NoiseSettings.new()
 	_root = "user://test_saves/combat_%d" % Time.get_ticks_usec()
 
@@ -290,7 +290,7 @@ func test_players_are_never_targets_while_pvp_is_disabled() -> void:
 
 # ------------------------------------------------------------ validation
 
-func test_cooldown_runs_on_world_time() -> void:
+func test_cooldown_runs_on_action_time() -> void:
 	var world: ServerWorld = _world()
 	var alice: PlayerState = world.join("alice")
 	var zombie_id: String = _spawn(world, Vector3(0, 0, -1.0))

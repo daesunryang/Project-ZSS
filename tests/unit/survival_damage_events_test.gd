@@ -68,13 +68,13 @@ func test_bleeding_damage_events_are_batched_per_interval() -> void:
 	var survival: SurvivalService = _survival(world)
 	var player_id: String = _bleeding_player(world)
 	var health_before: float = survival.get_vitals(player_id).health
-	var ticks: int = 180  # 3 world seconds at 60 Hz
+	var ticks: int = 180  # 3 real seconds at 60 Hz (the interval is action time)
 	for _tick: int in ticks:
 		world.step_systems(TICK_SEC)
 	var events: Array[Dictionary] = _damage_events(survival.drain_events())
 	var lost: float = health_before - survival.get_vitals(player_id).health
 	assert_true(lost > 0.0, "bleeding still drains health every tick")
-	assert_true(events.size() >= 2 and events.size() <= 3, "about one event per world second, not %d for %d ticks" % [events.size(), ticks])
+	assert_true(events.size() >= 2 and events.size() <= 3, "about one event per real second, not %d for %d ticks" % [events.size(), ticks])
 	var previous_health: float = health_before
 	for event: Dictionary in events:
 		assert_eq(event["cause"], SurvivalService.CAUSE_BLEEDING)
@@ -90,7 +90,7 @@ func test_bleeding_damage_events_are_batched_per_interval() -> void:
 
 
 func test_interval_zero_reports_every_tick() -> void:
-	_settings.survival_damage_event_interval_world_sec = 0.0
+	_settings.survival_damage_event_interval_sec = 0.0
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
 	var player_id: String = _bleeding_player(world)
@@ -102,7 +102,7 @@ func test_interval_zero_reports_every_tick() -> void:
 
 func test_death_flushes_pending_damage_before_the_death_event() -> void:
 	_settings.bleeding_health_loss_per_severity_per_world_sec = 100.0
-	_settings.respawn_delay_world_sec = 1.0e9
+	_settings.respawn_delay_sec = 1.0e9
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
 	var player_id: String = _bleeding_player(world)
@@ -127,5 +127,5 @@ func test_death_flushes_pending_damage_before_the_death_event() -> void:
 func test_interval_setting_is_validated() -> void:
 	assert_true(SurvivalSettings.new().validate().is_empty())
 	var bad: SurvivalSettings = SurvivalSettings.new()
-	bad.survival_damage_event_interval_world_sec = -1.0
+	bad.survival_damage_event_interval_sec = -1.0
 	assert_false(bad.validate().is_empty())

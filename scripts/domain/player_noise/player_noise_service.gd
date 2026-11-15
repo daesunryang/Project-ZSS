@@ -17,7 +17,7 @@ extends ServerSystem
 ##   - standing still, or slower than `min_speed_mps`
 ##   - dead players (their stride is forgotten, a respawn starts a new one)
 ##   - offline players (forgotten on leave)
-##   - while the world clock is paused (world_delta == 0); movement made
+##   - while the world clock is paused (action_delta == 0); movement made
 ##     during the pause is not counted afterwards
 ##   - teleports: a position change faster than `teleport_speed_mps`
 ##     (respawn, admin move); the stride restarts
@@ -25,8 +25,10 @@ extends ServerSystem
 ## A player is first seen in step(), so the position change between joining
 ## and the first tick is never a footstep.
 ##
-## Speeds use `real_delta`: ServerWorld.step_movement() integrates player
-## movement in real seconds.
+## Speeds use `action_delta` (real seconds, docs/09 §14.16):
+## ServerWorld.step_movement() integrates player movement in real seconds,
+## so the walking/teleport thresholds do not depend on the calendar time
+## scale.
 ##
 ## Persistence: none. The state is the distance walked since the last
 ## footstep (less than one stride per player); after a restart everybody is
@@ -59,7 +61,7 @@ func on_player_offline(_world: ServerWorld, player_id: String) -> void:
 	_forget(player_id)
 
 
-func step(world: ServerWorld, real_delta: float, world_delta: float) -> void:
+func step(world: ServerWorld, action_delta: float, _world_delta: float) -> void:
 	last_footstep_count = 0
 	var noise: NoiseService = world.get_system(NoiseService.SYSTEM_ID) as NoiseService
 	if noise == null or _settings.footstep_loudness <= 0.0:
@@ -79,9 +81,9 @@ func step(world: ServerWorld, real_delta: float, world_delta: float) -> void:
 			continue
 		var from: Vector3 = _last_position[player_id]
 		_last_position[player_id] = player.position
-		if world_delta <= 0.0:
+		if action_delta <= 0.0:
 			continue
-		_advance_stride(noise, player, from, real_delta)
+		_advance_stride(noise, player, from, action_delta)
 	total_footstep_count += last_footstep_count
 
 
@@ -89,13 +91,13 @@ func step(world: ServerWorld, real_delta: float, world_delta: float) -> void:
 
 ## Adds this tick's movement to the player's stride and emits the footsteps
 ## it completes.
-func _advance_stride(noise: NoiseService, player: PlayerState, from: Vector3, real_delta: float) -> void:
+func _advance_stride(noise: NoiseService, player: PlayerState, from: Vector3, action_delta: float) -> void:
 	var player_id: String = player.player_id
 	var moved: float = FootstepRules.flat_distance(from, player.position)
-	if FootstepRules.is_teleport(moved, real_delta, _settings.teleport_speed_mps):
+	if FootstepRules.is_teleport(moved, action_delta, _settings.teleport_speed_mps):
 		_carried_m[player_id] = FootstepRules.NO_DISTANCE
 		return
-	if not FootstepRules.is_walking(moved, real_delta, _settings.min_speed_mps):
+	if not FootstepRules.is_walking(moved, action_delta, _settings.min_speed_mps):
 		return
 	var carried: float = _carried_m[player_id]
 	_carried_m[player_id] = FootstepRules.carried_after(carried, moved, _settings.stride_length_m)

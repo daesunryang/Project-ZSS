@@ -38,7 +38,7 @@ func before_each() -> void:
 	_survival_settings = SurvivalSettings.new()
 	# Isolate from survival time rules (see zombie_service_test).
 	_survival_settings.health_recovery_per_world_sec = 0.0
-	_survival_settings.respawn_delay_world_sec = NEVER
+	_survival_settings.respawn_delay_sec = NEVER
 	_noise_settings = NoiseSettings.new()
 	_gameplay = GameplaySettings.new()
 	_now_msec = 0
@@ -245,7 +245,7 @@ func test_standing_or_creeping_players_make_no_noise() -> void:
 
 
 func test_dead_players_make_no_noise_and_respawn_is_not_a_footstep() -> void:
-	_survival_settings.respawn_delay_world_sec = 2.0
+	_survival_settings.respawn_delay_sec = 2.0
 	_gameplay.player_spawn_position = Vector3(1, 0, 0)
 	var world: ServerWorld = _world()
 	var alice: PlayerState = world.join("alice")
@@ -274,7 +274,7 @@ func test_dead_players_make_no_noise_and_respawn_is_not_a_footstep() -> void:
 func test_respawn_close_to_the_spawn_point_is_not_a_footstep() -> void:
 	# Death and respawn inside one tick: the service never sees her dead, but
 	# 2.4 m in one tick is far above any walking speed.
-	_survival_settings.respawn_delay_world_sec = 0.0
+	_survival_settings.respawn_delay_sec = 0.0
 	_settings.stride_length_m = 1.0
 	var world: ServerWorld = _world()
 	var alice: PlayerState = world.join("alice")
@@ -338,7 +338,7 @@ func test_no_footsteps_while_the_world_clock_is_paused() -> void:
 	_run(world, 0.5)
 	for tick: int in range(100):
 		alice.position += Vector3(0.2, 0, 0)
-		service.step(world, TICK, 0.0)  # world_delta 0 = clock paused
+		service.step(world, 0.0, 0.0)  # both deltas 0 = clock paused
 	assert_eq(service.total_footstep_count, 0)
 	assert_eq(_noise(world).active_count(), 0)
 	# Movement during the pause is not counted afterwards.

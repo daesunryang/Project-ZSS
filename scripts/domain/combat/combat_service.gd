@@ -9,7 +9,7 @@ extends ServerSystem
 ## Public API:
 ##   request_melee_attack(world, player_id, aim_yaw) -> ActionResult
 ##   weapon_for(world, player_id) -> MeleeWeaponDefinition (null = unknown player)
-##   cooldown_remaining(player_id) -> float (world seconds, 0 = ready)
+##   cooldown_remaining(player_id) -> float (real seconds, 0 = ready)
 ##   drain_events() -> Array[Dictionary]    (network read surface)
 ##
 ## A request carries the attacker and an aim direction only. Position,
@@ -30,6 +30,11 @@ extends ServerSystem
 ##   attack_on_cooldown  - the previous swing's cooldown is still running
 ##   not_enough_stamina  - less stamina than the weapon's cost
 ##
+## Time: cooldowns run on action time (WorldClock.action_time_sec, real
+## seconds, docs/09 §14.16), so the calendar time scale does not change how
+## often a player can swing. The event field `world_time` is calendar time
+## (WorldClock.world_time_sec), like the events of every other system.
+##
 ## An accepted swing always spends stamina, starts the cooldown and makes
 ## noise at the attacker's position, hit or miss. On a hit:
 ##   damage = weapon.base_damage x SurvivalService.handling_multiplier
@@ -45,7 +50,7 @@ extends ServerSystem
 ##
 ## Save: world_state.json `systems.combat` =
 ##   {schema_version, rng_seed, rng_state}  (64-bit values as strings).
-## Not saved: cooldowns (at most a few world seconds; after a restart every
+## Not saved: cooldowns (at most a few real seconds; after a restart every
 ## player may attack at once, docs/15 P2-44) and undrained events.
 
 const SYSTEM_ID: String = "combat"
@@ -72,7 +77,7 @@ var dropped_event_count: int = 0
 var _settings: CombatSettings
 var _weapons: MeleeWeaponCatalog
 var _clock: WorldClock
-## player_id -> world time at which the player may attack again. Kept while
+## player_id -> action time at which the player may attack again. Kept while
 ## the player is offline so reconnecting does not reset a cooldown.
 var _ready_at: Dictionary[String, float] = {}
 var _events: Array[Dictionary] = []
@@ -117,7 +122,7 @@ func request_melee_attack(world: ServerWorld, player_id: String, aim_yaw: float)
 	var weapon: MeleeWeaponDefinition = _resolve_weapon(world, player)
 	if weapon == null:
 		return _reject(player_id, REASON_NO_WEAPON)
-	var now: float = _clock.world_time_sec
+	var now: float = _clock.action_time_sec
 	if now < _ready_at.get(player_id, READY):
 		return _reject(player_id, REASON_ON_COOLDOWN)
 	# Last check: it spends the stamina, so nothing may fail after it.
@@ -137,7 +142,7 @@ func request_melee_attack(world: ServerWorld, player_id: String, aim_yaw: float)
 		"damage": MeleeHitRules.NO_DAMAGE,
 		"target_health_after": 0.0,
 		"target_died": false,
-		"world_time": now,
+		"world_time": _clock.world_time_sec,
 	}
 	var target_id: String = _pick_zombie(zombies, player.position, yaw, weapon)
 	if not target_id.is_empty():
@@ -160,9 +165,9 @@ func weapon_for(world: ServerWorld, player_id: String) -> MeleeWeaponDefinition:
 	return _resolve_weapon(world, player)
 
 
-## World seconds until `player_id` may attack again (0 = ready).
+## Real seconds (action time) until `player_id` may attack again (0 = ready).
 func cooldown_remaining(player_id: String) -> float:
-	return maxf(_ready_at.get(player_id, READY) - _clock.world_time_sec, READY)
+	return maxf(_ready_at.get(player_id, READY) - _clock.action_time_sec, READY)
 
 
 ## Returns and clears the events recorded since the previous call (oldest

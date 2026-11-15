@@ -35,8 +35,14 @@ extends TestCase
 ##                                           the expected factor stays fixed
 ##     zombie.attack_cooldown_sec 1.5 -> 1e6 exactly one wound
 ##   infection stage test
-##     survival.infection_latent_hours,      the values under test (seconds
-##       infection_early_hours               instead of hours)
+##     survival.infection_latent_hours,      the values under test (about a
+##       infection_early_hours               real second instead of the default
+##                                           5 and 15 real minutes)
+##
+## Time (docs/00 ADR-006, docs/09 §14.16): the world clock runs at its
+## production scale (24 world seconds per real second). Zombies, cooldowns,
+## noise and stamina are real seconds; infection stages and bleeding are
+## calendar (world) seconds.
 ##     zombie.bite_chance, infection_chance_bite -> 1.0 (as above)
 
 const WORLD: String = "phase2_world"
@@ -67,9 +73,11 @@ const APPROACH_LIMIT_FACTOR: float = 2.0
 const REACH_MARGIN_M: float = 0.5
 ## Values that only travel with a periodic snapshot may lag this many periods.
 const SNAPSHOT_PERIODS_OF_LAG: float = 2.0
-## World time that passes after the restart before "still bleeding" is judged.
+## Real seconds (action time) that pass after the restart before "still
+## bleeding" is judged.
 const RESUME_SEC: float = 0.5
-## Infection stage durations (world seconds) of the two runs of that test.
+## Real seconds each infection stage lasts in the two runs of that test. The
+## configured durations are calendar time: these times the clock's scale.
 const QUICK_LATENT_SEC: float = 0.6
 const QUICK_EARLY_SEC: float = 0.9
 const SLOW_LATENT_SEC: float = 1.8
@@ -822,7 +830,7 @@ func test_two_clients_fight_one_zombie_agree_on_the_result_and_it_survives_a_res
 	assert_eq(alice_vitals.injuries.size(), bites.size(), "one wound per bite")
 	assert_eq(watch_a.survival_mirror.wounds().size(), bites.size())
 	assert_eq(alice_vitals.infection.stage, InfectionState.Stage.LATENT)
-	var stamina_lag: float = survival_settings.stamina_regen_per_world_sec * SNAPSHOT_PERIODS_OF_LAG / _config.survival_net.owner_snapshot_rate_hz
+	var stamina_lag: float = survival_settings.stamina_regen_per_sec * SNAPSHOT_PERIODS_OF_LAG / _config.survival_net.owner_snapshot_rate_hz
 	assert_true(_approx(watch_a.survival_mirror.stamina(), alice_vitals.stamina, stamina_lag), "stamina follows with the owner snapshot")
 	_assert_no_error_logs("session 1")
 
@@ -840,6 +848,7 @@ func test_two_clients_fight_one_zombie_agree_on_the_result_and_it_survives_a_res
 	var saved_alice_position: Vector3 = world.get_player(alice_id).position
 	var saved_bob_position: Vector3 = world.get_player(bob_id).position
 	var saved_time: float = world.clock.world_time_sec
+	var saved_action_time: float = world.clock.action_time_sec
 	var saved_wounds: int = alice_vitals.injuries.size()
 	var saved_health: float = alice_vitals.health
 	world = null
@@ -869,7 +878,9 @@ func test_two_clients_fight_one_zombie_agree_on_the_result_and_it_survives_a_res
 	assert_eq(_combat(world2).to_world_document(), saved_combat, "damage rolls continue where they stopped")
 	assert_true(world2.get_player(alice_id).position.distance_to(saved_alice_position) <= POSITION_SAVE_TOLERANCE_M)
 	assert_true(world2.get_player(bob_id).position.distance_to(saved_bob_position) <= POSITION_SAVE_TOLERANCE_M)
-	assert_true(_approx(world2.clock.world_time_sec, saved_time, WORLD_TIME_TOLERANCE_SEC), "world time is restored")
+	assert_true(_approx(world2.clock.world_time_sec, saved_time, WORLD_TIME_TOLERANCE_SEC), "world (calendar) time is restored")
+	assert_true(_approx(world2.clock.action_time_sec, saved_action_time, WORLD_TIME_TOLERANCE_SEC), "action time is restored")
+	assert_true(saved_time > saved_action_time * (world2.clock.time_scale - 1.0), "the calendar ran at the production scale (%.1f s of play, %.1f world s)" % [saved_action_time, saved_time])
 	assert_eq(_carried_definitions(world2, alice_id), PackedStringArray([PIPE_ID]))
 	assert_eq(_carried_definitions(world2, bob_id), PackedStringArray([PIPE_ID]))
 	assert_eq(world2.inventory.world_item_ids().size(), 0, "picked up pipes are not back in the world")
@@ -883,7 +894,7 @@ func test_two_clients_fight_one_zombie_agree_on_the_result_and_it_survives_a_res
 	var loaded_bob: PlayerVitals = _survival(world2).get_vitals(bob_id)
 	var loaded_bob_health: float = loaded_bob.health
 	var loaded_bob_stamina: float = loaded_bob.stamina
-	var loaded_time: float = world2.clock.world_time_sec
+	var loaded_action_time: float = world2.clock.action_time_sec
 
 	# ------------------------------------------------------------ session 2
 	_cluster = NetTestCluster.new(tree, _net_settings, _config)
@@ -913,7 +924,7 @@ func test_two_clients_fight_one_zombie_agree_on_the_result_and_it_survives_a_res
 	var watch_a2: Observer = Observer.new(a2)
 	var watch_b2: Observer = Observer.new(b2)
 	var bleeding: bool = await _eventually(func() -> bool:
-		return world2.clock.world_time_sec > loaded_time + RESUME_SEC and _owner_mirror_matches(watch_a2, world2, alice_id) and watch_a2.survival_mirror.health() < loaded_alice_health)
+		return world2.clock.action_time_sec > loaded_action_time + RESUME_SEC and _owner_mirror_matches(watch_a2, world2, alice_id) and watch_a2.survival_mirror.health() < loaded_alice_health)
 	assert_true(bleeding, "the restored wounds keep bleeding and the owner mirror follows")
 	assert_true(watch_a2.combat.request_melee_attack(YAW_MINUS_Z) != CombatNetModule.NO_REQUEST)
 	var swung: bool = await _eventually(func() -> bool: return watch_a2.combat_events.size() == 1 and watch_b2.combat_events.size() == 1)
@@ -1123,15 +1134,20 @@ func test_infection_stages_follow_the_configured_durations_and_reach_only_the_ow
 	var slow: Dictionary = await _run_infection(SLOW_LATENT_SEC, SLOW_EARLY_SEC)
 	if quick.is_empty() or slow.is_empty():
 		return
-	assert_true(_approx(quick["latent"], QUICK_LATENT_SEC, WORLD_TIME_TOLERANCE_SEC) and _approx(quick["early"], QUICK_EARLY_SEC, WORLD_TIME_TOLERANCE_SEC), "first settings: %s" % str(quick))
-	assert_true(_approx(slow["latent"], SLOW_LATENT_SEC, WORLD_TIME_TOLERANCE_SEC) and _approx(slow["early"], SLOW_EARLY_SEC, WORLD_TIME_TOLERANCE_SEC), "second settings: %s" % str(slow))
+	var scale: float = _config.clock.time_scale
+	assert_true(_approx(quick["latent"], QUICK_LATENT_SEC * scale, WORLD_TIME_TOLERANCE_SEC) and _approx(quick["early"], QUICK_EARLY_SEC * scale, WORLD_TIME_TOLERANCE_SEC), "first settings: %s" % str(quick))
+	assert_true(_approx(slow["latent"], SLOW_LATENT_SEC * scale, WORLD_TIME_TOLERANCE_SEC) and _approx(slow["early"], SLOW_EARLY_SEC * scale, WORLD_TIME_TOLERANCE_SEC), "second settings: %s" % str(slow))
 	assert_true(slow["latent"] > quick["latent"] and slow["early"] < quick["early"], "changing the settings changes the progression")
 
 
-## One server run with the given stage durations (world seconds). A zombie
-## bites alice; the run ends when her mirror shows "progressing". Returns
-## the measured server durations {latent, early}, or {} on failure.
-func _run_infection(latent_sec: float, early_sec: float) -> Dictionary:
+## One server run in which the latent and early stages last the given real
+## seconds (configured as calendar time: real seconds x the clock scale). A
+## zombie bites alice; the run ends when her mirror shows "progressing".
+## Returns the measured server durations in world seconds {latent, early},
+## or {} on failure.
+func _run_infection(latent_real_sec: float, early_real_sec: float) -> Dictionary:
+	var latent_sec: float = latent_real_sec * _config.clock.time_scale
+	var early_sec: float = early_real_sec * _config.clock.time_scale
 	_config.zombie.bite_chance = 1.0
 	_config.survival.infection_chance_bite = 1.0
 	_config.survival.infection_latent_hours = latent_sec / SECONDS_PER_HOUR
@@ -1165,8 +1181,8 @@ func _run_infection(latent_sec: float, early_sec: float) -> Dictionary:
 	var infected_at: float = _survival(world).get_vitals(alice_id).infection.infected_at_world_time
 	var measured: Dictionary = {"latent": entered["early"] - infected_at, "early": entered["progressing"] - entered["early"]}
 	assert_eq(entered["latent"], infected_at, "the latent stage starts with the bite")
-	assert_true(_approx(measured["latent"], settings.infection_stage_duration_world_sec(InfectionState.Stage.LATENT, InfectionState.Exposure.BITE), WORLD_TIME_TOLERANCE_SEC), "latent lasted %.6f s" % measured["latent"])
-	assert_true(_approx(measured["early"], settings.infection_stage_duration_world_sec(InfectionState.Stage.EARLY, InfectionState.Exposure.BITE), WORLD_TIME_TOLERANCE_SEC), "early lasted %.6f s" % measured["early"])
+	assert_true(_approx(measured["latent"], settings.infection_stage_duration_world_sec(InfectionState.Stage.LATENT, InfectionState.Exposure.BITE), WORLD_TIME_TOLERANCE_SEC), "latent lasted %.6f world s" % measured["latent"])
+	assert_true(_approx(measured["early"], settings.infection_stage_duration_world_sec(InfectionState.Stage.EARLY, InfectionState.Exposure.BITE), WORLD_TIME_TOLERANCE_SEC), "early lasted %.6f world s" % measured["early"])
 	# The owner got each step, with the server's times, in order.
 	var steps: Array[Dictionary] = []
 	for event: Dictionary in watch_a.survival_events:
@@ -1189,5 +1205,5 @@ func _run_infection(latent_sec: float, early_sec: float) -> Dictionary:
 		assert_false(event.has("infection"), "no infection result in bob's zombie events")
 	assert_eq(watch_b.survival_mirror.infection_stage(), "none")
 	assert_eq(_survival(world).infection_stage(bob_id), InfectionState.Stage.NONE)
-	_assert_no_error_logs("infection %.1f/%.1f" % [latent_sec, early_sec])
+	_assert_no_error_logs("infection %.1f/%.1f" % [latent_real_sec, early_real_sec])
 	return measured

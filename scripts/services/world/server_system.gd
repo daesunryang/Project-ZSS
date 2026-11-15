@@ -22,9 +22,17 @@ func seed_new_world(_world: ServerWorld) -> Error:
 	return OK
 
 
-## Called every server physics tick. `world_delta` is 0 while the world
-## clock is paused. Use BucketScheduler for per-entity cadence.
-func step(_world: ServerWorld, _real_delta: float, _world_delta: float) -> void:
+## Called every server physics tick with the two time deltas of this tick
+## (docs/09 §14.16, docs/00 ADR-006):
+##   action_delta  real seconds; use it for anything that plays out in real
+##                 time (movement, cooldowns, AI cadence, noise lifetime).
+##   world_delta   calendar seconds = action_delta * WorldClock.time_scale;
+##                 use it for slow calendar rules (needs, infection, healing).
+## Both are 0 while the world clock is paused (and only then), so a system
+## never sees real time pass in a paused world. The matching timestamps are
+## WorldClock.action_time_sec and WorldClock.world_time_sec.
+## Use BucketScheduler for per-entity cadence.
+func step(_world: ServerWorld, _action_delta: float, _world_delta: float) -> void:
 	return
 
 

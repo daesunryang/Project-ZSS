@@ -23,6 +23,11 @@ func after_each() -> void:
 func _config() -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
 	config.survival = _settings
+	# These tests state calendar rules in world seconds. A 1x clock makes
+	# step_systems(x) advance exactly x world seconds; the 24x default and the
+	# action-time rules are covered by time_axes_test (P2-T1).
+	config.clock = WorldClockSettings.new()
+	config.clock.time_scale = 1.0
 	return config
 
 
@@ -100,15 +105,15 @@ func test_exposure_time_multipliers_scale_each_stage_duration() -> void:
 
 
 func test_paused_offline_and_dead_players_do_not_advance_infection() -> void:
-	_settings.respawn_delay_world_sec = 1000.0
+	_settings.respawn_delay_sec = 1000.0
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
 	var alice: PlayerState = world.join("alice")
 	_infect(survival, alice.player_id)
 	var vitals: PlayerVitals = survival.get_vitals(alice.player_id)
 	var before: Dictionary = vitals.infection.to_dict()
-	survival.step(world, 10.0, 0.0)
-	assert_eq(vitals.infection.to_dict(), before, "paused world time changes nothing")
+	survival.step(world, 0.0, 0.0)
+	assert_eq(vitals.infection.to_dict(), before, "a paused tick (both deltas 0) changes nothing")
 	world.leave(alice.player_id)
 	var bob: PlayerState = world.join("bob")
 	world.step_systems(100.0)
@@ -125,7 +130,7 @@ func test_stage_effects_multiply_need_stamina_penalty_and_add_health_damage() ->
 	_settings.health_recovery_per_world_sec = 0.0
 	_settings.infection_progressing_stamina_regen_multiplier = 0.5
 	_settings.infection_progressing_health_loss_per_world_sec = 0.25
-	_settings.stamina_regen_per_world_sec = 4.0
+	_settings.stamina_regen_per_sec = 4.0
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
 	var alice: PlayerState = world.join("alice")
@@ -137,14 +142,14 @@ func test_stage_effects_multiply_need_stamina_penalty_and_add_health_damage() ->
 	vitals.hunger = _settings.need_caution_threshold
 	var before_health: float = vitals.health
 	world.step_systems(1.0)
-	var expected_stamina: float = _settings.stamina_regen_per_world_sec * _settings.caution_stamina_regen_multiplier * _settings.infection_progressing_stamina_regen_multiplier
+	var expected_stamina: float = _settings.stamina_regen_per_sec * _settings.caution_stamina_regen_multiplier * _settings.infection_progressing_stamina_regen_multiplier
 	assert_true(_near(vitals.stamina, expected_stamina), "need and infection stamina multipliers compose multiplicatively")
 	assert_true(_near(vitals.health, before_health - _settings.infection_progressing_health_loss_per_world_sec), "infection health damage is additive")
 
 
 func test_zombified_stage_causes_infection_death_then_respawn_clears_it() -> void:
 	_settings.health_recovery_per_world_sec = 0.0
-	_settings.respawn_delay_world_sec = 10.0
+	_settings.respawn_delay_sec = 10.0
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
 	var alice: PlayerState = world.join("alice")
@@ -219,7 +224,7 @@ func test_infection_progression_and_effects_are_independent_of_tick_size() -> vo
 	_settings.infection_progressing_health_loss_per_world_sec = 0.1
 	_settings.infection_severe_health_loss_per_world_sec = 0.2
 	_settings.infection_terminal_health_loss_per_world_sec = 0.3
-	_settings.respawn_delay_world_sec = 1000.0
+	_settings.respawn_delay_sec = 1000.0
 	var results: Array[Dictionary] = []
 	for tick_sec: float in [0.1, 1.0, 20.0]:
 		var world: ServerWorld = _world("%s_%s" % [WORLD, str(tick_sec)])

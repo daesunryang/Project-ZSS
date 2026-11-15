@@ -16,8 +16,12 @@ extends ServerSystem
 ## each server tick; the AI decision (sensing, state changes, attacks) runs
 ## once per `ai_period_sec` per zombie through a BucketScheduler, at most
 ## `max_ai_updates_per_tick` decisions per tick (the rest wait in a queue).
-## Everything runs on world time, so nothing happens while the clock is
-## paused.
+## Everything runs on action time (WorldClock.action_time_sec, real seconds,
+## docs/09 §14.16): speeds are metres per real second and every duration,
+## cooldown and deadline is real seconds, whatever the calendar time scale.
+## Nothing happens while the clock is paused. Only the `world_time` field of
+## events is calendar time (WorldClock.world_time_sec), like the events of
+## every other system.
 ##
 ## AI decision priority (one decision, highest first):
 ##   1. sight   - a living online player inside range and view cone:
@@ -86,7 +90,7 @@ const REASON_ZOMBIE_DEAD: String = "zombie_dead"
 const REASON_BAD_AMOUNT: String = "bad_damage_amount"
 const REASON_BAD_SOURCE: String = "bad_damage_source"
 
-## World time is a sum of tick lengths. A deadline computed as "an earlier
+## Action time is a sum of tick lengths. A deadline computed as "an earlier
 ## now + duration" can therefore be a few ulps later than the clock of the
 ## tick it is meant for; an attack whose deadline is this close counts as
 ## ready (otherwise it waits one whole AI period longer).
@@ -147,7 +151,7 @@ func spawn_zombie(world: ServerWorld, position: Vector3, yaw: float = 0.0) -> Ac
 	zombie.focus_position = zombie.position
 	zombie.move_target = zombie.position
 	zombie.rng.seed = ("%d:%s" % [_settings.rng_seed, zombie_id]).hash()
-	zombie.next_wander_at = _clock.world_time_sec + _wander_pause(zombie)
+	zombie.next_wander_at = _clock.action_time_sec + _wander_pause(zombie)
 	_zombies[zombie_id] = zombie
 	_scheduler.add(zombie_id)
 	GameLogger.debug("zombie", "zombie spawned", {"entity_id": zombie_id, "x": zombie.position.x, "z": zombie.position.z})
@@ -256,15 +260,15 @@ func seed_new_world(world: ServerWorld) -> Error:
 	return OK
 
 
-func step(world: ServerWorld, _real_delta: float, world_delta: float) -> void:
+func step(world: ServerWorld, action_delta: float, _world_delta: float) -> void:
 	last_ai_update_count = 0
-	if world_delta <= 0.0 or _zombies.is_empty():
+	if action_delta <= 0.0 or _zombies.is_empty():
 		return
-	var now: float = _clock.world_time_sec
+	var now: float = _clock.action_time_sec
 	_remove_old_corpses(now)
 	for zombie_id: String in _zombies:
-		_move(world, _zombies[zombie_id], world_delta)
-	for zombie_id: String in _scheduler.advance(world_delta):
+		_move(world, _zombies[zombie_id], action_delta)
+	for zombie_id: String in _scheduler.advance(action_delta):
 		_queue_ai(zombie_id, false)
 	if _ai_queue.is_empty():
 		return
@@ -523,14 +527,14 @@ func _set_state(context: _Context, zombie: ZombieState, next: ZombieState.State,
 		"from": ZombieState.state_name(previous), "to": ZombieState.state_name(next),
 		"cause": cause, "target_id": zombie.target_player_id,
 	})
-	GameLogger.debug("zombie", "state changed", {"entity_id": zombie.zombie_id, "from": ZombieState.state_name(previous), "to": ZombieState.state_name(next), "cause": cause, "world_time": context.now})
+	GameLogger.debug("zombie", "state changed", {"entity_id": zombie.zombie_id, "from": ZombieState.state_name(previous), "to": ZombieState.state_name(next), "cause": cause, "world_time": _clock.world_time_sec, "action_time": context.now})
 
 
 # ------------------------------------------------------------ movement
 
 ## Straight-line movement towards the current goal (no navigation mesh or
 ## obstacles yet, docs/15 P2-26). Runs every tick for living zombies.
-func _move(world: ServerWorld, zombie: ZombieState, world_delta: float) -> void:
+func _move(world: ServerWorld, zombie: ZombieState, action_delta: float) -> void:
 	var goal: Vector3
 	var speed: float
 	var stop_distance: float = 0.0
@@ -566,7 +570,7 @@ func _move(world: ServerWorld, zombie: ZombieState, world_delta: float) -> void:
 			_face(zombie, goal)
 		return
 	var direction: Vector3 = offset / distance
-	var travel: float = minf(speed * world_delta, distance - stop_distance)
+	var travel: float = minf(speed * action_delta, distance - stop_distance)
 	zombie.position = world.clamp_to_world(zombie.position + direction * travel)
 	zombie.yaw = ZombiePerception.yaw_towards(direction, zombie.yaw)
 
@@ -589,7 +593,7 @@ func _face(zombie: ZombieState, point: Vector3) -> void:
 
 func _kill(zombie: ZombieState, source_id: String) -> void:
 	zombie.state = ZombieState.State.DEAD
-	zombie.died_at = _clock.world_time_sec
+	zombie.died_at = _clock.action_time_sec
 	zombie.target_player_id = ""
 	zombie.target_visible = false
 	zombie.has_move_target = false
@@ -646,7 +650,8 @@ static func _to_array(value: Vector3) -> Array:
 	return [value.x, value.y, value.z]
 
 
-## Per-step lookups shared by all AI decisions of one tick.
+## Per-step lookups shared by all AI decisions of one tick. `now` is action
+## time.
 class _Context extends RefCounted:
 	var world: ServerWorld = null
 	var survival: SurvivalService = null

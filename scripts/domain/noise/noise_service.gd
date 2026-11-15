@@ -5,7 +5,7 @@ extends ServerSystem
 ##
 ## Public API (other systems use `world.get_system(NoiseService.SYSTEM_ID)`):
 ##   emit(source_id, position, loudness, frequency_profile, occlusion_context = {}) -> ActionResult
-##   query_audible(position, hearing_multiplier, since_world_time) -> Array[NoisePerception]
+##   query_audible(position, hearing_multiplier, since_time) -> Array[NoisePerception]
 ##   max_audible_distance(loudness, hearing_multiplier) -> float
 ##   purge_expired() -> int, active_count(), get_event(noise_id), set_occlusion(provider)
 ##
@@ -15,6 +15,11 @@ extends ServerSystem
 ## Failure reasons: bad_noise_source, bad_noise_position, noise_out_of_world,
 ## bad_noise_loudness, noise_loudness_too_high, bad_noise_profile,
 ## bad_noise_occlusion_context.
+##
+## Time: noise runs on action time (WorldClock.action_time_sec, real seconds,
+## docs/09 §14.16). `event_time`, the `since_time` of a query, the lifetime
+## and the linear fade are all real seconds; the calendar time scale does
+## not change how long a noise lasts.
 ##
 ## Spatial lookup: every event sits in one XZ hash cell. A query collects the
 ## events of the cells within hearing reach of the listener's cell once and
@@ -33,7 +38,7 @@ const NOISE_ID_SEPARATOR: String = ":"
 ## Cannot collide with entity ids (`<kind>_<sequence>`, docs/15 P1-2).
 const NOISE_ID_PREFIX: String = "noise:"
 const FIRST_SEQUENCE: int = 1
-## `since_world_time` that matches every event (world time is never negative).
+## `since_time` that matches every event (action time is never negative).
 const SINCE_ALWAYS: float = -1.0
 
 const REASON_BAD_SOURCE: String = "bad_noise_source"
@@ -95,7 +100,7 @@ func emit(source_id: String, position: Vector3, loudness: float, frequency_profi
 	event.position = position
 	event.loudness = loudness
 	event.frequency_profile = frequency_profile
-	event.event_time = _clock.world_time_sec
+	event.event_time = _clock.action_time_sec
 	event.occlusion_context = occlusion_context.duplicate(true)
 	_events.append(event)
 	_by_id[event.noise_id] = event
@@ -110,11 +115,11 @@ func emit(source_id: String, position: Vector3, loudness: float, frequency_profi
 
 
 ## Noises a listener at `position` can hear now, strongest first (ties in
-## emit order). Only events with event_time > `since_world_time` are
+## emit order). Only events with event_time > `since_time` are
 ## returned (SINCE_ALWAYS for all). Invalid input returns an empty list.
-func query_audible(position: Vector3, hearing_multiplier: float, since_world_time: float) -> Array[NoisePerception]:
+func query_audible(position: Vector3, hearing_multiplier: float, since_time: float) -> Array[NoisePerception]:
 	var heard: Array[NoisePerception] = []
-	if not _is_valid_query(position, hearing_multiplier, since_world_time) or _events.is_empty():
+	if not _is_valid_query(position, hearing_multiplier, since_time) or _events.is_empty():
 		return heard
 	var hearing: float = minf(hearing_multiplier, _settings.max_hearing_multiplier)
 	var reach: float = max_audible_distance(_loudest_active, hearing)
@@ -122,20 +127,20 @@ func query_audible(position: Vector3, hearing_multiplier: float, since_world_tim
 		return heard
 	var reach_cells: int = ceili(reach / _settings.cell_size_m)
 	for event: NoiseEvent in _candidates(_cell_of(position), reach_cells):
-		_append_if_audible(heard, event, position, hearing, since_world_time)
+		_append_if_audible(heard, event, position, hearing, since_time)
 	heard.sort_custom(_stronger_first)
 	return heard
 
 
 ## Reference implementation without the grid (tests and diagnostics): same
 ## result as query_audible() by checking every active event.
-func query_audible_brute_force(position: Vector3, hearing_multiplier: float, since_world_time: float) -> Array[NoisePerception]:
+func query_audible_brute_force(position: Vector3, hearing_multiplier: float, since_time: float) -> Array[NoisePerception]:
 	var heard: Array[NoisePerception] = []
-	if not _is_valid_query(position, hearing_multiplier, since_world_time):
+	if not _is_valid_query(position, hearing_multiplier, since_time):
 		return heard
 	var hearing: float = minf(hearing_multiplier, _settings.max_hearing_multiplier)
 	for event: NoiseEvent in _events:
-		_append_if_audible(heard, event, position, hearing, since_world_time)
+		_append_if_audible(heard, event, position, hearing, since_time)
 	heard.sort_custom(_stronger_first)
 	return heard
 
@@ -151,7 +156,7 @@ func max_audible_distance(loudness: float, hearing_multiplier: float) -> float:
 ## step(); public so callers/tests can force a cleanup.
 func purge_expired() -> int:
 	var removed: int = 0
-	var now: float = _clock.world_time_sec
+	var now: float = _clock.action_time_sec
 	while not _events.is_empty() and now - _events[0].event_time >= _settings.event_lifetime_sec:
 		_remove_event(_events[0])
 		removed += 1
@@ -174,10 +179,10 @@ func set_occlusion(provider: NoiseOcclusion) -> void:
 
 # ------------------------------------------------------------ ServerSystem
 
-## Expiry follows world time only: while the world clock is paused
-## (world_delta == 0) nothing fades and nothing is removed.
-func step(_world: ServerWorld, _real_delta: float, world_delta: float) -> void:
-	if world_delta <= 0.0:
+## Expiry follows action time only: while the world clock is paused
+## (action_delta == 0) nothing fades and nothing is removed.
+func step(_world: ServerWorld, action_delta: float, _world_delta: float) -> void:
+	if action_delta <= 0.0:
 		return
 	purge_expired()
 
@@ -202,12 +207,12 @@ func _validate_emit(source_id: String, position: Vector3, loudness: float, frequ
 	return ""
 
 
-func _is_valid_query(position: Vector3, hearing_multiplier: float, since_world_time: float) -> bool:
+func _is_valid_query(position: Vector3, hearing_multiplier: float, since_time: float) -> bool:
 	if not position.is_finite() or not _is_inside_world(position):
 		return false
 	if not is_finite(hearing_multiplier) or hearing_multiplier <= 0.0:
 		return false
-	return is_finite(since_world_time)
+	return is_finite(since_time)
 
 
 func _is_inside_world(position: Vector3) -> bool:
@@ -245,10 +250,10 @@ func _candidates(cell: Vector2i, reach_cells: int) -> Array[NoiseEvent]:
 	return found
 
 
-func _append_if_audible(heard: Array[NoisePerception], event: NoiseEvent, position: Vector3, hearing: float, since_world_time: float) -> void:
-	if event.event_time <= since_world_time:
+func _append_if_audible(heard: Array[NoisePerception], event: NoiseEvent, position: Vector3, hearing: float, since_time: float) -> void:
+	if event.event_time <= since_time:
 		return
-	var age: float = _clock.world_time_sec - event.event_time
+	var age: float = _clock.action_time_sec - event.event_time
 	if age >= _settings.event_lifetime_sec:
 		return
 	var transmission: float = _occlusion.transmission(event, position)

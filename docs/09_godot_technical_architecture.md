@@ -224,14 +224,14 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 
 | 구성 요소 | 파일 | 계약 |
 |---|---|---|
-| `WorldClock` / `WorldClockSettings` | `scripts/core/world_clock.gd`, `world_clock_settings.gd`, `data/tuning/world_clock_settings.tres` | 서버 권한 월드 시간(초). `step(real_delta, any_online) -> world_delta`, 접속자 0명이면 일시정지(설정). world_state `world_time_sec`로 저장 |
+| `WorldClock` / `WorldClockSettings` | `scripts/core/world_clock.gd`, `world_clock_settings.gd`, `data/tuning/world_clock_settings.tres` | 서버 권한 시계. 달력 시각 `world_time_sec`(실제 초 × `time_scale`, 기본 24)와 행동 시각 `action_time_sec`(실제 초)를 함께 진행한다(§14.16). `step(real_delta, any_online) -> world_delta`, 같은 틱의 증분은 `last_world_delta`/`last_action_delta`. 접속자 0명이면 둘 다 일시정지(설정). world_state `world_time_sec`·`action_time_sec`로 저장 |
 | `BucketScheduler` | `scripts/core/bucket_scheduler.gd` | `new(period_sec, bucket_count)`, `add/remove/has/size/bucket_of`, `advance(delta) -> PackedStringArray`. 등록 순서 라운드로빈(결정론), 주기당 각 id 정확히 1회, 한 호출에서 같은 id 중복 없음 |
-| `ServerSystem` | `scripts/services/world/server_system.gd` | `get_system_id()`(필수, snake_case), `seed_new_world(world)`, `step(world, real_delta, world_delta)`(매 서버 physics tick), `on_player_online/offline(world, player_id)`, `player_movement_multiplier(player_id)`(기본 1.0, 서버 이동 속도 배율: 모든 시스템 값의 곱을 0~1로 제한), `to_world_document()`/`restore_world_document(doc)`, `to_player_fragment(player_id)`/`restore_player_fragment(player_id, doc)`. 문서는 JSON-safe + `schema_version` |
-| `ServerWorld` seam | `scripts/services/world/server_world.gd` | `register_system(system) -> Error`, `get_system(id)`, `system_ids()`, `clock`, `step_systems(real_delta) -> world_delta`. 저장: world_state `systems.{id}`, players/<id>.json `systems.{id}`. 저장에 없는 시스템은 기본값 유지, 등록되지 않은 시스템 데이터는 경고 후 무시 |
+| `ServerSystem` | `scripts/services/world/server_system.gd` | `get_system_id()`(필수, snake_case), `seed_new_world(world)`, `step(world, action_delta, world_delta)`(매 서버 physics tick. `action_delta` = 실제 초, `world_delta` = 달력 초 = `action_delta` × 배율. 일시정지 중에는 둘 다 0. P2-T1에서 두 번째 매개변수의 뜻을 `real_delta`에서 바꿨다, §14.16), `on_player_online/offline(world, player_id)`, `player_movement_multiplier(player_id)`(기본 1.0, 서버 이동 속도 배율: 모든 시스템 값의 곱을 0~1로 제한), `to_world_document()`/`restore_world_document(doc)`, `to_player_fragment(player_id)`/`restore_player_fragment(player_id, doc)`. 문서는 JSON-safe + `schema_version` |
+| `ServerWorld` seam | `scripts/services/world/server_world.gd` | `register_system(system) -> Error`, `get_system(id)`, `system_ids()`, `clock`, `step_systems(real_delta) -> world_delta`(시계를 진행하고 각 시스템에 두 증분을 넘긴다). 저장: world_state 스키마 v3(`world_time_sec`, `action_time_sec`), world_state `systems.{id}`, players/<id>.json `systems.{id}`. 저장에 없는 시스템은 기본값 유지, 등록되지 않은 시스템 데이터는 경고 후 무시 |
 | `NetModule` | `scripts/services/multiplayer/net_module.gd` | `NetworkService`의 자식 노드(모든 peer에서 같은 `name`). 훅: `on_server_started(world)`, `on_player_joined/left(peer_id, player_id)`, `server_physics(delta)`, `build_join_fragment(player_id)`(서버), `apply_join_fragment(fragment)`(클라이언트). 자체 `@rpc` 메서드 사용 |
 | `NetworkService` 공개 헬퍼 | `scripts/services/multiplayer/network_service.gd` | `register_module(module)`(시작 전만), `get_module(name)`, `is_server()`, `is_client()`, `is_from_server()`, `sender_player_id()`, `joined_peers()`, `peer_of_player(id)`, `player_of_peer(peer)`, `can_send_to(peer)`, `reject_intent(peer, intent, reason, player_id)`, `count_rejection(reason)`, `rejected_intent_count(reason)`, `persist(reason)`, `get_world()`, `get_settings()` |
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
-| 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), player v1→v2(`systems` 추가). `SaveService` 기본 마이그레이터 |
+| 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가). `SaveService` 기본 마이그레이터 |
 
 채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 4(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4. §14.17).
 
@@ -246,6 +246,8 @@ B3에서 `Wound.is_bleeding`과 `PlayerVitals.died_at_world_time`을 저장 상�
 B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragment 스키마를 v3으로 올렸다(v1/v2는 경과 시간 0으로 읽음). 서버는 접속 중이고 생존한 플레이어의 활성 월드 시간만 누적해 `LATENT → EARLY → PROGRESSING → SEVERE → TERMINAL → ZOMBIFIED`를 진행한다. 각 단계 시간과 감염 경로별 시간 배율은 `SurvivalSettings`에서 읽으며 감염 단계 경계를 B3의 구간 적분 경계에 포함한다. `ZOMBIFIED` 진입 즉시 원인 `infection`으로 사망시키고 플레이어 좀비는 만들지 않으며, 기존 리스폰이 감염을 해제한다. 단계 변화는 `player_infection_stage_changed` 로그(`player_id`, `from`, `to`, `world_time`)로 남긴다.
 
 단계별 스태미나 회복 배율은 기존 욕구 배율과 곱하고, 단계별 체력 감소율은 출혈·굶주림·탈수 피해와 합산한다. 양수인 감염 체력 감소가 적용되는 동안에는 자연 회복을 허용하지 않는다. 치료 seam `apply_infection_treatment(player_id, source_id)`는 설정된 최대 단계 이하에서 감염을 해제하고 `player_infection_cured`를 반환·기록하며, 아이템·품질·의료 능력 판정은 후속 티켓 소유다. 읽기 전용 `infection_stage(player_id)`는 현재 단계를 반환한다. 임시 수치는 docs/15 P2-7/P2-8/P2-18/P2-19에 기록한다. 감염 복제(B5), 섭취/수면(B6)은 아직 없다.
+
+P2-T1부터 이 절의 "월드 시간"은 달력 시간이고, 스태미나 회복·리스폰 대기·피해 이벤트 묶는 간격만 행동 시간(실제 초)이다. 설정 이름은 `stamina_regen_per_sec`, `respawn_delay_sec`, `survival_damage_event_interval_sec`로 바뀌었고 생존 fragment 스키마 v4가 `died_at_action_time`을 추가했다. 구간 적분이 두 축을 함께 다루는 방식은 §14.16.
 
 테스트 더블: `tests/framework/test_counter_system.gd`, `tests/framework/test_echo_module.gd`(배포 코드 아님). `NetTestCluster.extra_module_factories`로 테스트 전용 모듈을 추가할 수 있다.
 
@@ -266,11 +268,11 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 | API | 계약 |
 |---|---|
 | `emit(source_id, position, loudness, frequency_profile, occlusion_context = {}) -> ActionResult` | 성공 이벤트 `{event_type: "noise_emitted", noise_id, source_id, position: [x, y, z], loudness, frequency_profile, event_time}`. 실패 사유: `bad_noise_source`(빈 ID), `bad_noise_position`(NaN/무한), `noise_out_of_world`(월드 경계 밖), `bad_noise_loudness`(NaN/무한/0 이하), `noise_loudness_too_high`(상한 초과), `bad_noise_profile`, `bad_noise_occlusion_context`(JSON-safe 아님). 실패하면 상태가 바뀌지 않는다 |
-| `query_audible(position, hearing_multiplier, since_world_time) -> Array[NoisePerception]` | 지금 그 위치에서 들리는 소음을 센 순서(같으면 발생 순서)로 돌려준다. `event_time > since_world_time`인 것만 포함(`NoiseService.SINCE_ALWAYS` = 전부). 잘못된 입력(NaN, 경계 밖, 배율 0 이하)은 빈 목록. 반환된 `event`는 읽기 전용 |
+| `query_audible(position, hearing_multiplier, since_time) -> Array[NoisePerception]` | 지금 그 위치에서 들리는 소음을 센 순서(같으면 발생 순서)로 돌려준다. `event_time > since_time`인 것만 포함(둘 다 행동 시각, §14.16)(`NoiseService.SINCE_ALWAYS` = 전부). 잘못된 입력(NaN, 경계 밖, 배율 0 이하)은 빈 목록. 반환된 `event`는 읽기 전용 |
 | `max_audible_distance(loudness, hearing_multiplier) -> float` | 방금 난 소리가 들리는 최대 거리(음수 = 들리지 않음) |
 | `purge_expired() -> int`, `active_count()`, `get_event(noise_id)`, `set_occlusion(provider)` | 만료 정리(평소에는 `step`이 호출), 진단, 차폐 구현 교체 |
 
-- 세기 모델과 수치는 docs/15 P2-20. 시간 감쇠·만료는 월드 시간 기준이라 월드 시계가 멈춘 동안(접속자 0명)에는 줄지도 사라지지도 않는다. 만료된 소음은 정리 전이라도 조회에 나오지 않는다.
+- 세기 모델과 수치는 docs/15 P2-20. 시간 감쇠·만료는 행동 시간(실제 초, §14.16) 기준이라 달력 배율과 무관하고, 월드 시계가 멈춘 동안(접속자 0명)에는 줄지도 사라지지도 않는다. 만료된 소음은 정리 전이라도 조회에 나오지 않는다.
 - 공간 조회: 소음은 XZ 평면 해시 격자(기본 16m)의 한 칸에 들어간다. 조회는 듣는 쪽 칸에서 "지금 가장 큰 소음이 들릴 수 있는 거리"만큼의 이웃 칸만 훑고, 그 후보 목록을 (칸, 범위)별로 캐시한다. 같은 칸에 있는 다른 청취자는 소음이 추가·삭제되기 전까지 캐시를 다시 쓴다(무리 지은 좀비 N마리가 칸 훑기 1번을 공유, docs/02 §6.3). 점유 칸 수가 이웃 칸 수보다 적으면 점유 칸만 훑는다. `query_audible_brute_force`는 격자 없이 전부 검사하는 기준 구현이며 테스트가 두 결과가 같은지 비교한다.
 - 저장하지 않는다(`to_world_document()`는 빈 문서). 이유와 ID 형식은 docs/15 P2-23. 다른 시스템이 저장 문서에 `noise_id`를 넣으면 안 되고, 필요하면 위치·시간을 복사해 저장한다.
 - 소음을 내는 호출자: 근접 공격(`CombatService`, §14.10)이 휘두를 때마다, 플레이어 이동(`PlayerNoiseService`, §14.11)이 보폭마다 `emit`을 호출한다.
@@ -281,7 +283,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 
 상태(`ZombieState.STATE_NAMES`, docs/02 §6.1): `idle`(대기/배회), `investigate`(소리 조사·피격 방향 확인), `chase`(시각 추적/추격), `attack`(사거리 안), `search`(대상 상실 후 수색), `dormant`(필드만), `dead`(시체, 일정 시간 뒤 제거). 흐름: idle → (소음) investigate → (도착/시간 초과) search → (시간 초과) idle, 어느 상태든 대상이 보이면 chase → 사거리 안이면 attack, 대상을 놓치면 search.
 
-주기: 이동 적분은 살아 있는 모든 좀비에 대해 매 서버 틱, AI 판단(감지·상태 전환·공격)은 좀비마다 `ai_period_sec`에 한 번 `BucketScheduler`로 분산하고 한 틱에 `max_ai_updates_per_tick`개까지만 처리한다(나머지는 대기열에서 다음 틱으로). 피격된 좀비는 대기열 맨 앞에 들어간다. 모든 시간은 월드 시간이라 시계가 멈추면 아무 일도 일어나지 않는다. 월드 시각은 틱 길이를 더해 만든 값이므로 공격 가능 시각(선딜·쿨다운)은 `ZombieService.TIME_EPSILON_SEC`(1e-6초)만큼의 허용 오차로 비교한다: 쿨다운이 판단 주기의 정수배면 실제 공격 간격이 쿨다운과 같다(P2-Z에서 고친 결함, docs/15 §6.13). yaw는 플레이어와 같은 규약(0 = −Z, 전방 = (−sin, 0, −cos), `Node3D.rotation.y`)이다.
+주기: 이동 적분은 살아 있는 모든 좀비에 대해 매 서버 틱, AI 판단(감지·상태 전환·공격)은 좀비마다 `ai_period_sec`에 한 번 `BucketScheduler`로 분산하고 한 틱에 `max_ai_updates_per_tick`개까지만 처리한다(나머지는 대기열에서 다음 틱으로). 피격된 좀비는 대기열 맨 앞에 들어간다. 모든 시간·속도는 행동 시간(실제 초, §14.16)이라 달력 배율과 무관하고, 시계가 멈추면 아무 일도 일어나지 않는다. 행동 시각은 틱 길이를 더해 만든 값이므로 공격 가능 시각(선딜·쿨다운)은 `ZombieService.TIME_EPSILON_SEC`(1e-6초)만큼의 허용 오차로 비교한다: 쿨다운이 판단 주기의 정수배면 실제 공격 간격이 쿨다운과 같다(P2-Z에서 고친 결함, docs/15 §6.13). yaw는 플레이어와 같은 규약(0 = −Z, 전방 = (−sin, 0, −cos), `Node3D.rotation.y`)이다.
 
 | API | 계약 |
 |---|---|
@@ -291,7 +293,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 | `drain_events() -> Array[Dictionary]` | 네트워크용 읽기 전용. 지난 호출 이후 쌓인 이벤트를 오래된 순으로 돌려주고 비운다(최대 `max_pending_events`개 보관) |
 | `has_zombie`, `get_zombie(id) -> ZombieState`(읽기 전용), `zombie_ids()`, `zombie_count()`, `living_count()` | 조회 |
 
-이벤트(모두 `event_type`, `zombie_id`, `world_time` 포함, 위치는 `[x, y, z]`, JSON-safe):
+이벤트(모두 `event_type`, `zombie_id`, `world_time` 포함, 위치는 `[x, y, z]`, JSON-safe. `world_time`은 달력 시각이다, §14.16):
 
 | event_type | 추가 필드 |
 |---|---|
@@ -306,7 +308,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 - 공격: 좀비는 플레이어 체력을 직접 바꾸지 않는다. 서버가 `DamageInput`(source = 좀비 ID, 부위·상처 종류·피해량은 설정과 좀비 RNG)을 만들어 `SurvivalService.apply_damage`에 넘기고, 이어서 `apply_infection_exposure`(물림 = BITE, 긁힘 = SCRATCH)를 호출한다. 대상은 접속 중이고 살아 있는 플레이어뿐이다.
 - 결정론: 좀비마다 RNG(seed = hash("<rng_seed>:<zombie_id>"))를 갖고 배회·수색 지점·공격 굴림에 쓴다. 같은 seed와 같은 입력이면 좀비 문서·이벤트·플레이어 피해가 같다(테스트로 확인).
 - 저장: world_state.json `systems.zombie` = `{schema_version: 1, rng_seed, rng_state, zombies: [ZombieState.to_dict()]}`(64비트 RNG 값은 문자열). 불러올 때 ID 형식·중복·tombstone·수치 범위를 검사하고 하나라도 틀리면 월드 복구를 실패시킨다. `seed_new_world`는 새 월드에만 개발용 좀비를 놓는다. 저장하지 않는 것은 docs/15 P2-31.
-- 테스트: `tests/unit/zombie_perception_test.gd`, `tests/unit/zombie_service_test.gd`(고정 seed 시나리오, 시야/소리 구분, 수색 복귀, 사망·오프라인 대상 제외, 저장→재생성→로드, 결정론, 월드 3시간 가속 soak, 잘못된 입력).
+- 테스트: `tests/unit/zombie_perception_test.gd`, `tests/unit/zombie_service_test.gd`(고정 seed 시나리오, 시야/소리 구분, 수색 복귀, 사망·오프라인 대상 제외, 저장→재생성→로드, 결정론, 2초 틱으로 3시간 soak, 잘못된 입력).
 
 ### 14.10 근접 전투 계약(P2-C1, system id `combat`)
 
@@ -318,7 +320,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 |---|---|
 | `request_melee_attack(world, player_id, aim_yaw) -> ActionResult` | N1의 RPC 핸들러가 부르는 진입점. 아래 순서로 검증하고 하나라도 실패하면 아무것도 바뀌지 않는다(스태미나·쿨다운·RNG·소음·이벤트 모두). 성공하면 `melee_attack` 이벤트를 돌려주고 같은 이벤트를 큐에 넣는다 |
 | `weapon_for(world, player_id) -> MeleeWeaponDefinition` | 지금 공격하면 쓰일 무기(없는 플레이어는 null). 표시용 조회 |
-| `cooldown_remaining(player_id) -> float` | 다음 공격까지 남은 월드초(0 = 가능) |
+| `cooldown_remaining(player_id) -> float` | 다음 공격까지 남은 실제 초(행동 시간, 0 = 가능) |
 | `drain_events() -> Array[Dictionary]` | 네트워크용 읽기 전용. 지난 호출 이후의 이벤트를 오래된 순으로 돌려주고 비운다. 최대 `max_pending_events`(256)개 보관, 넘으면 오래된 것부터 버리고 `dropped_event_count`를 올린다(좀비 이벤트 큐와 같은 방식) |
 
 검증 순서와 실패 사유 코드(먼저 걸린 것 하나만 반환):
@@ -331,7 +333,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 | `not_online` | 접속 중이 아님 |
 | `player_dead` | 사망 상태 |
 | `no_weapon` | 쓸 무기 정의가 없음(맨손 정의 누락 = 설정 오류, 시작 시 `validate()`가 먼저 잡는다) |
-| `attack_on_cooldown` | 직전 공격의 쿨다운(월드 시간)이 남음 |
+| `attack_on_cooldown` | 직전 공격의 쿨다운(행동 시간, 실제 초)이 남음 |
 | `not_enough_stamina` | 스태미나가 무기 비용보다 적음(`SurvivalService.try_spend_stamina`가 마지막 검사이자 차감) |
 
 승인된 공격의 처리:
@@ -340,7 +342,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 - 대상: 서버가 가진 플레이어 위치와 `aim_yaw`(플레이어에 저장된 `yaw`는 쓰지도 바꾸지도 않는다)를 기준으로, 무기 사거리(`range_m`) 안이고 조준 방향을 중심으로 한 호(`arc_angle_deg`, 전체 각) 안에 있는 **살아 있는 좀비 중 가장 가까운 1마리**. 거리가 같으면 좀비 ID가 작은 쪽. XZ 평면에서만 계산하며 yaw 규약은 플레이어·좀비와 같다(0 = −Z). 플레이어는 대상이 되지 않는다(PvP 비활성, docs/00).
 - 피해: `무기 base_damage × SurvivalService.handling_multiplier(player) × uniform(damage_roll_min, damage_roll_max)`. 난수는 전투 RNG(seed = `CombatSettings.rng_seed`, 상태 저장)이고 **대상이 있는 공격에서만** 한 번 뽑는다. 적용은 `ZombieService.apply_damage_to_zombie(target, damage, player_id)`이므로 맞은 좀비는 좀비 계약(§14.9)대로 공격자를 인지한다.
 - 빗나가도(대상 없음) 스태미나를 쓰고 쿨다운이 시작되며 소음이 난다. 소음은 `NoiseService.emit(player_id, 플레이어 위치, 무기 noise_loudness, 무기 noise_frequency_profile)`이고 `noise_loudness`가 0이면 내지 않는다.
-- 쿨다운은 플레이어별 "다음 공격 가능 월드 시각"으로 기억한다. 접속을 끊었다 다시 들어와도 초기화되지 않는다.
+- 쿨다운은 플레이어별 "다음 공격 가능 행동 시각"으로 기억한다(§14.16). 접속을 끊었다 다시 들어와도 초기화되지 않는다.
 
 이벤트 `melee_attack`(`ActionResult.event`와 `drain_events()`가 같은 형식, JSON-safe):
 
@@ -356,7 +358,7 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 | `damage` | 들어간 피해, 빗나가면 0 |
 | `target_health_after` | 맞은 뒤 좀비 체력, 빗나가면 0 |
 | `target_died` | 이 공격으로 좀비가 죽었는지 |
-| `world_time` | 월드 시각 |
+| `world_time` | 월드(달력) 시각 |
 
 - 저장: world_state.json `systems.combat` = `{schema_version: 1, rng_seed, rng_state}`(64비트 값은 문자열). 형식이 틀리면 월드 복구를 실패시키고 아무것도 바꾸지 않는다. 쿨다운과 아직 전달하지 않은 이벤트는 저장하지 않는다(이유는 docs/15 P2-44).
 - 결정론: 같은 seed와 같은 요청 순서면 이벤트가 같고, 저장→재생성→로드 뒤에도 피해 굴림이 이어진다(테스트로 확인). 전투는 `step`에서 하는 일이 없어 좀비와 달리 저장을 사이에 두어도 결과가 달라지지 않는다.
@@ -376,11 +378,11 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 | 정지, 또는 `min_speed_mps`(0.5m/s)보다 느린 이동 | 소음 없음, 걸은 거리에도 더하지 않는다 |
 | 사망한 플레이어 | 소음 없음. 걸은 거리 기록을 지우므로 리스폰 뒤에는 새로 센다 |
 | 오프라인 플레이어 | 추적하지 않는다(`on_player_offline`에서 기록 삭제). 다시 접속한 뒤 첫 틱의 위치가 기준점이 된다 |
-| 월드 시계 정지(`world_delta` = 0) | 소음 없음. 정지 중에 움직인 거리는 나중에도 세지 않는다 |
+| 월드 시계 정지(`action_delta` = 0) | 소음 없음. 정지 중에 움직인 거리는 나중에도 세지 않는다 |
 | 순간이동: `teleport_speed_mps`(15m/s)보다 빠른 위치 변화(리스폰, 관리자 이동 등) | 소음 없음, 걸은 거리를 0으로 되돌린다 |
 | `footstep_loudness` = 0, 또는 소음 시스템 미등록 | 전체 비활성 |
 
-- 속도는 `real_delta`로 계산한다(`ServerWorld.step_movement`가 실제 초 단위로 이동을 적분하기 때문). 소음의 시각·감쇠는 소음 시스템대로 월드 시간이다.
+- 속도는 `action_delta`(실제 초)로 계산한다(`ServerWorld.step_movement`가 실제 초 단위로 이동을 적분하기 때문). 소음의 시각·감쇠도 소음 시스템대로 행동 시간이다(§14.8).
 - 플레이어를 처음 보는 것은 `step`이다. 그래서 접속 직후부터 첫 틱까지의 위치 변화는 발소리가 되지 않는다(첫 틱의 이동 최대 한 번이 빠진다).
 - 한 틱의 발소리는 플레이어 ID 순서로 낸다(결정론). 난수는 쓰지 않는다.
 - 저장하지 않는다(`to_world_document()`·`to_player_fragment()` 모두 빈 문서). 상태가 "보폭 하나보다 짧은 걸은 거리"뿐이고, 재시작 뒤에는 모두 오프라인이라 어차피 0에서 시작한다(docs/15 P2-50).
@@ -559,6 +561,33 @@ HUD는 owner 미러가 존재할 때만 체력·스태미나 수치, 세 욕구 
 
 `ClientPresentationFormatter`, `AttackIntentPolicy`는 노드 없는 `RefCounted`이며 상태→색, 생존 HUD 문구, 공개 이벤트/공격 결과 문구, 최소 전송 간격을 단위 테스트한다. 임시 결정은 docs/15 §8 P2-90~P2-93에 기록한다.
 
+### 14.16 달력 시간과 행동 시간(P2-T1, docs/00 ADR-006)
+
+서버 시간은 두 축이다. 둘 다 `WorldClock`(`ServerWorld.clock`) 하나가 진행하고 저장한다. 이 절이 §14.6·§14.8~§14.11의 시간 단위 서술보다 우선한다. 임시 가정은 docs/15 §9(P2-100~P2-109).
+
+| 축 | 시각(`WorldClock`) | 틱 증분 | 단위 | 이 축을 쓰는 것 |
+|---|---|---|---|---|
+| 달력 시간 | `world_time_sec` | `world_delta` = 실제 초 × `time_scale` | 월드초. 기본 배율 24(실제 1시간 = 월드 하루, `data/tuning/world_clock_settings.tres`) | 허기·갈증·피로 증가, 감염 단계 지속 시간과 단계별 체력 감소, 출혈, 자연 체력·상처 회복, 굶주림·탈수 피해. 모든 시스템 이벤트의 `world_time`, 상처·감염의 `*_world_time` 필드 |
+| 행동 시간 | `action_time_sec` | `action_delta` = 실제 초 | 실제 초(배율과 무관) | 좀비의 모든 시간·속도(AI 주기, 이동, 공격 선딜·쿨다운, 조사·수색, 배회 대기, 시체 제거), 소음 수명·시간 감쇠, 근접 공격 쿨다운, 발소리의 속도 판정, 스태미나 회복, 리스폰 대기, 생존 피해 이벤트를 묶는 간격(P2-88) |
+
+- 일시정지: 접속자가 0명이고 `pause_when_empty`이면 두 시각이 함께 멈추고 두 증분 모두 0이다. 그 밖에는 `world_delta` = `action_delta` × `time_scale`이다. `WorldClock.step(real_delta, any_online)`은 예전처럼 달력 증분을 돌려주고, 같은 틱의 두 증분은 `last_world_delta`/`last_action_delta`로 읽는다. `WorldClock.new()`는 배율 1인 시계이고(테스트용 기본), 게임 시계는 `WorldClockSettings.create_clock()`이 만든다(스크립트 기본값도 24).
+- `ServerSystem.step` 계약 결정: 매개변수를 늘리지 않고 두 번째 매개변수의 뜻을 바꿨다. `step(world, action_delta, world_delta)`. 예전의 `real_delta`는 일시정지 중에도 실제 틱 길이였는데, 이제 `action_delta`는 일시정지 중 0이다. 이유: (1) 오버라이드의 매개변수 수가 그대로라 기존 시스템·테스트 더블·다른 브랜치에서 추가되는 시스템이 수정 없이 컴파일된다(GDScript는 매개변수 수가 다른 오버라이드를 오류로 처리한다). (2) 증분을 시계의 상태가 아니라 인자로 받으므로 `step`을 직접 부르는 단위 테스트가 입력만으로 결정된다. (3) 멈춘 월드에서 시스템이 실제 시간을 쓰는 길이 없어진다(일시정지 중 실제 틱 길이를 쓰던 시스템은 없었다). 기한·타임스탬프는 시스템이 생성자에서 받은 `WorldClock`의 `action_time_sec`/`world_time_sec`로 읽는다. 일시정지와 무관한 벽시계 시간이 필요한 일(자동 저장, 스냅샷 주기, 요청 빈도 제한, 입력 타임아웃)은 지금처럼 `NetModule.server_physics(delta)`와 `NetworkService`가 맡는다. `ServerWorld.step_systems(real_delta)`의 반환값은 그대로 달력 증분이다.
+- 이벤트의 `world_time`: 생존·좀비·전투 이벤트 모두 달력 시각(`world_time_sec`)이다. 필드 이름과 RPC 페이로드 형식은 바뀌지 않았고, 서로 다른 시스템의 이벤트를 같은 축에서 순서대로 놓을 수 있다. 두 시각은 같은 틱에 함께 늘어나므로 어느 쪽으로도 순서는 같다. 행동 시간 시스템의 간격을 이벤트로 재려면 `world_time` 차이를 배율로 나누거나 서버의 `action_time_sec`를 읽는다. 소음의 `event_time`과 `query_audible(position, hearing_multiplier, since_time)`의 `since_time`은 행동 시각이다(소음은 복제하지 않는다).
+
+시스템별 내부 시각:
+
+| 시스템 | 행동 시각으로 두는 값 | 달력 시각으로 두는 값 |
+|---|---|---|
+| `survival` | `PlayerVitals.died_at_action_time`(저장, 리스폰 기한의 기준), 아직 내보내지 않은 피해의 시작 시각(저장 안 함) | 이벤트 `world_time`, `PlayerVitals.died_at_world_time`, `Wound.created_at_world_time`, `InfectionState.infected_at_world_time`·`stage_entered_at_world_time`·`stage_elapsed_world_sec` |
+| `noise` | `NoiseEvent.event_time`, 수명·감쇠 | 없음 |
+| `player_noise` | 속도 판정에 쓰는 틱 길이 | 없음 |
+| `zombie` | `ZombieState.state_until`·`attack_ready_at`·`next_wander_at`·`last_noise_time`·`died_at`(모두 저장), AI 스케줄러 | 이벤트 `world_time` |
+| `combat` | 플레이어별 다음 공격 가능 시각(저장 안 함), `cooldown_remaining`의 반환값(실제 초) | 이벤트 `world_time` |
+
+- 생존의 구간 적분: `_advance_player`는 그대로 한 틱의 달력 구간을 욕구 임계·감염 단계·사망·리스폰 경계에서 나눠 적분한다. 한 틱 안에서는 두 시각이 직선으로 함께 늘어나므로(행동 = 틱 시작 행동 시각 + (달력 − 틱 시작 달력 시각) × `action_delta / world_delta`) 행동 시간 항목을 그 비율로 바꿔 넣는다. 스태미나 회복량 = 초당 회복 × 욕구·감염 배율 × 구간의 행동 시간, 리스폰 시각 = `died_at_action_time + respawn_delay_sec`에 해당하는 달력 시각, 피해 이벤트는 행동 시간으로 `survival_damage_event_interval_sec`가 지나면 낸다. 그래서 배율이 1이 아니어도 틱 크기와 무관하다(허용 오차 1e-3, 배율 24에서 틱 1/60초~25초 비교 테스트). 리스폰 기한을 행동 시각으로 저장하므로 배율 설정이 바뀌어도 대기 시간이 달라지지 않는다.
+- 저장: world_state.json 스키마 v3이 `action_time_sec`를 추가한다. v2 → v3 마이그레이션은 `action_time_sec = world_time_sec`로 둔다(P2-T1 전에는 시계가 하나였고 배율 1이었으므로, 그 시계로 저장된 좀비 기한이 그대로 맞는다. docs/15 P2-102). 현재 스키마 문서에 `action_time_sec`가 없거나 음수·비수치면 월드 복구를 실패시킨다. 생존 fragment 스키마 v4가 `died_at_action_time`을 추가한다. v1~v3 fragment는 그대로 읽고, 그 안의 사망한 플레이어는 다음 접속 순간부터 리스폰 대기를 새로 센다. 좀비·전투 문서의 스키마 버전은 그대로다(필드와 단위가 같고 기준 시계만 바뀌었으며 마이그레이션이 두 시계를 같은 값에서 시작시킨다).
+- 설정 이름: 뜻이 실제 초로 바뀐 세 항목의 이름을 바꿨다. `stamina_regen_per_world_sec` → `stamina_regen_per_sec`, `respawn_delay_world_sec` → `respawn_delay_sec`, `survival_damage_event_interval_world_sec` → `survival_damage_event_interval_sec`. `SurvivalSettings`에서 `world_sec`·`hours`가 든 이름은 달력 시간, `_sec`로만 끝나는 이름은 실제 초다. 좀비·소음·전투·발소리 설정은 이름이 원래 `_sec`·`_mps`라 그대로이고 주석의 단위만 고쳤다.
+- 테스트: `tests/unit/time_axes_test.gd`. 같은 실제 시간을 배율 1과 24로 돌려 행동 시간 결과(좀비 이동 거리·공격 틱·조사/수색 전환·시체 제거, 발소리 수, 소음 만료 틱, 근접 공격 승인 틱, 스태미나, 리스폰 틱, 피해 이벤트 수)는 같고 달력 시간 결과(욕구, 감염 경과, 출혈 피해, 체력·상처 회복)는 24배임을 비교한다. 접속자 0명일 때 두 시각 정지, 이벤트 `world_time`이 달력 시각임, 두 시각의 저장 → 재생성 → 로드, 저장된 좀비 공격 기한과 리스폰 기한이 재시작 뒤에도 남은 시간만큼 흐르는지, P2-T1 이전 저장(월드 v2, 생존 fragment v3)의 마이그레이션, 배율 24에서의 생존 구간 적분을 포함한다. Phase 2 수용 시나리오는 기본 배율 24로 실행된다.
 ### 14.17 인벤토리 변화 복제 기반(P2-T2, 모듈 `InventoryNet`)
 
 Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절은 반대 방향(아이템이 인벤토리에서 월드로 가거나 인벤토리에서 없어지는 변화)의 서버 트랜잭션과 복제를 정한다. 먹기(P2-T3)와 영구 사망(P2-T4)은 이 절의 서버 API를 호출하는 후속 티켓이며 여기에는 구현하지 않았다. 임시 가정은 docs/15 §10 P2-110~P2-119.

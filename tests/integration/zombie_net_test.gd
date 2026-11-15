@@ -15,7 +15,8 @@ const NEVER: float = 1.0e9
 const YAW_MINUS_Z: float = 0.0
 const REST_TOLERANCE: float = 0.0001
 const FAR_AWAY: Vector3 = Vector3(-150, 0, -150)
-## Real-time budget of one wait. The scenarios take seconds of world time
+## Real-time budget of one wait. The scenarios take seconds of zombie time
+## (action time = real seconds, whatever the calendar scale)
 ## and the headless frame rate is not fixed, so waits are timed, not counted
 ## in frames.
 const WAIT_SEC: float = 15.0
@@ -48,7 +49,7 @@ func before_each() -> void:
 	_survival_settings = SurvivalSettings.new()
 	# Isolate from B3 time rules: no natural healing, no respawn.
 	_survival_settings.health_recovery_per_world_sec = 0.0
-	_survival_settings.respawn_delay_world_sec = NEVER
+	_survival_settings.respawn_delay_sec = NEVER
 	_net_settings = ZombieNetSettings.new()
 	# from_defaults() hands out shared cached resources: replace, never edit.
 	_config = CompositionConfig.from_defaults()

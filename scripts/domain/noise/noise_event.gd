@@ -13,7 +13,7 @@ var position: Vector3 = Vector3.ZERO
 ## Loudness at the source when emitted (NoiseSettings model).
 var loudness: float = 0.0
 var frequency_profile: String = ""
-## World time (WorldClock seconds) of the emit.
+## Action time (WorldClock.action_time_sec, real seconds) of the emit.
 var event_time: float = 0.0
 ## Opaque JSON-safe hints for NoiseOcclusion (room id, indoors, ...).
 var occlusion_context: Dictionary = {}

@@ -27,7 +27,7 @@ func before_each() -> void:
 	# Isolate zombie behaviour from B3 time rules: no natural healing and no
 	# respawn inside a test run (both are covered by survival_recovery_test).
 	_survival_settings.health_recovery_per_world_sec = 0.0
-	_survival_settings.respawn_delay_world_sec = NEVER
+	_survival_settings.respawn_delay_sec = NEVER
 	_noise_settings = NoiseSettings.new()
 	_clock_settings = WorldClockSettings.new()
 	_root = "user://test_saves/zombie_%d" % Time.get_ticks_usec()
@@ -246,15 +246,16 @@ func test_scratch_attacks_use_scratch_exposure_and_respect_cooldown() -> void:
 	assert_eq(first["wound_type"], "scratch")
 	assert_eq(first["damage"], _settings.scratch_damage)
 	assert_eq(first["infection"], SurvivalService.EVENT_INFECTION_RESISTED)
-	assert_true(first["world_time"] >= _settings.attack_windup_sec, "wind-up before the first hit")
+	# Event world_time is calendar time; the wind-up is real seconds.
+	assert_true(first["world_time"] >= _settings.attack_windup_sec * world.clock.time_scale - POSITION_TOLERANCE, "wind-up before the first hit")
 	# 6 s: wind-up 0.5 s, then one hit per 1.5 s cooldown (AI period 0.5 s).
 	assert_true(hits >= 3 and hits <= 4, "cooldown limits the hit rate (got %d)" % hits)
 	assert_eq(_survival(world).get_vitals(alice.player_id).health, _survival_settings.max_health - hits * _settings.scratch_damage)
 	assert_false(_survival(world).get_vitals(alice.player_id).infection.is_infected())
 
 
-## Regression (found by the Phase 2 acceptance scenario, P2-Z). World time is
-## a sum of tick lengths, so "the time of the last hit + cooldown" can be a
+## Regression (found by the Phase 2 acceptance scenario, P2-Z). Action time
+## (the clock zombie deadlines use) is a sum of tick lengths, so "the time of the last hit + cooldown" can be a
 ## few ulps above the clock at the decision 1.5 s later. Compared without a
 ## tolerance, that decision counted as too early and the hit waited for the
 ## next one: several of the 1.5 s intervals of this run were 2.0 s. The
@@ -280,9 +281,9 @@ func test_attack_cooldown_is_not_stretched_by_float_accumulation() -> void:
 			if event["zombie_id"] != zombie_id:
 				continue
 			if event["event_type"] == ZombieService.EVENT_STATE_CHANGED and event["to"] == "attack":
-				in_range_at = event["world_time"]
+				in_range_at = world.clock.action_time_sec
 			elif event["event_type"] == ZombieService.EVENT_ATTACKED:
-				hit_times.append(event["world_time"])
+				hit_times.append(world.clock.action_time_sec)
 	assert_true(in_range_at >= 0.0 and hit_times.size() >= 10, "the zombie kept attacking (%d hits)" % hit_times.size())
 	if in_range_at < 0.0 or hit_times.is_empty():
 		return
@@ -382,7 +383,9 @@ func test_lost_target_is_searched_then_zombie_returns_to_idle() -> void:
 	assert_true(chase >= 0 and search > chase and idle > search)
 	assert_eq(events[search]["cause"], ZombieService.CAUSE_TARGET_LOST)
 	assert_eq(events[idle]["cause"], ZombieService.CAUSE_SEARCH_TIMEOUT)
-	assert_true(events[idle]["world_time"] - events[search]["world_time"] >= _settings.search_duration_sec)
+	# Event world_time is calendar time; the search duration is real seconds
+	# (the two clocks are separate sums of tick lengths, hence the tolerance).
+	assert_true(events[idle]["world_time"] - events[search]["world_time"] >= _settings.search_duration_sec * world.clock.time_scale - POSITION_TOLERANCE)
 	assert_true(ZombiePerception.flat_distance(zombie.position, last_known) <= _settings.search_radius_m + _settings.arrive_radius_m, "searched around the last known position")
 	assert_eq(zombie.home_position, zombie.position, "stays where it ended up")
 	_run(world, 5.0, events)
@@ -795,10 +798,13 @@ func test_same_seed_gives_identical_results() -> void:
 	assert_true(_simulate(43) != first, "another seed gives another run")
 
 
-func test_soak_hours_of_world_time_stay_within_limits() -> void:
-	const WORLD_HOURS: float = 3.0
-	const WORLD_SEC_PER_TICK: float = 2.0
-	_clock_settings.time_scale = WORLD_SEC_PER_TICK / TICK
+## Three hours of zombie (action) time in 2-second ticks. The clock is 1x so
+## the survival side also sees three hours, as before P2-T1 (then the test
+## accelerated the single world clock instead of using long ticks).
+func test_soak_hours_of_action_time_stay_within_limits() -> void:
+	const SOAK_HOURS: float = 3.0
+	const SOAK_SEC_PER_TICK: float = 2.0
+	_clock_settings.time_scale = 1.0
 	_settings.dev_spawn_count = 20
 	_settings.max_active_zombies = 24
 	_settings.dev_spawn_min_radius_m = 5.0
@@ -817,7 +823,7 @@ func test_soak_hours_of_world_time_stay_within_limits() -> void:
 	var half: float = world.gameplay.world_half_extent_m
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 	rng.seed = 9001
-	var ticks: int = roundi(WORLD_HOURS * 3600.0 / WORLD_SEC_PER_TICK)
+	var ticks: int = roundi(SOAK_HOURS * 3600.0 / SOAK_SEC_PER_TICK)
 	var violations: PackedStringArray = []
 	var event_total: int = 0
 	var attack_total: int = 0
@@ -838,7 +844,7 @@ func test_soak_hours_of_world_time_stay_within_limits() -> void:
 			for attempt: int in range(3):
 				if not service.spawn_zombie(world, Vector3(rng.randf_range(-half, half), 0.0, rng.randf_range(-half, half)), rng.randf_range(-PI, PI)).ok:
 					spawn_refusals += 1
-		world.step_systems(TICK)
+		world.step_systems(SOAK_SEC_PER_TICK)
 		if service.last_ai_update_count > _settings.max_ai_updates_per_tick:
 			violations.append("tick %d: %d AI decisions" % [tick, service.last_ai_update_count])
 		if service.zombie_count() > _settings.max_active_zombies:
@@ -859,7 +865,7 @@ func test_soak_hours_of_world_time_stay_within_limits() -> void:
 		if violations.size() > 10:
 			break
 	assert_eq(violations.size(), 0, "; ".join(violations))
-	assert_true(world.clock.world_time_sec >= WORLD_HOURS * 3600.0 - 1.0, "simulated %s world seconds" % str(world.clock.world_time_sec))
+	assert_true(world.clock.action_time_sec >= SOAK_HOURS * 3600.0 - 1.0, "simulated %s seconds of zombie time" % str(world.clock.action_time_sec))
 	assert_true(service.total_ai_update_count > ticks, "AI kept running (%d decisions)" % service.total_ai_update_count)
 	assert_true(event_total > 100, "zombies kept reacting (%d events)" % event_total)
 	assert_true(attack_total > 0, "zombies attacked during the soak")
