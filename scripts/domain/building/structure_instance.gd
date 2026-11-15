@@ -17,16 +17,27 @@ extends RefCounted
 ##                       destroyed
 ##   health              0..definition.max_health
 ##   material_quality    1 = normal (nothing reads it yet)
-##   inventory_costs     item definition id -> quantity the piece costs
-##                       (recorded only; P3-5 checks and takes materials)
+##   inventory_costs     item definition id -> quantity the piece needs
+##                       (the definition's build_costs when it was placed)
 ##   connections         ids of connected structures (always empty in
 ##                       P3-4a; rooms and support come later)
 ##   last_modified_at    calendar world time (WorldClock.world_time_sec) of
 ##                       the last change (docs/14 §2)
-## and two more:
+## and four more:
 ##   placed_by           player id of whoever placed it ("" = a server rule).
-##                       Decides who may demolish it until shelters exist.
+##                       Decides who may cancel or demolish it until shelters
+##                       exist.
 ##   door_open           doors only: open (true) or closed.
+##   construction_progress  P3-5: share of the work that is done, 0..1. 0 for
+##                       a blueprint, above 0 while constructing, 1 for a
+##                       standing piece. Never above material_share().
+##   delivered_materials P3-5: item definition id -> units that players put
+##                       into the piece (never more than inventory_costs).
+##                       What a cancel or a demolition refunds is a share of
+##                       this, so nothing is ever returned that was not paid.
+##
+## Construction (docs/04 §3, docs/00 ADR-025): blueprint (placed, no work
+## yet) -> constructing (work has begun) -> completed.
 
 enum State { BLUEPRINT, CONSTRUCTING, COMPLETED, DAMAGED, DESTROYED }
 
@@ -36,6 +47,10 @@ const ENTITY_KIND: String = "structure"
 const STRUCTURE_ID_PATTERN: String = "^structure_[0-9]+$"
 const KEY_TILE: String = "tile"
 const KEY_ROTATION: String = "rotation"
+const KEY_PROGRESS: String = "construction_progress"
+const KEY_DELIVERED: String = "delivered_materials"
+const NO_PROGRESS: float = 0.0
+const FULL_PROGRESS: float = 1.0
 
 var structure_id: String = ""
 var definition_id: String = ""
@@ -51,12 +66,49 @@ var connections: PackedStringArray = []
 var last_modified_at: float = 0.0
 var placed_by: String = ""
 var door_open: bool = false
+var construction_progress: float = NO_PROGRESS
+var delivered_materials: Dictionary[String, int] = {}
 
 
 ## True while the piece stands in the world as built: completed or damaged.
 ## Only a standing piece can block movement or be used (a door).
 func is_standing() -> bool:
 	return construction_state == State.COMPLETED or construction_state == State.DAMAGED
+
+
+## True while the piece is being built: a blueprint or under construction.
+## Only then can materials be delivered to it and work be done on it.
+func is_under_construction() -> bool:
+	return construction_state == State.BLUEPRINT or construction_state == State.CONSTRUCTING
+
+
+## Units of one material that are still missing.
+func missing_units(item_id: String) -> int:
+	return maxi(int(inventory_costs.get(item_id, 0)) - int(delivered_materials.get(item_id, 0)), 0)
+
+
+## What is still missing: item definition id -> units (> 0), in the order of
+## inventory_costs. {} = every material is there.
+func missing_materials() -> Dictionary[String, int]:
+	var missing: Dictionary[String, int] = {}
+	for item_id: String in inventory_costs:
+		var units: int = missing_units(item_id)
+		if units > 0:
+			missing[item_id] = units
+	return missing
+
+
+## Share of the materials that was delivered, 0..1: delivered units over
+## required units, all kinds counted together (docs/15 P3-127). 1 for a
+## piece that needs nothing. Work can never take the progress above it
+## (docs/04 §5).
+func material_share() -> float:
+	var required: int = 0
+	var delivered: int = 0
+	for item_id: String in inventory_costs:
+		required += inventory_costs[item_id]
+		delivered += mini(int(delivered_materials.get(item_id, 0)), inventory_costs[item_id])
+	return FULL_PROGRESS if required <= 0 else float(delivered) / float(required)
 
 
 static func state_name(value: State) -> String:
@@ -76,6 +128,9 @@ func to_dict() -> Dictionary:
 	var costs: Dictionary = {}
 	for item_id: String in inventory_costs:
 		costs[item_id] = inventory_costs[item_id]
+	var delivered: Dictionary = {}
+	for item_id: String in delivered_materials:
+		delivered[item_id] = delivered_materials[item_id]
 	return {
 		"structure_id": structure_id,
 		"definition_id": definition_id,
@@ -90,7 +145,26 @@ func to_dict() -> Dictionary:
 		"last_modified_at": last_modified_at,
 		"placed_by": placed_by,
 		"door_open": door_open,
+		KEY_PROGRESS: construction_progress,
+		KEY_DELIVERED: delivered,
 	}
+
+
+## A structure entry saved before P3-5 (building document schema 1) in the
+## current shape. P3-4a had no construction: a standing piece was built at
+## once and nothing was paid for it, so it is fully done and holds no
+## materials; a blueprint (only made with the dev switch off) has no work
+## done. Returns a new dictionary; entries that already have the fields are
+## returned as they are.
+static func upgrade_v1_entry(data: Dictionary) -> Dictionary:
+	var upgraded: Dictionary = data.duplicate(true)
+	if not upgraded.has(KEY_PROGRESS):
+		var state: String = str(upgraded.get("construction_state", ""))
+		var standing: bool = state == STATE_NAMES[State.COMPLETED] or state == STATE_NAMES[State.DAMAGED]
+		upgraded[KEY_PROGRESS] = FULL_PROGRESS if standing else NO_PROGRESS
+	if not upgraded.has(KEY_DELIVERED):
+		upgraded[KEY_DELIVERED] = {}
+	return upgraded
 
 
 ## Builds an instance from saved data, or null when `data` is malformed.
@@ -134,6 +208,12 @@ static func from_dict(data: Dictionary) -> StructureInstance:
 	var links: Variant = data.get("connections", null)
 	if typeof(links) != TYPE_ARRAY:
 		return null
+	var progress: Variant = data.get(KEY_PROGRESS, null)
+	if not (typeof(progress) == TYPE_FLOAT or typeof(progress) == TYPE_INT) or not is_finite(float(progress)) or float(progress) < NO_PROGRESS or float(progress) > FULL_PROGRESS:
+		return null
+	var delivered: Variant = data.get(KEY_DELIVERED, null)
+	if typeof(delivered) != TYPE_DICTIONARY:
+		return null
 	var structure: StructureInstance = StructureInstance.new()
 	for item_id: Variant in (costs as Dictionary):
 		var quantity: Variant = (costs as Dictionary)[item_id]
@@ -144,6 +224,14 @@ static func from_dict(data: Dictionary) -> StructureInstance:
 		if typeof(link) != TYPE_STRING or not is_valid_structure_id(str(link)):
 			return null
 		structure.connections.append(str(link))
+	# Delivered materials are a part of the costs: a kind the piece does not
+	# need, or more units than it needs, is not a structure this code wrote.
+	for item_id: Variant in (delivered as Dictionary):
+		var units: Variant = (delivered as Dictionary)[item_id]
+		if typeof(item_id) != TYPE_STRING or not ItemInstance.is_integer_value(units) or int(units) < 1 or int(units) > int(structure.inventory_costs.get(str(item_id), 0)):
+			return null
+		structure.delivered_materials[str(item_id)] = int(units)
+	structure.construction_progress = float(progress)
 	structure.structure_id = str(id)
 	structure.definition_id = str(definition)
 	structure.owner_shelter_id = str(data["owner_shelter_id"])

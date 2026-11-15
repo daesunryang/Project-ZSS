@@ -55,8 +55,10 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# owns both systems, and the connection holds no reference to either.
 	survival.player_died.connect(zombies.on_player_died)
 	# P3-4a (docs/09 §15.4): grid structures. After the zombies, whose
-	# positions a placement looks at. It acts on requests, not in step(), and
-	# constrains the movement of players and zombies.
+	# positions a placement looks at. It constrains the movement of players
+	# and zombies. P3-5 (docs/09 §15.5): its step() advances the work on
+	# structures under construction; after survival, whose deaths, rests and
+	# handling multipliers of this tick it reads.
 	if world.register_system(BuildingService.new(config.building, config.structures, world.ids, world.registry, world.clock)) != OK:
 		return null
 	# Phase 2-C: melee combat (C1). After survival, noise and zombies, which

@@ -20,6 +20,13 @@ extends RefCounted
 ##   transfer_item   a quantity moves from one inventory into another,
 ##                   merging into the receiver's stacks (P2-T14). No player
 ##                   intent calls it since P2-T15 (docs/00 ADR-021).
+##   take_items      units of several carried stacks leave an inventory at
+##                   once because a server rule put them into something
+##                   that is not an item any more (building materials,
+##                   P3-5). Announced as `items_taken`.
+##   place_world_items  new items come to lie in the world that no inventory
+##                   gave (materials a structure returns, P3-5). Announced as
+##                   `items_dropped` with an empty `inventory_id`.
 ## Every committed transaction is also announced through
 ## `transaction_committed`, synchronously and in commit order, once the state
 ## is final. InventoryNetModule replicates from it (docs/09 §14.17), so
@@ -59,7 +66,9 @@ const SLOT_PREFIX: String = "slot_"
 ##  (carried stacks that grew, and by how many units; see try_pickup)}.
 const EVENT_ITEM_PICKED_UP: String = "item_picked_up"
 ## {inventory_id, item_instance_ids: Array of String (slot order), cell_id,
-##  position: [x, y, z]}. Used by drop_item and by drop_all_items.
+##  position: [x, y, z]}. Used by drop_item and by drop_all_items, and by
+## place_world_items (P3-5) with `inventory_id` "": items that came to lie
+## in the world without leaving an inventory.
 const EVENT_ITEMS_DROPPED: String = "items_dropped"
 ## {inventory_id, item_instance_id, definition_id, removed_quantity,
 ##  remaining_quantity}. remaining_quantity 0 = the instance no longer exists.
@@ -121,6 +130,19 @@ const REASON_NOTHING_TO_EXCHANGE: String = "nothing_to_exchange"
 ## that would come in, even after what it gives has left.
 const REASON_FIRST_INVENTORY_FULL: String = "first_inventory_full"
 const REASON_SECOND_INVENTORY_FULL: String = "second_inventory_full"
+## Units of carried stacks went into something a server rule keeps outside
+## the inventory system (take_items, P3-5: materials delivered to a
+## structure): {inventory_id, taken: Array of {item_instance_id,
+##  definition_id, quantity (units taken), remaining_quantity (what the
+##  stack still holds; 0 = the instance no longer exists)}}, in the order
+## they were asked for. InventoryNetModule does not know this event: whoever
+## calls take_items tells the owner (StructureNetModule does) and decides
+## when the world is saved.
+const EVENT_ITEMS_TAKEN: String = "items_taken"
+## A request names an item definition the catalog does not have.
+const REASON_UNKNOWN_DEFINITION: String = "unknown_item_definition"
+## Nothing was asked for (an empty list).
+const REASON_NOTHING_TO_MOVE: String = "nothing_to_move"
 
 const SNAPSHOT_ITEMS: String = "items"
 const SNAPSHOT_POSITIONS: String = "world_item_positions"
@@ -643,6 +665,122 @@ func exchange_items(first_inventory_id: String, first_gives: Array, second_inven
 		sides.append({"inventory_id": inventory_ids[side], "gave": gave[side], "removed_item_instance_ids": removed, "changed_item_instance_ids": changed})
 	GameLogger.info("inventory", "items exchanged", {"inventory_id": first_inventory_id, "to_inventory_id": second_inventory_id, "first_gave": gave[0].size(), "second_gave": gave[1].size()})
 	return _commit({"event_type": EVENT_ITEMS_EXCHANGED, "sides": sides})
+
+
+## Takes units of carried stacks out of `inventory_id` in one transaction
+## (P3-5: a player delivers building materials). `takes` is an Array of
+## {item_instance_id: String, quantity: int (1..the stack)}; every entry
+## must name a different stack carried in that inventory. All or nothing: on
+## any refusal nothing changes. A stack that still holds something only gets
+## smaller; an emptied one is deleted and its id retired (docs/14 §1).
+## The units are not items any more afterwards: the caller keeps count of
+## them (BuildingService: StructureInstance.delivered_materials) and gives
+## them back with place_world_items. Event: EVENT_ITEMS_TAKEN.
+## Failures: unknown_inventory, nothing_to_move, bad_offer, duplicate_item,
+## unknown_item, item_not_in_inventory, bad_quantity.
+func take_items(inventory_id: String, takes: Array) -> ActionResult:
+	const OPERATION: String = "take_items"
+	if not _inventories.has(inventory_id):
+		return _reject(REASON_UNKNOWN_INVENTORY, inventory_id, "", OPERATION)
+	if takes.is_empty():
+		return _reject(REASON_NOTHING_TO_MOVE, inventory_id, "", OPERATION)
+	var seen: Dictionary[String, bool] = {}
+	var planned: Array[Array] = []
+	for entry: Variant in takes:
+		if typeof(entry) != TYPE_DICTIONARY or typeof((entry as Dictionary).get(OFFER_ITEM_ID, null)) != TYPE_STRING or typeof((entry as Dictionary).get(OFFER_QUANTITY, null)) != TYPE_INT:
+			return _reject(REASON_BAD_OFFER, inventory_id, "", OPERATION)
+		var item_id: String = (entry as Dictionary)[OFFER_ITEM_ID]
+		var quantity: int = (entry as Dictionary)[OFFER_QUANTITY]
+		if seen.has(item_id):
+			return _reject(REASON_DUPLICATE_ITEM, inventory_id, item_id, OPERATION)
+		seen[item_id] = true
+		var item: ItemInstance = _items.get(item_id, null)
+		if item == null:
+			return _reject(REASON_UNKNOWN_ITEM, inventory_id, item_id, OPERATION)
+		if not _is_carried_in(item, inventory_id):
+			return _reject(REASON_NOT_IN_INVENTORY, inventory_id, item_id, OPERATION)
+		if quantity < 1 or quantity > item.quantity:
+			return _reject(REASON_BAD_QUANTITY, inventory_id, item_id, OPERATION)
+		planned.append([item, quantity])
+
+	# Commit: every check passed.
+	var taken: Array = []
+	for row: Array in planned:
+		var item: ItemInstance = row[0]
+		var quantity: int = row[1]
+		var remaining: int = item.quantity - quantity
+		if remaining > 0:
+			item.quantity = remaining
+		else:
+			_items.erase(item.item_instance_id)
+			if _registry.remove(item.item_instance_id) != OK:
+				GameLogger.error("inventory", "taken item was not registered", {"entity_id": item.item_instance_id, "inventory_id": inventory_id, "operation": OPERATION})
+		taken.append({"item_instance_id": item.item_instance_id, "definition_id": item.definition_id, "quantity": quantity, "remaining_quantity": remaining})
+	GameLogger.info("inventory", "items taken", {"inventory_id": inventory_id, "stacks": taken.size()})
+	return _commit({"event_type": EVENT_ITEMS_TAKEN, "inventory_id": inventory_id, "taken": taken})
+
+
+## Puts new items into the world at `position` in `cell_id` that did not
+## come out of an inventory (P3-5: the materials a cancelled or demolished
+## structure returns). `quantities` maps item definition id -> units (>= 1);
+## each kind becomes as few stacks as its max_stack allows, in the order of
+## the sorted definition ids. All or nothing. The new items are in the cell
+## index like any dropped item. Event: EVENT_ITEMS_DROPPED with
+## `inventory_id` "" (no inventory lost anything) and, in addition,
+## `placed`: Array of {item_instance_id, definition_id, quantity}; so
+## InventoryNetModule announces them to the clients exactly like a drop.
+## Failures: nothing_to_move, unknown_item_definition, bad_quantity,
+## bad_cell, bad_position, id_unavailable.
+func place_world_items(quantities: Dictionary, cell_id: String, position: Vector3) -> ActionResult:
+	const OPERATION: String = "place_world_items"
+	if quantities.is_empty():
+		return _reject(REASON_NOTHING_TO_MOVE, "", "", OPERATION)
+	var place_error: String = _validate_world_place(cell_id, position)
+	if not place_error.is_empty():
+		return _reject(place_error, "", "", OPERATION)
+	var definition_ids: PackedStringArray = []
+	for key: Variant in quantities:
+		if typeof(key) != TYPE_STRING or not _catalog.has(str(key)):
+			return _reject(REASON_UNKNOWN_DEFINITION, "", str(key), OPERATION)
+		if typeof(quantities[key]) != TYPE_INT or int(quantities[key]) < 1:
+			return _reject(REASON_BAD_QUANTITY, "", str(key), OPERATION)
+		definition_ids.append(str(key))
+	definition_ids.sort()
+	# Stacks to make: [definition_id, units].
+	var stacks: Array[Array] = []
+	for definition_id: String in definition_ids:
+		var max_stack: int = _catalog.get_definition(definition_id).max_stack
+		var left: int = quantities[definition_id]
+		while left > 0:
+			var units: int = mini(left, max_stack)
+			stacks.append([definition_id, units])
+			left -= units
+	# The one thing that could still fail are the new ids: taken before
+	# anything changes, and given back when one of them fails.
+	var new_ids: PackedStringArray = []
+	for index: int in range(stacks.size()):
+		var new_id: String = _ids.next_id(ENTITY_KIND_ITEM)
+		if new_id.is_empty() or _registry.register(new_id, ENTITY_KIND_ITEM) != OK:
+			for registered: String in new_ids:
+				_registry.release(registered)
+			GameLogger.error("inventory", "no id for an item placed in the world", {"cell_id": cell_id, "operation": OPERATION})
+			return _reject(REASON_ID_UNAVAILABLE, "", "", OPERATION)
+		new_ids.append(new_id)
+
+	# Commit: nothing below can fail.
+	var placed: Array = []
+	for index: int in range(stacks.size()):
+		var item: ItemInstance = ItemInstance.new()
+		item.item_instance_id = new_ids[index]
+		item.definition_id = stacks[index][0]
+		item.quantity = stacks[index][1]
+		_items[item.item_instance_id] = item
+		_move_to_world(item, cell_id, position)
+		placed.append({"item_instance_id": item.item_instance_id, "definition_id": item.definition_id, "quantity": item.quantity})
+	GameLogger.info("inventory", "items placed in the world", {"cell_id": cell_id, "items": placed.size()})
+	var event: Dictionary = _dropped_event("", Array(new_ids), cell_id, position)
+	event["placed"] = placed
+	return _commit(event)
 
 
 ## item_instance_id -> quantity of everything carried in an inventory.

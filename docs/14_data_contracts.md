@@ -67,6 +67,15 @@ P3-4a 임시안(docs/00 ADR-024, docs/09 §15.4): 구현된 구조물 문서(`St
 
 `systems.building` 문서는 `{schema_version: 1, structures: [...]}`다. 구조물이 없으면 문서 자체가 없다. Node 참조·RID는 들어가지 않는다.
 
+P3-5 임시안(docs/00 ADR-025, docs/09 §15.5): `systems.building` 문서의 스키마가 **2**가 됐다(`{schema_version: 2, structures: [...]}`, 셀 문서와 world_state 양쪽). 구조물 하나에 필드 둘이 늘었다. 위 목록의 `construction_progress`가 이것이고(`owner_permissions`는 여전히 없다), 위 표의 `inventory_costs`는 이제 "그 조각이 필요로 하는 자재"다.
+
+| 필드 | 타입 | 뜻 |
+|---|---|---|
+| `construction_progress` | 0~1 | 작업이 된 비율. `blueprint`는 0, `constructing`은 0 초과, 서 있는 조각(`completed`, `damaged`)은 1. 짓는 중에는 투입된 자재의 비율(`delivered_materials`의 단위 수 합 ÷ `inventory_costs`의 단위 수 합)을 넘지 않는다 |
+| `delivered_materials` | `{아이템 정의 ID: 수량(1 이상)}` | 플레이어가 그 조각에 넣은 자재. 키는 `inventory_costs`의 키 중 일부이고 수량은 그 값 이하다. 넣은 것이 없으면 `{}`. 취소·철거의 환급은 이 값의 일부다. 자재는 아이템 인스턴스가 아니라 수량으로만 남는다(넣은 아이템의 ID는 은퇴한다) |
+
+스키마 1 문서(P3-4a)는 그대로 읽는다: 필드가 없는 구조물은 서 있으면 `construction_progress` 1, 아니면 0, `delivered_materials`는 `{}`로 올린다(`StructureInstance.upgrade_v1_entry`). 다음 저장부터 스키마 2로 쓴다. 스키마 2 문서에 두 필드가 없으면 깨진 문서로 보고 그 셀을 로딩하지 않는다. 상태·진행률·자재가 서로 맞지 않는 구조물(작업이 된 청사진, 진행률 0인 `constructing`, 진행률이 1이 아닌 서 있는 조각, 자재 비율보다 큰 진행률)이 든 문서도 같다. 누가 작업 중인지는 저장하지 않는다.
+
 ### ItemInstance
 `item_instance_id`, `definition_id`, `quantity`, `condition`, `quality`, `freshness`, `location_type`, `location_id`, `slot_id`.
 

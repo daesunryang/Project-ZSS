@@ -2205,3 +2205,104 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 **P3-4b(클라이언트 표시·건축 모드 입력)가 알아야 할 것**: (1) 읽을 곳은 `StructureNetModule.client_state`와 그 시그널 넷, 보낼 곳은 `request_place`/`request_demolish`/`request_door`, 답은 `structure_result`다. (2) 월드 위치는 `StructureGrid`로 구한다: 타일 조각은 `tile_center(tile)`, 변 조각은 `slot_anchor(slot_of(id))`와 회전(0 = -Z 변 … 3 = -X 변). 클라이언트에는 `BuildingSettings`가 없으므로 모듈 크기를 `CompositionConfig.building.grid_module_m`에서 받아 `StructureGrid`를 만들어야 한다(서버와 같은 리소스 파일). (3) 미리보기의 유효·무효 표시는 클라이언트가 추정하고 확정은 서버 결과로 한다(사유 코드는 위 목록). (4) 미러에는 누가 지었는지가 없다: 철거 가능 여부는 요청해서 `not_owner`를 받아야 안다. 필요하면 행에 필드를 더한다(프로토콜 변경). (5) 서버 충돌은 점 대 선분이고 캐릭터 반지름이 없다: 캡슐이 벽에 반쯤 묻혀 보일 수 있다. (6) 클라이언트 이동 예측을 넣는다면 `StructureGrid.resolve_step`과 미러의 자리 표(`structure_id_at`)로 같은 계산을 할 수 있다. (7) 구조물 정의에는 아직 모델·재질 정보가 없다.
 
 **P3-5(청사진·자재·완공)가 알아야 할 것**: (1) `BuildingSettings.instant_completion`을 끄면 배치가 `blueprint`(체력 0)를 만든다: 자리를 차지하고 아무것도 막지 않으며 문으로 쓸 수 없다(테스트 있음). 완공으로 바꾸는 함수는 아직 없다: 상태를 바꾼 뒤 `_refresh_blocking`을 불러 막는 변 집합을 갱신하고 `structure_changed` 이벤트를 남기면 복제는 이미 된다(행에 `state`가 있다). (2) 완공 순간에는 배치 때 건너뛴 "사람·좀비가 변 가까이에 있는가" 검사를 다시 해야 한다. (3) `inventory_costs`는 배치 때 정의의 `build_costs`를 복사해 둔 것이다. 투입한 자재·진행률 필드는 없다: 더하면 `StructureInstance.to_dict`/`from_dict`와 셀 문서 스키마 버전(`CELL_SCHEMA_VERSION`, `SCHEMA_VERSION`)을 올리고 구버전 문서를 읽는 경로를 넣는다. (4) 배치·철거와 인벤토리 차감을 한 트랜잭션으로 묶어야 한다: 저장 한 번이 월드 전체라서 둘은 항상 같은 세대에 들어간다. (5) 철거 환급 규칙은 정의에 넣기로 돼 있다(docs/04 §5). (6) 메모리에 없는 셀에는 서버 규칙도 지을 수 없다: 시드로 건물을 놓으려면 그 셀을 먼저 로딩해야 한다.
+
+### 15.5 건축 흐름: 청사진·자재·작업·완공(P3-5, docs/00 ADR-025, system id `building`, 모듈 `StructureNet`)
+
+서버·네트워크·클라이언트 미러까지다. 청사진을 화면에 그리는 것과 건축 모드 입력은 P3-4b다. 보관 상자는 P3-3으로 옮겼다(docs/13 §15). **프로토콜 변경 있음**: RPC 넷이 새로 생기고 구조물 행과 접속 조각의 형식이 바뀌었다. 이 브랜치에서는 `BuildInfo.PROTOCOL_VERSION`(12)을 올리지 않았다(다른 티켓이 `build_info.gd`를 고치고 있다): **병합할 때 13으로 올려야 한다.** 올리기 전의 12 클라이언트는 새 서버의 행(값 11개)을 전부 거부한다.
+
+**정의와 설정**
+
+| 구성 요소 | 계약 |
+|---|---|
+| `StructureDefinition` | 필드 셋이 늘었다. `build_work_sec`(조작 배율 1인 한 사람이 처음부터 완공까지 걸리는 행동 시간, 0보다 커야 한다), `cancel_refund_percent`·`demolish_refund_percent`(0~100 정수: 짓는 중 취소 / 완공 후 철거 때 **투입된 자재** 중 돌려주는 비율). `build_costs`는 이제 실제 요구량이다(종류 최대 `MAX_COST_KINDS` 8, 종류당 수량 1~`MAX_COST_QUANTITY` 10000). `refund_of(delivered, percent)`: 종류별로 `수량 × 비율 ÷ 100`을 정수로 내림, 0이 되는 종류는 뺀다(100이면 정확히 투입한 만큼). 개발용 정의: `dev_floor` 목재 2·4초, `dev_wall` 목재 4·못 2·8초, `dev_door` 목재 3·못 2·6초, 셋 다 취소 100%·철거 50% |
+| 아이템 정의 | `dev_wood`(묶음 20), `dev_nails`(묶음 50). 사용 효과가 없는 일반 아이템이다. 새 월드 시드(`data/tuning/dev_world_seed.tres`)에 목재 20개 묶음 둘과 못 30개가 스폰 지점 근처에 놓인다 |
+| `BuildingSettings` | `instant_completion` 기본값이 **false**가 됐다(스크립트 기본값과 `.tres` 모두). 새 값: `deliver_range_m`(2.5), `work_range_m`(2.5), `max_workers_per_structure`(4), `progress_event_step`(0.05: 진행률 이벤트를 남기는 간격), `completion_retry_interval_sec`(0.25: 완공 대기 중인 조각을 다시 보는 주기, 행동 시간) |
+| `StructureNetSettings` | 새 값: 배달 빈도(8/s·버스트 16), 작업 빈도(4/s·버스트 8), `persist_on_delivery`(false), `persist_on_completion`(true). 취소는 철거의 빈도 버킷을 같이 쓴다 |
+
+**런타임 모델(`StructureInstance`)**: `construction_progress`(0~1)와 `delivered_materials`(`{아이템 정의 ID: 수량}`)가 늘었다. `inventory_costs`는 "필요한 자재"다. 도우미: `is_under_construction()`(blueprint 또는 constructing), `missing_materials()`, `missing_units(id)`, `material_share()`(투입 단위 수 ÷ 필요 단위 수, 종류 구분 없음, 필요 자재가 없으면 1). 불변식: blueprint는 진행률 0, constructing은 0 초과, 서 있는 조각은 1, 짓는 중의 진행률 ≤ `material_share()`. 서 있는 조각의 `delivered_materials`는 `inventory_costs`보다 적을 수 있다(즉시 완공 스위치나 서버 규칙으로 완공된 조각: 낸 것이 없으니 돌려받을 것도 없다).
+
+**`BuildingService`의 새 요청**(모두 `ActionResult`, 거부되면 아무것도 바뀌지 않는다)
+
+| 요청 | 검사 순서(먼저 걸린 것이 사유) | 성공 이벤트 |
+|---|---|---|
+| `try_deliver(world, player_id, structure_id, item_instance_id = "", quantity = 0)` | `not_online` → `player_dead`/`player_resting` → `unknown_structure` → `structure_not_under_construction` → `too_far`(서버 위치, `deliver_range_m`) → `materials_complete`(모자란 자재 없음) → 아이템: `item_not_in_inventory`(없는 ID, 바닥의 아이템, 남의 아이템을 한 사유로: ID를 떠볼 수 없게) → `bad_quantity`(0 미만, 묶음보다 많음) → `material_not_needed`(그 종류는 필요 없거나 이미 다 참). `item_instance_id`가 `""`이면 들고 있는 묶음 가운데 필요한 종류를 칸 순서대로 쓴다(`quantity`는 0이어야 하고, 쓸 것이 없으면 `no_materials_carried`) | `structure_changed` `{cause: "materials", delivered_now: {종류: 가져간 수량}}` |
+| `try_set_work(world, player_id, structure_id, working)` | 시작: `not_online` → 행동 차단 → `unknown_structure` → `structure_not_under_construction` → `too_far`(`work_range_m`) → `already_working` → `blocked_by_entity`(진행률 100%로 자리가 비기를 기다리는 조각) → `materials_missing`(진행률이 이미 자재 비율에 닿음) → `too_many_workers`. 다른 조각에서 일하던 플레이어는 그 작업을 멈추고 옮긴다(`switched`). 중지: `not_online` → `not_working`(**그 조각에서** 일하고 있지 않음). 요청은 토글이 아니라 원하는 상태다 | `structure_work_started` / `structure_work_stopped {reason: "stopped"}` |
+| `try_cancel(world, player_id, structure_id)` | `not_online` → 행동 차단 → `unknown_structure` → `structure_not_under_construction` → `not_owner` → `too_far`(`demolish_range_m`) → `refund_failed` | `structure_removed {cause: "cancelled", refund, refund_item_instance_ids}` |
+| `try_demolish`(P3-4a, 바뀜) | `unknown_structure` 다음에 `structure_under_construction`이 들어갔다: 짓는 중인 조각은 철거가 아니라 취소한다. 환급이 붙었다 | `structure_removed {cause: "demolished", refund, ...}` |
+
+- `quantity` 0(`AS_MUCH_AS_NEEDED`)은 "모자란 만큼", `""`(`ANY_CARRIED_ITEM`)은 "들고 있는 것 아무거나"다. 어느 경우에도 **모자란 수량보다 많이 가져가지 않는다.**
+- 자재를 넣어도 상태는 `blueprint` 그대로다. 첫 작업 틱에 `constructing`이 된다.
+- 취소와 철거를 다른 의도로 나눈 이유: 한 박자 늦은 클라이언트가 "청사진 취소"를 보냈는데 그 사이 완공됐다면 완공된 벽을 반값에 허물게 된다. 문 요청이 토글이 아닌 것과 같은 이유다.
+- 서버 규칙(행위자·사거리 없음): `complete_structure(world, structure_id)`(자재·작업과 무관하게 완공, 전부 또는 전무: 변에 누가 있으면 `blocked_by_entity`로 거부하고 그대로 둔다. 건물 시드와 테스트용), `remove_structure(world, structure_id, refund_percent = 0)`, `stop_work(player_id, reason)`.
+- 조회: `work_of(player_id)`, `workers_of(structure_id)`(복사본), `worker_rows()`(`[[player_id, structure_id], ...]`, 시작한 순서), `worker_count()`, `awaiting_clearance_count()`.
+
+**작업(`step`)**: `BuildingService`에 `step()`이 생겼다. 행동 시간만 쓴다(`action_delta`, ADR-006: 달력 배율이 1이든 24든 같은 속도이고, 접속자가 없어 시계가 멈추면 아무것도 진행하지 않는다).
+
+- 틱마다, 작업자가 있는 조각마다: 작업자 각각이 계속 일할 수 있는지 본다(월드에 있음 → `player_action_block_reason`이 비어 있음 → 서버 위치가 `work_range_m` 안). 안 되면 그 사유로 그 작업자만 멈춘다. 남은 작업자의 `action_delta × handling_multiplier`(`SurvivalService`, 생존 시스템이 없으면 1)를 더해 `build_work_sec`로 나눈 만큼 진행률을 올린다.
+- 진행률은 `material_share()`에서 잘린다. 거기에 닿았는데 100%가 아니면 그 조각의 작업자 전원이 `materials_missing`으로 멈춘다(자재가 들어와도 저절로 다시 시작하지 않는다: 작업 의도를 다시 보내야 한다).
+- 100%가 되면 작업자 전원이 `work_finished`로 멈추고 완공을 시도한다.
+- 작업자가 멈추는 사유(`structure_work_stopped.reason`): `stopped`(요청), `switched`(다른 조각으로), `too_far`, `player_dead`, `player_resting`, `not_online`(접속 종료: `on_player_offline`에서 즉시), `materials_missing`, `work_finished`, `structure_removed`(취소·철거), `structure_unloaded`(셀 해제), 서버 규칙이 준 사유. 새 캐릭터가 시작돼도 멈춘다(`on_character_started`).
+- 작업 중인 플레이어는 움직이거나 다른 행동을 해도 된다(사거리 안에 있는 한 계속 일한다). 엎드린 채로도 일한다. 한 플레이어는 한 번에 한 조각에서만 일한다.
+- 진행률 이벤트(`structure_changed {cause: "progress"}`)는 틱마다 남기지 않는다: `constructing`이 된 틱, 마지막으로 남긴 값에서 `progress_event_step` 이상 올랐을 때, 자재가 떨어져 멈출 때, **마지막 작업자가 떠날 때**(그 순간의 정확한 값), 100%인데 완공을 기다리게 될 때. 완공은 `cause: "completed"`로 그 틱에 남긴다.
+
+**완공**: 상태 `completed`, 진행률 1, 체력 = 정의의 `max_health`, 막는 변 집합 갱신. 막는 조각(벽, 닫힌 채로 시작하는 문)은 그 변에서 `blocker_clearance_m` 안에 살아 있는 플레이어나 살아 있는 좀비가 있으면 완공하지 않는다: `constructing`·진행률 1인 채로 남고(`awaiting_clearance_count`), `completion_retry_interval_sec`마다 다시 보아 자리가 비면 저절로 완공된다. 그동안 그 조각에는 작업을 시작할 수 없고(`blocked_by_entity`) 아무것도 막지 않는다. 셀이 내려갔다 올라오거나 서버가 재시작해도 기다리는 상태는 이어진다(저장된 "짓는 중·진행률 1"에서 다시 만든다). 바닥처럼 막지 않는 조각은 기다리지 않는다.
+
+**환급**: `StructureDefinition.refund_of(delivered_materials, percent)`만큼을 `InventoryService.place_world_items`로 **그 조각의 자리 이름이 된 타일의 중심**(`StructureGrid.slot_home`: 항상 그 조각의 셀 안)에 놓는다. 종류마다 `max_stack`을 넘지 않게 여러 묶음으로 나눈다. 환급을 먼저 만들고 그다음에 조각을 없앤다: 환급이 실패하면(`refund_failed`) 아무것도 바뀌지 않는다. 환급된 아이템은 보통의 월드 아이템이다: 셀 색인에 들어가고, 누구나 주울 수 있고, 셀과 함께 저장된다.
+
+**인벤토리 트랜잭션 둘**(티켓 밖의 구조 변경, `InventoryService`):
+
+- `take_items(inventory_id, takes) -> ActionResult`: `takes`는 `[{item_instance_id, quantity}]`. 한 인벤토리의 여러 묶음에서 단위를 한 번에 뺀다(전부 또는 전무). 비워진 묶음은 삭제되고 ID가 은퇴한다. 이벤트 `items_taken {inventory_id, taken: [{item_instance_id, definition_id, quantity, remaining_quantity}]}`. 빠진 단위는 더는 아이템이 아니다: 부른 쪽이 수량을 기억한다. `InventoryNetModule`은 이 이벤트를 모른다(복제도 저장 예약도 하지 않는다): `StructureNetModule`이 소유자에게 알린다.
+- `place_world_items(quantities, cell_id, position) -> ActionResult`: 인벤토리에서 나오지 않은 새 아이템을 월드에 놓는다(`{정의 ID: 수량}`, 정의 ID 순, 묶음 크기대로 나눔, 전부 또는 전무). 이벤트는 `items_dropped`이고 `inventory_id`가 `""`이며 `placed: [{item_instance_id, definition_id, quantity}]`가 더 붙는다. 그래서 `InventoryNetModule`이 수정 없이 내려놓은 아이템과 똑같이 모든 접속자에게 알린다.
+- 두 트랜잭션 모두 `transaction_committed`로 나가므로 `TradeService`의 제안 재조정(§14.30)이 불린다. 거래 중에 제안에 올린 묶음을 청사진에 넣는 경우는 시험하지 않았다(docs/15 §15.5).
+
+**월드 셀과 저장 배치**: 문서 스키마 2(`SCHEMA_VERSION`, `CELL_SCHEMA_VERSION`), 구조물 문서의 새 필드는 docs/14 §3. 스키마 1(`SCHEMA_VERSION_P3_4A`) 문서는 읽을 때 올린다. 복구 검증에 "상태·진행률·자재가 서로 맞는가"가 더해졌다(틀리면 그 문서 전체를 거부). 셀이 내려갈 때 그 셀의 조각에서 일하던 작업자는 멈춘다(실제로는 그 전에 `too_far`로 멈춘다: 작업 사거리 2.5m, 셀 해제는 플레이어에게서 먼 셀). 누가 일하는지는 어디에도 저장하지 않는다.
+
+**저장 시점과 서버가 죽었을 때**(docs/00 ADR-025)
+
+| 일 | 저장 |
+|---|---|
+| 배치, 취소, 철거 | 승인 즉시(`persist_on_place_and_demolish`). 환급이 있으면 `InventoryNetModule`이 예약한 저장을 당겨 써서 한 번만 쓴다 |
+| 완공 | 그 틱의 끝에 한 번(`persist_on_completion`) |
+| 자재 배달 | 따로 저장하지 않는다(`persist_on_delivery` 기본 false) |
+| 작업 시작·중지, 진행률 | 저장하지 않는다(설정도 없다) |
+
+- 저장 한 번은 월드 전체 한 세대다(world_state, 플레이어 전원, 메모리에 있는 셀 전부). 배달은 한 호출 안에서 인벤토리와 구조물을 같이 바꾸고 그 사이에 저장이 끼어들 수 없으므로, **어떤 세대에도 자재가 두 곳에 다 있거나 어느 쪽에도 없는 일이 없다.**
+- 저장 사이에 서버가 죽으면: 그 사이의 배달은 없던 일이 되고(자재는 인벤토리에 있다), 그 사이의 진행률은 사라지고, 그 사이에 시작된 완공 대기는 "100%가 되기 전"으로 돌아간다. 배치·취소·철거·완공 자체는 저장된 뒤라 남는다.
+- 환급된 자재는 "아이템 내려놓기"와 같은 이벤트라서 `InventoryNetModule`이 그 틱의 끝에 저장한다. `persist_on_place_and_demolish`를 꺼도 환급이 있는 취소·철거는 저장된다.
+
+**네트워크(`StructureNetModule`)**: 전부 채널 0(`CHANNEL_RELIABLE`), reliable ordered(§15.4와 같은 이유).
+
+| 방향 | RPC | 내용 |
+|---|---|---|
+| C→S | `_rpc_request_deliver(request_id:int, structure_id:String, item_instance_id:String, quantity:int)` | 자재 배달 의도. `item_instance_id` `""` = 들고 있는 것 중 필요한 것 전부, `quantity` 0 = 모자란 만큼 |
+| C→S | `_rpc_request_work(request_id:int, structure_id:String, working:bool)` | 그 조각에서 일하겠다(true) / 그만두겠다(false) |
+| C→S | `_rpc_request_cancel(request_id:int, structure_id:String)` | 짓는 중인 조각 취소 |
+| S→전체 | `_rpc_work_changed(player_id:String, structure_id:String, working:bool, reason:String)` | 누가 어느 조각에서 일하기 시작했다 / 멈췄다. `reason`은 시작일 때만 `""` |
+| S→요청자 | `_rpc_structure_result`(P3-4a 그대로) | 새 의도 셋의 답도 이것으로 간다. `structure_id`는 승인일 때 그 조각 |
+| S→전체 | `_rpc_structure_rows`(**형식 바뀜**) | 행이 값 11개가 됐다 |
+
+- 행: `[structure_id, definition_id, x, z, rotation, state, door_open, health_fraction, progress:float, delivered:Dictionary, required:Dictionary]`. `required`는 `{아이템 정의 ID: 수량 1~10000}`(최대 8종류), `delivered`는 그 일부(같은 키 또는 더 적은 키, 수량은 `required` 이하).
+- 접속 조각: `{schema_version: 2, structures: [행, ...], workers: [[player_id, structure_id], ...]}`. 작업자는 조각에 든 구조물만 가리킨다.
+- 의도 검증: §15.4의 순서 그대로이고 모양 검사에 `bad_item_id`(아이템 ID 64자 초과), `bad_quantity`(0 미만 또는 10000 초과: 64비트 수로 비교한 뒤에 규칙에 넘긴다)가 더해졌다. 빈도는 배달·작업이 각자의 버킷, 취소는 철거 버킷이다.
+- 진행률은 틱마다 보내지 않는다: `BuildingService`가 남긴 이벤트 하나가 행 하나다(위 "작업"의 진행률 이벤트 규칙). 완공과 상태 변화는 그 틱에 간다. 작업자가 남아 있는 동안 미러의 진행률은 최대 한 단계(5%)만큼 서버보다 뒤처질 수 있고, 마지막 작업자가 멈추면 정확한 값이 간다.
+- 자재를 넣은 플레이어의 인벤토리: 서버가 `InventoryService.transaction_committed`의 `items_taken`을 듣고, **그 인벤토리의 주인에게만** `InventoryNetModule`의 기존 메시지(`_rpc_inventory_item_changed`, `_rpc_inventory_items_removed`)를 보낸다. 다른 접속자는 남의 인벤토리에 대해 아무것도 받지 않는다(구조물 행의 `delivered`만 본다). 두 메시지는 이름으로 부른다(`inventory_net_module.gd`가 다른 티켓 소유라서: `WorldCellNetModule`과 같은 방식). 순서는 인벤토리 변화 → 구조물 행 → 요청 결과다.
+- 환급된 아이템: `InventoryNetModule`이 기존 `_rpc_world_items_added`로 모든 접속자에게 보낸다(이 모듈은 아무것도 하지 않는다).
+- 셀이 내려갈 때는 그 셀의 조각에서 일하던 작업자의 중지를 먼저 보내고 그다음에 제거를 보낸다.
+- 진단 값: `sent_work_change_count`, `sent_message_count`(행·제거·작업 변화 메시지 수, 받는 사람 수와 무관하게 메시지 하나를 한 번 센다).
+
+**정보 공개**(ADR-009): 모든 접속자가 받는 것은 상태, 진행률, 투입된 자재와 필요한 자재, 누가 그 조각에서 일하는지와 왜 멈췄는지다. 보내지 않는 것은 누가 배치했는지(P3-4a 그대로), 누가 무엇을 얼마나 넣었는지, 남의 인벤토리다.
+
+**클라이언트 미러(`ClientStructureState`)**: 항목에 `progress`, `delivered`, `required`가 늘었다. `workers`(`player_id -> structure_id`), `work_of(player_id)`, `workers_of(structure_id)`, 시그널 `work_changed(player_id, structure_id, working, reason)`, `apply_work_change(...)`. 검증: 진행률 0~1의 유한한 float, 자재 사전의 키·값·개수·`delivered ⊆ required`, 작업 변화의 ID 형식과 "시작이면 사유 없음"·"시작은 미러에 있는 구조물에만". 미러에 없는 작업자에 대한 중지는 오류가 아니다(`unknown_work_stop_count`). 구조물이 제거되면 그 작업자도 미러에서 빠진다(`reason: "structure_removed"`). 클라이언트 API: `request_deliver(structure_id, item_instance_id = "", quantity = 0)`, `request_work(structure_id, working)`, `request_cancel(structure_id)`(요청 번호를 돌려준다. 답은 `structure_result`).
+
+**테스트**: `tests/unit/building_construction_test.gd`(정의의 비용·작업량·환급 검증, 개발용 정의와 새 월드의 자재, 청사진, 배달: 필요한 만큼만·한 번에 전부·거부 사유 전부·여러 사람, 진행률 상한, 행동 시간·조작 배율·작업자 합산, 작업 거부 사유, 작업이 멈추는 모든 사유, 여러 작업자가 한 틱에 멈춤, 상태 전이와 이벤트 수, 변에 누가 서 있을 때의 완공, 취소·철거 환급과 수량 보존, 즉시 완공 스위치, 서버 규칙), `building_construction_save_test.gd`(새 필드의 저장 형식, P3-4a 문서 올리기, 짓는 중에 셀 해제 → 재로딩, 월드 문서 왕복, 복구 검증), `structure_construction_state_test.gd`(미러 검증), `construction_measure_test.gd`(측정값 출력), `tests/integration/construction_net_test.gd`(한 사람이 놓고 다른 사람이 자재를 넣고 둘이 지어 두 미러가 같은 벽을 봄, 위조 요청, 빈도 제한, 늦은 접속, 짓는 중 셀 해제·재로딩, 실제 파일로 저장 → 재시작 → 복구와 "지금 죽으면 디스크에 남는 것", 환급 아이템이 클라이언트에 나타남). 지원 코드: `tests/framework/construction_test_kit.gd`(테스트 전용 자재·구조물 정의: 개발용 수치를 조정해도 테스트 기대값이 바뀌지 않게).
+
+**P3-4b(클라이언트 표시·건축 모드 입력)가 알아야 할 것**
+
+1. 청사진·짓는 중·완공은 미러 항목의 `state`로 구분한다. 진행 표시줄은 `progress`, 자재 표시는 `required`와 `delivered`(모자란 것 = 차이), "자재 대기 중"은 `state`가 `blueprint`/`constructing`이고 `progress`가 `delivered` 합 ÷ `required` 합과 같을 때, "누가 서 있어서 완공 대기 중"은 `constructing`인데 `progress`가 1일 때다. 값이 바뀌면 `structure_changed(id)`가 온다.
+2. 진행률은 5% 단계로 온다(작업자가 없으면 정확한 값). 부드럽게 보이려면 화면에서 보간한다.
+3. 보낼 것: 자재 넣기는 `request_deliver(id)` 하나면 된다(들고 있는 것 중 필요한 것을 서버가 고른다). 묶음을 골라 넣으려면 `request_deliver(id, item_instance_id, quantity)`. 작업은 `request_work(id, true)` 한 번이고 서버가 멈출 때까지 이어진다(키를 누르고 있을 필요가 없다. 누르고 있는 동안만 일하게 하려면 뗄 때 `request_work(id, false)`를 보낸다). 취소는 `request_cancel(id)`, 완공된 조각은 `request_demolish(id)`: 서로 바꿔 보내면 `structure_not_under_construction`/`structure_under_construction`으로 거부된다.
+4. 내 작업 상태는 `client_state.work_of(내 player_id)`와 `work_changed`로 안다. 멈춘 사유(`reason`)를 HUD에 보여 줄 수 있다. 다른 플레이어의 작업 모션도 같은 정보로 그린다.
+5. 내 인벤토리는 평소대로 `NetworkService.client_state.inventory`가 갱신된다(`InventoryNetModule.inventory_item_changed`/`inventory_items_removed`). 환급된 자재는 `world_items`에 나타난다(P2-T15의 바닥 아이템 표시가 그대로 그린다).
+6. 미러에는 여전히 누가 놓았는지가 없다: 취소·철거가 되는지는 요청해서 `not_owner`를 받아야 안다(§15.4와 같다).
+7. 사거리는 서버 값이다(자재·작업 2.5m, 취소·철거 4m). 클라이언트 표시는 `CompositionConfig.building`의 같은 리소스에서 읽으면 된다. 기준점은 §15.4의 `slot_anchor`다.
+8. 개발용 정의에는 아직 모델·재질이 없다(§15.4와 같다). 청사진을 반투명으로 그리는 것 등은 표시 쪽이 정한다.

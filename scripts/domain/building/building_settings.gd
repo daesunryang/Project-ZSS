@@ -1,9 +1,11 @@
 class_name BuildingSettings
 extends Resource
-## Building grid and placement tuning (P3-4a, docs/04 §2, docs/00 ADR-024).
-## Defaults in `res://data/tuning/building_settings.tres`. Every value is
-## PROVISIONAL (docs/15 §15.4 P3-091..) until play-tested: the user tunes
-## numbers and rules at the end of Phase 3.
+## Building grid, placement and construction tuning (P3-4a, P3-5; docs/04 §2,
+## §5, docs/00 ADR-024, ADR-025). Defaults in
+## `res://data/tuning/building_settings.tres`. Every value is PROVISIONAL
+## (docs/15 §15.4 P3-091.., §15.5 P3-121..) until play-tested: the user tunes
+## numbers and rules at the end of Phase 3. What a piece costs, how much
+## work it takes and what comes back are in its StructureDefinition.
 
 const DEFAULT_PATH: String = "res://data/tuning/building_settings.tres"
 
@@ -22,10 +24,12 @@ const DEFAULT_PATH: String = "res://data/tuning/building_settings.tres"
 @export_range(0.1, 100.0) var demolish_range_m: float = 4.0
 ## Largest distance between a player and a door it opens or closes, metres.
 @export_range(0.1, 100.0) var door_interact_range_m: float = 2.5
-## Dev rule (docs/00 ADR-024): a placed structure is `completed` at once.
-## false = it is placed as a `blueprint` that takes its slot but blocks
-## nothing; the blueprint -> work -> completed flow is P3-5.
-@export var instant_completion: bool = true
+## false (default since P3-5, docs/00 ADR-025): a placed structure is a
+## `blueprint` that takes its slot but blocks nothing; players deliver its
+## materials and work on it until it is `completed`. true (the dev rule of
+## P3-4a, kept for tests and development): it is `completed` at once and
+## nothing is paid.
+@export var instant_completion: bool = false
 ## A newly placed door is open (true) or closed (false).
 @export var door_starts_open: bool = false
 ## A blocking piece (a wall, a closed door) cannot be placed, and a door
@@ -39,6 +43,28 @@ const DEFAULT_PATH: String = "res://data/tuning/building_settings.tres"
 ## Material quality given to a placed piece (1 = normal). Nothing reads it
 ## yet; materials are P3-5.
 @export_range(0.0, 10.0) var default_material_quality: float = 1.0
+
+@export_group("Construction")
+## Largest distance between a player (server position) and the unfinished
+## structure it delivers materials to, metres. PROVISIONAL (docs/15 P3-123).
+@export_range(0.1, 100.0) var deliver_range_m: float = 2.5
+## Largest distance between a player and the unfinished structure it works
+## on, metres. A worker that gets further away stops working.
+@export_range(0.1, 100.0) var work_range_m: float = 2.5
+## Players that may work on one structure at the same time. Their work adds
+## up (each contributes its own handling multiplier). PROVISIONAL
+## (docs/15 P3-128).
+@export_range(1, 64) var max_workers_per_structure: int = 4
+## An event (and so one replicated row) is recorded each time the progress
+## of a structure under construction has grown by this much (0..1) since the
+## last one. State changes, the last value when nobody works any more and
+## the completion are always recorded at once. PROVISIONAL (docs/15 P3-138).
+@export_range(0.001, 1.0) var progress_event_step: float = 0.05
+## A structure that is finished but cannot be completed because a living
+## player or zombie stands in its blocking edge is looked at again this
+## often, seconds (action time), and completes by itself once the edge is
+## clear. PROVISIONAL (docs/15 P3-130).
+@export_range(0.01, 60.0) var completion_retry_interval_sec: float = 0.25
 
 @export_group("Collision")
 ## A mover that is stopped by a blocking edge ends this far in front of it,
@@ -61,7 +87,7 @@ func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
 	if not is_finite(grid_module_m) or grid_module_m <= 0.0:
 		errors.append("building grid_module_m must be > 0")
-	for value: float in [placement_range_m, demolish_range_m, door_interact_range_m]:
+	for value: float in [placement_range_m, demolish_range_m, door_interact_range_m, deliver_range_m, work_range_m]:
 		if not is_finite(value) or value <= 0.0:
 			errors.append("building ranges must be > 0")
 			break
@@ -75,6 +101,12 @@ func validate() -> PackedStringArray:
 		errors.append("building collision_skin_m must be > 0 and smaller than half a module")
 	if max_pending_events < 1:
 		errors.append("building max_pending_events must be >= 1")
+	if max_workers_per_structure < 1:
+		errors.append("building max_workers_per_structure must be >= 1")
+	if not is_finite(progress_event_step) or progress_event_step <= 0.0 or progress_event_step > 1.0:
+		errors.append("building progress_event_step must be within (0, 1]")
+	if not is_finite(completion_retry_interval_sec) or completion_retry_interval_sec <= 0.0:
+		errors.append("building completion_retry_interval_sec must be > 0")
 	return errors
 
 

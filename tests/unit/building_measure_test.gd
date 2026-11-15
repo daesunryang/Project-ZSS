@@ -63,6 +63,8 @@ func _config() -> CompositionConfig:
 	config.zombie.wander_pause_min_sec = NEVER
 	config.zombie.wander_pause_max_sec = NEVER
 	config.building = BuildingSettings.new()
+	# Standing walls are what is measured here (P3-4a): the dev switch is on.
+	config.building.instant_completion = true
 	config.building.max_structures_per_cell = 100000
 	config.dev_seed = DevWorldSeed.new()
 	config.world_cells = _settings
@@ -243,7 +245,7 @@ func test_measure_placing_saving_and_loading_a_cell_with_a_memory_store() -> voi
 	var rows: Array = []
 	for row: Dictionary in _building(world).rows():
 		rows.append(ClientStructureState.encode_row(row))
-	var fragment: Dictionary = {ClientStructureState.KEY_SCHEMA_VERSION: ClientStructureState.SCHEMA_VERSION, ClientStructureState.KEY_STRUCTURES: rows}
+	var fragment: Dictionary = {ClientStructureState.KEY_SCHEMA_VERSION: ClientStructureState.SCHEMA_VERSION, ClientStructureState.KEY_STRUCTURES: rows, ClientStructureState.KEY_WORKERS: []}
 	var started: int = Time.get_ticks_usec()
 	assert_true(module.client_state.apply_join(fragment))
 	var apply_ms: float = float(Time.get_ticks_usec() - started) / USEC_PER_MSEC

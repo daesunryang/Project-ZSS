@@ -10,3 +10,9 @@ placement = 0
 blocks_movement = false
 is_door = false
 max_health = 100.0
+build_costs = Dictionary[String, int]({
+"dev_wood": 2
+})
+build_work_sec = 4.0
+cancel_refund_percent = 100
+demolish_refund_percent = 50

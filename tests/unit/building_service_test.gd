@@ -4,6 +4,9 @@ extends TestCase
 ## every refusal, occupancy, doors, demolition, and the movement of players
 ## and zombies against walls and doors. World cells and saving:
 ## building_cell_test.gd. Grid math: structure_grid_test.gd.
+## These tests are about pieces that stand: they run with the dev switch
+## BuildingSettings.instant_completion on (off by default since P3-5). The
+## construction flow: building_construction_test.gd.
 
 const WORLD: String = "building_test_world"
 const TICK: float = 0.05
@@ -27,6 +30,7 @@ var _now_msec: int = 0
 func before_each() -> void:
 	GameLogger.set_capture(true)
 	_building_settings = BuildingSettings.new()
+	_building_settings.instant_completion = true
 	_zombie_settings = ZombieSettings.new()
 	_zombie_settings.dev_spawn_count = 0
 	_zombie_settings.wander_pause_min_sec = NEVER
@@ -127,7 +131,7 @@ func test_default_definitions_and_settings_load_and_are_composed() -> void:
 	var loaded: BuildingSettings = BuildingSettings.load_or_default()
 	assert_eq(loaded.validate().size(), 0, "; ".join(loaded.validate()))
 	assert_true(is_equal_approx(loaded.grid_module_m, 1.0), "docs/04 §2: a 1 m module to start with")
-	assert_true(loaded.instant_completion, "the dev rule of this ticket")
+	assert_false(loaded.instant_completion, "P3-5: the shipped default is the blueprint flow, the dev rule is a switch")
 	var config: CompositionConfig = CompositionConfig.from_defaults()
 	assert_eq(config.validate().size(), 0, "; ".join(config.validate()))
 	var ids: PackedStringArray = ServerComposition.create_world(WORLD, config).system_ids()
@@ -189,7 +193,9 @@ func test_a_placed_structure_has_the_required_fields_and_is_completed_at_once() 
 	assert_eq(structure.construction_state, StructureInstance.State.COMPLETED, "the dev rule: completed at once")
 	assert_true(is_equal_approx(structure.health, StructureCatalog.load_directory().get_definition(WALL).max_health))
 	assert_true(is_equal_approx(structure.material_quality, 1.0))
-	assert_eq(structure.inventory_costs.size(), 0, "the dev wall costs nothing")
+	assert_eq(structure.inventory_costs, StructureCatalog.load_directory().get_definition(WALL).build_costs, "what the definition says it costs")
+	assert_eq(structure.delivered_materials.size(), 0, "the dev rule: nothing was paid")
+	assert_eq(structure.construction_progress, 1.0)
 	assert_eq(structure.connections.size(), 0)
 	assert_true(is_equal_approx(structure.last_modified_at, world.clock.world_time_sec) and structure.last_modified_at > 0.0, "calendar world time")
 	assert_eq(structure.placed_by, alice.player_id)
@@ -209,7 +215,10 @@ func test_a_placed_structure_has_the_required_fields_and_is_completed_at_once() 
 	assert_eq(events[0]["event_type"], BuildingService.EVENT_PLACED)
 	assert_eq(events[0]["player_id"], alice.player_id)
 	assert_eq(events[0]["cell_id"], "cell_0_0")
-	assert_eq(service.public_row(structure), {"structure_id": structure_id, "definition_id": WALL, "x": 6, "z": 5, "rotation": 1, "state": "completed", "door_open": false, "health_fraction": 1.0})
+	var required: Dictionary = {}
+	for item_id: String in structure.inventory_costs:
+		required[item_id] = structure.inventory_costs[item_id]
+	assert_eq(service.public_row(structure), {"structure_id": structure_id, "definition_id": WALL, "x": 6, "z": 5, "rotation": 1, "state": "completed", "door_open": false, "health_fraction": 1.0, "progress": 1.0, "delivered": {}, "required": required})
 	assert_true(SaveService.is_json_safe(events[0]) and SaveService.is_json_safe(structure.to_dict()))
 	assert_eq(service.drain_events().size(), 0)
 

@@ -23,11 +23,11 @@ func after_each() -> void:
 
 
 func _row(structure_id: String, definition_id: String = WALL, x: int = 1, z: int = 2, rotation: int = 1, state: String = "completed", door_open: bool = false, health: float = 1.0) -> Array:
-	return [structure_id, definition_id, x, z, rotation, state, door_open, health]
+	return [structure_id, definition_id, x, z, rotation, state, door_open, health, 1.0, {}, {}]
 
 
 func _fragment(rows: Array) -> Dictionary:
-	return {ClientStructureState.KEY_SCHEMA_VERSION: ClientStructureState.SCHEMA_VERSION, ClientStructureState.KEY_STRUCTURES: rows}
+	return {ClientStructureState.KEY_SCHEMA_VERSION: ClientStructureState.SCHEMA_VERSION, ClientStructureState.KEY_STRUCTURES: rows, ClientStructureState.KEY_WORKERS: []}
 
 
 func test_rows_add_change_and_remove_structures() -> void:
@@ -41,7 +41,7 @@ func test_rows_add_change_and_remove_structures() -> void:
 	_state.changed.connect(func() -> void: change_count[0] += 1)
 	assert_eq(_state.apply_rows([_row("structure_000001"), _row("structure_000002", DOOR, 4, 4, 0)]), 2)
 	assert_eq(_state.structure_ids(), PackedStringArray(["structure_000001", "structure_000002"]))
-	assert_eq(_state.get_structure("structure_000001"), {"definition_id": WALL, "tile": Vector2i(1, 2), "rotation": 1, "state": "completed", "door_open": false, "health_fraction": 1.0})
+	assert_eq(_state.get_structure("structure_000001"), {"definition_id": WALL, "tile": Vector2i(1, 2), "rotation": 1, "state": "completed", "door_open": false, "health_fraction": 1.0, "progress": 1.0, "delivered": {}, "required": {}})
 	assert_eq(_state.slot_of("structure_000001"), Vector3i(2, 2, LOW_X), "the +X side of tile (1, 2)")
 	assert_eq(_state.structure_id_at(Vector3i(2, 2, LOW_X)), "structure_000001")
 	assert_eq(Array(added), ["structure_000001", "structure_000002"])
@@ -71,11 +71,13 @@ func test_a_join_fragment_replaces_the_mirror_or_is_refused_as_a_whole() -> void
 	assert_true(_state.apply_join({}))
 	assert_eq(_state.structure_count(), 0)
 	var bad_fragments: Array[Dictionary] = [
-		{"schema_version": 1},
+		{"schema_version": 2},
 		{"schema_version": 2, "structures": []},
-		{"schema_version": 1.0, "structures": []},
-		{"schema_version": 1, "structures": {}},
-		{"schema_version": 1, "structures": [], "extra": true},
+		{"schema_version": 1, "structures": [], "workers": []},
+		{"schema_version": 3, "structures": [], "workers": []},
+		{"schema_version": 2.0, "structures": [], "workers": []},
+		{"schema_version": 2, "structures": {}, "workers": []},
+		{"schema_version": 2, "structures": [], "workers": [], "extra": true},
 		_fragment([_row("structure_000001"), _row("structure_000001", FLOOR)]),
 		_fragment([_row("structure_000001"), "not a row"]),
 		_fragment([_row("structure_000001"), _row("structure_000002", "no_such_definition")]),
@@ -95,7 +97,8 @@ func test_malformed_rows_are_counted_and_change_nothing() -> void:
 	var bad_rows: Array = [
 		"row",
 		[],
-		_row("structure_000002").slice(0, 7),
+		_row("structure_000002").slice(0, 10),
+		_row("structure_000002").slice(0, 8),
 		_row("structure_000002") + [0],
 		_row("zombie_000002"),
 		_row(""),
@@ -110,12 +113,12 @@ func test_malformed_rows_are_counted_and_change_nothing() -> void:
 		_row("structure_000002", WALL, 0, 0, 0, "completed", false, 1.5),
 		_row("structure_000002", WALL, 0, 0, 0, "completed", false, -0.1),
 		_row("structure_000002", WALL, 0, 0, 0, "completed", false, NAN),
-		["structure_000002", WALL, 1.0, 2, 1, "completed", false, 1.0],
-		["structure_000002", WALL, 1, 2, "1", "completed", false, 1.0],
-		["structure_000002", WALL, 1, 2, 1, "completed", 0, 1.0],
-		["structure_000002", WALL, 1, 2, 1, "completed", false, 1],
-		[7, WALL, 1, 2, 1, "completed", false, 1.0],
-		["structure_000002", null, 1, 2, 1, "completed", false, 1.0],
+		["structure_000002", WALL, 1.0, 2, 1, "completed", false, 1.0, 1.0, {}, {}],
+		["structure_000002", WALL, 1, 2, "1", "completed", false, 1.0, 1.0, {}, {}],
+		["structure_000002", WALL, 1, 2, 1, "completed", 0, 1.0, 1.0, {}, {}],
+		["structure_000002", WALL, 1, 2, 1, "completed", false, 1, 1.0, {}, {}],
+		[7, WALL, 1, 2, 1, "completed", false, 1.0, 1.0, {}, {}],
+		["structure_000002", null, 1, 2, 1, "completed", false, 1.0, 1.0, {}, {}],
 	]
 	for row: Variant in bad_rows:
 		assert_false(_state.is_valid_row(row), str(row))
@@ -145,9 +148,9 @@ func test_malformed_rows_are_counted_and_change_nothing() -> void:
 
 
 func test_the_wire_row_of_a_server_row_passes_the_client_check() -> void:
-	var public_row: Dictionary = {"structure_id": "structure_000012", "definition_id": DOOR, "x": -3, "z": 40, "rotation": 2, "state": "completed", "door_open": true, "health_fraction": 0.5}
+	var public_row: Dictionary = {"structure_id": "structure_000012", "definition_id": DOOR, "x": -3, "z": 40, "rotation": 2, "state": "completed", "door_open": true, "health_fraction": 0.5, "progress": 1.0, "delivered": {"dev_wood": 3}, "required": {"dev_wood": 3, "dev_nails": 2}}
 	var row: Array = ClientStructureState.encode_row(public_row)
-	assert_eq(row, ["structure_000012", DOOR, -3, 40, 2, "completed", true, 0.5])
+	assert_eq(row, ["structure_000012", DOOR, -3, 40, 2, "completed", true, 0.5, 1.0, {"dev_wood": 3}, {"dev_wood": 3, "dev_nails": 2}])
 	assert_true(_state.is_valid_row(row))
 	# Extra keys of an event (who, where, when) do not go onto the wire.
 	var event: Dictionary = public_row.duplicate()

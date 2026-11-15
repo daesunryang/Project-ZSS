@@ -58,6 +58,9 @@ func _config() -> CompositionConfig:
 	config.zombie = ZombieSettings.new()
 	config.zombie.dev_spawn_count = 0
 	config.building = BuildingSettings.new()
+	# Standing pieces (P3-4a): the dev switch is on. A save in the middle of
+	# a construction: construction_net_test.gd.
+	config.building.instant_completion = true
 	config.dev_seed = DevWorldSeed.new()
 	config.world_cells = _settings
 	return config

@@ -53,6 +53,9 @@ func before_each() -> void:
 	_config.zombie.wander_pause_min_sec = NEVER
 	_config.zombie.wander_pause_max_sec = NEVER
 	_config.building = BuildingSettings.new()
+	# These tests are about standing pieces (P3-4a): the dev switch is on.
+	# The construction flow over the network: construction_net_test.gd.
+	_config.building.instant_completion = true
 	_config.structure_net = StructureNetSettings.new()
 	_config.structure_net.place_intent_rate_per_sec = GENEROUS_RATE
 	_config.structure_net.place_intent_burst = GENEROUS_BURST
@@ -150,6 +153,9 @@ func _server_view() -> Dictionary:
 			"state": row["state"],
 			"door_open": row["door_open"],
 			"health_fraction": row["health_fraction"],
+			"progress": row["progress"],
+			"delivered": row["delivered"],
+			"required": row["required"],
 		}
 	return view
 
@@ -222,7 +228,10 @@ func test_a_wall_placed_by_one_player_is_seen_by_both() -> void:
 	assert_true(_building().has_structure(wall_id), "the answer names the structure the server made")
 	assert_true(await _eventually(func() -> bool: return _mirror(a).has_structure(wall_id) and _mirror(b).has_structure(wall_id)), "both clients got it")
 	# The phase's acceptance line: two players see the same structure.
-	var expected: Dictionary = {"definition_id": WALL, "tile": Vector2i(6, 5), "rotation": 1, "state": "completed", "door_open": false, "health_fraction": 1.0}
+	var required: Dictionary = {}
+	for item_id: String in _config.structures.get_definition(WALL).build_costs:
+		required[item_id] = _config.structures.get_definition(WALL).build_costs[item_id]
+	var expected: Dictionary = {"definition_id": WALL, "tile": Vector2i(6, 5), "rotation": 1, "state": "completed", "door_open": false, "health_fraction": 1.0, "progress": 1.0, "delivered": {}, "required": required}
 	assert_eq(_mirror(a).get_structure(wall_id), expected)
 	assert_eq(_mirror(b).get_structure(wall_id), _mirror(a).get_structure(wall_id), "two players see the same structure")
 	assert_true(_matches_server(a) and _matches_server(b), "and it is what the server has")
@@ -677,6 +686,9 @@ func test_default_settings_rpc_table_and_request_validation() -> void:
 	broken.removals_per_message = 0
 	broken.max_mirror_structures = 0
 	assert_eq(broken.validate().size(), 5, "; ".join(broken.validate()))
+	broken.deliver_intent_rate_per_sec = -1.0
+	broken.work_intent_burst = 0
+	assert_eq(broken.validate().size(), 5, "the new rates are checked by the same two rules")
 	assert_eq(BuildInfo.PROTOCOL_VERSION, 13, "the structure RPCs are a protocol change (12, P3-4a); 13 since the replication scope by cell (P3-2)")
 	# Every message is on the reliable ordered channel (docs/09 §15.4).
 	var module: StructureNetModule = StructureNetModule.new(settings, StructureCatalog.load_directory())
@@ -689,6 +701,11 @@ func test_default_settings_rpc_table_and_request_validation() -> void:
 		"_rpc_structure_result": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_structure_rows": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_structures_removed": MultiplayerAPI.RPC_MODE_AUTHORITY,
+		# P3-5 (docs/09 §15.5).
+		"_rpc_request_deliver": MultiplayerAPI.RPC_MODE_ANY_PEER,
+		"_rpc_request_work": MultiplayerAPI.RPC_MODE_ANY_PEER,
+		"_rpc_request_cancel": MultiplayerAPI.RPC_MODE_ANY_PEER,
+		"_rpc_work_changed": MultiplayerAPI.RPC_MODE_AUTHORITY,
 	}
 	assert_eq(rpc_config.size(), expected.size(), "no other RPC exists")
 	for method: String in expected:

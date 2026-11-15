@@ -55,6 +55,9 @@ func _config() -> CompositionConfig:
 	config.zombie = ZombieSettings.new()
 	config.zombie.dev_spawn_count = 0
 	config.building = BuildingSettings.new()
+	# These tests are about standing pieces (P3-4a): the dev switch is on.
+	# Cells and saves of pieces under construction: building_construction_save_test.gd.
+	config.building.instant_completion = true
 	config.world_cells = _cell_settings
 	return config
 
@@ -145,6 +148,7 @@ func _entry(structure_id: String, definition_id: String, tile: Vector2i, rotatio
 	structure.tile = tile
 	structure.rotation = rotation
 	structure.construction_state = StructureInstance.State.COMPLETED
+	structure.construction_progress = StructureInstance.FULL_PROGRESS
 	structure.health = 50.0
 	structure.cell_id = "cell_0_0"
 	return _json(structure.to_dict())
