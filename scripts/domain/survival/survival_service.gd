@@ -53,6 +53,9 @@ const CAUSE_DEHYDRATION: String = "dehydration"
 const CAUSE_STARVATION_DEHYDRATION: String = "starvation_dehydration"
 const CAUSE_INFECTION: String = "infection"
 const DEATH_SEARCH_ITERATIONS: int = 48
+## World time is a sum of tick lengths; a report interval that is due within
+## this tolerance counts as elapsed.
+const DAMAGE_REPORT_EPSILON_SEC: float = 0.000001
 
 const FULL_MULTIPLIER: float = 1.0
 const DEAD_MULTIPLIER: float = 0.0
@@ -65,6 +68,11 @@ var _online: Dictionary[String, bool] = {}
 var _events: Array[Dictionary] = []
 ## Events discarded because the configured pending queue was full.
 var dropped_event_count: int = 0
+## Time-based damage not yet reported, per player:
+## {"since": world time of the first unreported tick, "bleeding", "starvation",
+## "dehydration", "infection": accumulated damage}. Health is already applied;
+## only the event/log is batched (docs/15 P2-88). Transient, not saved.
+var _pending_damage: Dictionary[String, Dictionary] = {}
 
 
 func _init(settings: SurvivalSettings, ids: EntityIdGenerator, clock: WorldClock) -> void:
@@ -302,6 +310,9 @@ func on_player_online(_world: ServerWorld, player_id: String) -> void:
 
 func on_player_offline(_world: ServerWorld, player_id: String) -> void:
 	_online.erase(player_id)
+	var vitals: PlayerVitals = _vitals.get(player_id, null)
+	if vitals != null:
+		_flush_survival_damage(player_id, vitals, _clock.world_time_sec)
 
 
 func step(world: ServerWorld, _real_delta: float, world_delta: float) -> void:
@@ -399,16 +410,7 @@ func _advance_living(player_id: String, vitals: PlayerVitals, elapsed: float, st
 		_heal_wounds(vitals, recovery_duration)
 	if total_damage > 0.0:
 		vitals.health = maxf(vitals.health - total_damage, 0.0)
-		var event: Dictionary = {
-			"event_type": EVENT_PLAYER_SURVIVAL_DAMAGE,
-			"player_id": player_id,
-			"cause": _survival_damage_cause(vitals, elapsed, bleeding_damage, starvation_damage, dehydration_damage, infection_damage),
-			"damage": total_damage,
-			"health_after": vitals.health,
-			"world_time": start_time + elapsed,
-		}
-		_push_event(event)
-		GameLogger.info("survival", "player survival damage", event)
+		_accumulate_survival_damage(player_id, vitals, start_time, start_time + elapsed, bleeding_damage, starvation_damage, dehydration_damage, infection_damage)
 	var stamina_recovery: float = _stamina_recovery(vitals, elapsed)
 	if stamina_recovery > 0.0:
 		vitals.stamina = minf(vitals.stamina + stamina_recovery, _settings.max_stamina)
@@ -579,9 +581,52 @@ func _advance_infection_stage(player_id: String, vitals: PlayerVitals, world_tim
 	GameLogger.info("survival", "player infection stage changed", event)
 
 
+## Adds one tick's time-based damage to the player's unreported total and
+## reports it once the configured interval has passed. Health was already
+## reduced by the caller; batching only limits events and log lines.
+func _accumulate_survival_damage(player_id: String, vitals: PlayerVitals, start_time: float, end_time: float, bleeding: float, starvation: float, dehydration: float, infection: float) -> void:
+	var pending: Dictionary = _pending_damage.get(player_id, {})
+	if pending.is_empty():
+		pending = {"since": start_time, "bleeding": 0.0, "starvation": 0.0, "dehydration": 0.0, "infection": 0.0}
+		_pending_damage[player_id] = pending
+	pending["bleeding"] = float(pending["bleeding"]) + bleeding
+	pending["starvation"] = float(pending["starvation"]) + starvation
+	pending["dehydration"] = float(pending["dehydration"]) + dehydration
+	pending["infection"] = float(pending["infection"]) + infection
+	if end_time - float(pending["since"]) + DAMAGE_REPORT_EPSILON_SEC >= _settings.survival_damage_event_interval_world_sec:
+		_flush_survival_damage(player_id, vitals, end_time)
+
+
+## Reports and clears the player's unreported time-based damage, if any.
+func _flush_survival_damage(player_id: String, vitals: PlayerVitals, world_time: float) -> void:
+	var pending: Dictionary = _pending_damage.get(player_id, {})
+	if pending.is_empty():
+		return
+	_pending_damage.erase(player_id)
+	var bleeding: float = float(pending["bleeding"])
+	var starvation: float = float(pending["starvation"])
+	var dehydration: float = float(pending["dehydration"])
+	var infection: float = float(pending["infection"])
+	var total: float = bleeding + starvation + dehydration + infection
+	if total <= 0.0:
+		return
+	var event: Dictionary = {
+		"event_type": EVENT_PLAYER_SURVIVAL_DAMAGE,
+		"player_id": player_id,
+		"cause": _survival_damage_cause(vitals, 0.0, bleeding, starvation, dehydration, infection),
+		"damage": total,
+		"health_after": vitals.health,
+		"world_time": world_time,
+	}
+	_push_event(event)
+	GameLogger.info("survival", "player survival damage", event)
+
+
 func _mark_dead(player_id: String, vitals: PlayerVitals, world_time: float, cause: String) -> void:
 	vitals.health = 0.0
 	vitals.died_at_world_time = world_time
+	# Report damage taken up to the death before the death itself.
+	_flush_survival_damage(player_id, vitals, world_time)
 	var event: Dictionary = {
 		"event_type": EVENT_PLAYER_DIED,
 		"player_id": player_id,
@@ -604,6 +649,7 @@ func _respawn(world: ServerWorld, player_id: String, vitals: PlayerVitals, world
 	vitals.injuries.clear()
 	vitals.infection = InfectionState.new()
 	vitals.died_at_world_time = PlayerVitals.NOT_DEAD_TIME
+	_pending_damage.erase(player_id)
 	var state: PlayerState = world.get_player(player_id)
 	var event: Dictionary = {
 		"event_type": EVENT_PLAYER_RESPAWNED,

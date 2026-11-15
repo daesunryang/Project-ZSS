@@ -148,6 +148,7 @@ Phase 2는 단일 조정자(Opus)가 티켓을 쪼개고 병합한다. 설계 �
 | P2-N1c | 생존 상태 서버→클라이언트 복제, 공개 범위 필터, 클라이언트 미러 | `survival/`, 새 `SurvivalNetModule`·설정·테스트 | Codex | 완료 |
 | P2-N1b | 네트워크: 근접 공격 의도 RPC와 전투 이벤트 복제(ch0, 모듈 `CombatNet`) | `scripts/services/multiplayer/combat_net_module.gd` 외, `tests/integration/combat_net_test.gd` | Fable | 완료 |
 | P2-N2 | 클라이언트 좀비·상태 표시(임시 캡슐/HUD) | `scripts/presentation/` | Codex | 완료 |
+| P2-FIX1 | 시간 기반 생존 피해 이벤트 묶기(출혈 중 틱마다 RPC·로그가 쏟아지던 문제, 수용 시나리오에서 발견) | `scripts/domain/survival/` | 조정자 | 완료 |
 | P2-Z | Phase 2 수용 시나리오(두 클라이언트, 같은 좀비, 같은 결과). `tests/scenarios/phase2_acceptance_test.gd`: 발소리 → 조사 → 시야 → 추격, 좀비 공격·부상·감염과 정보 공개 범위, 두 클라이언트의 전투 결과 일치, 부상 페널티, 감염 단계 설정, 저장 → 서버 재시작 → 복구, 조작된 요청. 수용 항목 대응표는 docs/12 §6, 검증하지 못한 항목은 docs/15 §6.13. 시나리오에서 찾은 좀비 공격 간격 결함 수정 포함(`zombie_service.gd` 비교 한 줄, 재현 테스트는 `zombie_service_test.gd`) | `tests/scenarios/`, `scripts/domain/zombie/zombie_service.gd`(결함 수정만) | Fable | 완료 |
 
 병렬 규칙: 같은 파일을 두 담당이 동시에 고치지 않는다. 공유 조립 파일(`composition_config.gd`, `server_composition.gd`, 문서)은 조정자가 병합 때 정리한다.

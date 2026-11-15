@@ -32,6 +32,10 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(1, 1000) var max_wounds_per_player: int = 64
 ## Undrained survival events kept for the network layer; oldest are dropped.
 @export_range(1, 1000000) var max_pending_events: int = 256
+## World seconds of time-based damage (bleeding, starvation, dehydration,
+## infection) summed into one "player_survival_damage" event. 0 = one event
+## per tick. Health is applied every tick regardless (docs/15 P2-88).
+@export_range(0.0, 3600.0) var survival_damage_event_interval_world_sec: float = 1.0
 ## Handling multiplier = 1 - penalty * sum(arm/hand severity), clamped to min.
 @export_range(0.0, 10.0) var handling_penalty_per_severity: float = 0.5
 @export_range(0.0, 1.0) var min_handling_multiplier: float = 0.25
@@ -113,6 +117,8 @@ func validate() -> PackedStringArray:
 		errors.append("max_wounds_per_player must be >= 1")
 	if max_pending_events < 1:
 		errors.append("survival max_pending_events must be >= 1")
+	if not is_finite(survival_damage_event_interval_world_sec) or survival_damage_event_interval_world_sec < 0.0:
+		errors.append("survival_damage_event_interval_world_sec must be >= 0")
 	for chance: float in [infection_chance_bite, infection_chance_scratch, infection_chance_blood]:
 		if chance < 0.0 or chance > 1.0:
 			errors.append("infection chances must be within [0, 1]")
