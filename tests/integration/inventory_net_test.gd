@@ -904,7 +904,7 @@ func test_default_settings_and_composition() -> void:
 	assert_true(config.validate().size() > 0, "composition validation covers the inventory network settings")
 	config.inventory_net = null
 	assert_true(config.validate().size() > 0, "a missing settings object is reported")
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 10, "new RPCs are a protocol change: 4 for the drop RPCs, 5 since the consume RPCs (P2-T3), 6 since the rest RPCs (P2-T8), 7 since the character RPCs (P2-T9), 8 since P2-T10..T12, 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 11, "new RPCs are a protocol change: 4 for the drop RPCs, 5 since the consume RPCs (P2-T3), 6 since the rest RPCs (P2-T8), 7 since the character RPCs (P2-T9), 8 since P2-T10..T12, 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15), 11 since the trade RPCs (P2-T16)")
 
 	var service: NetworkService = NetworkService.new()
 	assert_eq(ServerComposition.install_net_modules(service, CompositionConfig.from_defaults()), OK)

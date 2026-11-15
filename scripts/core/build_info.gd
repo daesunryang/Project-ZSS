@@ -66,7 +66,16 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    pickup may merge into carried stacks: the owner then gets
 ##    _rpc_inventory_item_changed for the stacks that grew and
 ##    _rpc_inventory_item only if the picked-up item still exists.
-const PROTOCOL_VERSION: int = 10
+## 11: P2-T16 (trades between two players, docs/00 ADR-022). New module
+##    TradeNet: five intents (_rpc_request_trade, _rpc_request_trade_accept,
+##    _rpc_request_trade_cancel, _rpc_request_trade_offer,
+##    _rpc_request_trade_confirm) with one result (_rpc_trade_result),
+##    session states to the two parties (_rpc_trade_state) and a notice of a
+##    completed trade to everybody else (_rpc_trade_notice). The join
+##    snapshot has an empty "TradeNet" fragment. No existing RPC or message
+##    format changed; both sides of a completed trade get their inventory
+##    change through the existing owner-only InventoryNet messages.
+const PROTOCOL_VERSION: int = 11
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

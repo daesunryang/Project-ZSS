@@ -27,6 +27,14 @@ const SELECT_NEXT: StringName = &"select_next_item"
 const DROP: StringName = &"drop_item"
 ## Held with the drop key: put the whole selected stack down (P2-T15).
 const DROP_STACK: StringName = &"drop_stack"
+## Trade (P2-T16): ask the player the camera looks at; accept a request /
+## confirm the offers; decline / cancel; put more / fewer units of the
+## selected stack into the own offer.
+const TRADE_REQUEST: StringName = &"trade_request"
+const TRADE_ACCEPT: StringName = &"trade_accept"
+const TRADE_DECLINE: StringName = &"trade_decline"
+const TRADE_OFFER_ADD: StringName = &"trade_offer_add"
+const TRADE_OFFER_REMOVE: StringName = &"trade_offer_remove"
 ## Use action -> the kind of item its key asks the server to use.
 const USE_ACTION_KINDS: Dictionary[StringName, ConsumeIntentPolicy.Kind] = {
 	CONSUME: ConsumeIntentPolicy.Kind.FOOD,
@@ -55,6 +63,11 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 		_add_key_action(SELECT_NEXT, presentation.select_next_key, settings.input_deadzone)
 		_add_key_action(DROP, presentation.drop_key, settings.input_deadzone)
 		_add_key_action(DROP_STACK, presentation.drop_stack_modifier_key, settings.input_deadzone)
+		_add_key_action(TRADE_REQUEST, presentation.trade_request_key, settings.input_deadzone)
+		_add_key_action(TRADE_ACCEPT, presentation.trade_accept_key, settings.input_deadzone)
+		_add_key_action(TRADE_DECLINE, presentation.trade_decline_key, settings.input_deadzone)
+		_add_key_action(TRADE_OFFER_ADD, presentation.trade_offer_add_key, settings.input_deadzone)
+		_add_key_action(TRADE_OFFER_REMOVE, presentation.trade_offer_remove_key, settings.input_deadzone)
 
 
 static func _add_key_action(action: StringName, key: Key, deadzone: float) -> void:

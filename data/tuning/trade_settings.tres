@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="TradeSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/trade/trade_settings.gd" id="1_trade"]
+
+[resource]
+script = ExtResource("1_trade")
+request_range_m = 2.5
+session_range_m = 4.0
+request_timeout_sec = 20.0
+session_idle_timeout_sec = 120.0
+max_offer_entries = 8
+max_pending_events = 256

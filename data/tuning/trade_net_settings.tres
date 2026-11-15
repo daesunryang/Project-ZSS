@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="TradeNetSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/services/multiplayer/trade_net_settings.gd" id="1_trade_net"]
+
+[resource]
+script = ExtResource("1_trade_net")
+trade_intent_rate_per_sec = 8.0
+trade_intent_burst = 8

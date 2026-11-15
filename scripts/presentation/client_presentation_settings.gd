@@ -79,6 +79,24 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 ## Local flood guard between two drop requests (the server has its own).
 @export_range(0.01, 5.0) var drop_min_interval_sec: float = 0.25
 
+## Trade (P2-T16, docs/00 ADR-022, docs/15 P2-243..P2-245). The request key
+## asks the player the camera looks at (the candidate of
+## treat_other_modifier_key) for a trade.
+@export var trade_request_key: Key = KEY_T
+## Accepts a request addressed to the local player; in an open session it
+## confirms the offers as shown, or takes the confirmation back.
+@export var trade_accept_key: Key = KEY_Y
+## Declines a request, takes the own request back, or cancels the session.
+@export var trade_decline_key: Key = KEY_N
+## In an open session: one press puts `trade_offer_step` more / fewer units
+## of the stack under the inventory cursor into the own offer.
+@export var trade_offer_add_key: Key = KEY_O
+@export var trade_offer_remove_key: Key = KEY_P
+@export_range(1, 10000) var trade_offer_step: int = 1
+## Local flood guard between two trade requests of any kind (the server has
+## its own).
+@export_range(0.01, 5.0) var trade_min_interval_sec: float = 0.2
+
 ## Items lying in the world (P2-T15, docs/15 P2-221): a placeholder box with
 ## a billboard label (display name and quantity) above it. Edge length and
 ## colour of the box, distance of the label above it, world size of one font
@@ -165,8 +183,16 @@ func validate() -> PackedStringArray:
 		errors.append("world item marker size and label pixel size must be > 0, label margin >= 0 and font size >= 1")
 	if not is_finite(pickup_candidate_range_m) or pickup_candidate_range_m <= 0.0:
 		errors.append("pickup_candidate_range_m must be > 0")
+	var trade_keys: Dictionary[String, Key] = {"trade_request_key": trade_request_key, "trade_accept_key": trade_accept_key, "trade_decline_key": trade_decline_key, "trade_offer_add_key": trade_offer_add_key, "trade_offer_remove_key": trade_offer_remove_key}
+	for key_name: String in trade_keys:
+		if trade_keys[key_name] == KEY_NONE:
+			errors.append("%s must not be KEY_NONE" % key_name)
+	if trade_offer_step < 1:
+		errors.append("trade_offer_step must be >= 1")
+	if trade_min_interval_sec <= 0.0:
+		errors.append("trade_min_interval_sec must be > 0")
 	if not _are_distinct(assigned_keys().values()):
-		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key and the drop-stack modifier must be different keys")
+		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier and the trade keys must be different keys")
 	return errors
 
 
@@ -184,6 +210,11 @@ func assigned_keys() -> Dictionary[String, Key]:
 		"select_next_key": select_next_key,
 		"drop_key": drop_key,
 		"drop_stack_modifier_key": drop_stack_modifier_key,
+		"trade_request_key": trade_request_key,
+		"trade_accept_key": trade_accept_key,
+		"trade_decline_key": trade_decline_key,
+		"trade_offer_add_key": trade_offer_add_key,
+		"trade_offer_remove_key": trade_offer_remove_key,
 	}
 
 

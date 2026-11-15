@@ -545,3 +545,165 @@ static func format_treatment_notice(notice: Dictionary, names: Dictionary, catal
 			var outcome: String = "" if notice.get("ok", false) == true else " (효과 없음)"
 			return "%s이(가) 나에게 %s 사용%s" % [user_name, item_name, outcome]
 	return ""
+
+
+# ------------------------------------------------------------ trade (P2-T16)
+
+## One offer of a trade as text: "name x quantity, name x quantity", or
+## "(없음)" for an empty one. `entries` are offer rows of a mirrored session
+## state ({definition_id, quantity}, the own offer also has item ids).
+## Malformed rows are skipped.
+static func format_trade_offer(entries: Array, catalog: ItemCatalog) -> String:
+	var parts: PackedStringArray = []
+	for entry: Variant in entries:
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var label: String = world_item_label(entry as Dictionary, catalog)
+		if not label.is_empty():
+			parts.append(label)
+	return ", ".join(parts) if not parts.is_empty() else "(없음)"
+
+
+## HUD block about the local player's trade (P2-T16). `state` is the
+## mirrored session state (ClientTradeState.session(), {} = none), `names`
+## maps player ids to character names (ids are shown for players without
+## one), `candidate_name` is whom the request key would ask now ("" =
+## nobody in reach).
+##   - no session: whom the request key would ask (nothing for a dead
+##     character);
+##   - a request: who asked whom and the keys to answer or take it back;
+##   - an open session: the other player, both offers with their
+##     confirmation states, and the keys.
+static func build_trade_lines(state: Dictionary, local_player_id: String, names: Dictionary, candidate_name: String, alive: bool, catalog: ItemCatalog, settings: ClientPresentationSettings) -> PackedStringArray:
+	var accept: String = key_label(settings.trade_accept_key)
+	var decline: String = key_label(settings.trade_decline_key)
+	var partner_id: String = ClientTradeState.partner_of(state, local_player_id)
+	var partner: String = str(names.get(partner_id, partner_id))
+	match str(state.get("phase", "")):
+		TradeSession.PHASE_REQUESTED:
+			if str(state.get("requester_id", "")) == local_player_id:
+				return PackedStringArray(["거래 요청 중: %s | 취소 [%s]" % [partner, decline]])
+			return PackedStringArray(["%s의 거래 요청 | 수락 [%s] 거절 [%s]" % [partner, accept, decline]])
+		TradeSession.PHASE_OPEN:
+			var mine: Variant = state.get("my_offer", [])
+			var theirs: Variant = state.get("their_offer", [])
+			var my_confirmed: bool = state.get("my_confirmed", false) == true
+			return PackedStringArray([
+				"거래 중: %s" % partner,
+				"내 제안 (%s): %s" % [_confirmed_text(my_confirmed), format_trade_offer(mine as Array if typeof(mine) == TYPE_ARRAY else [], catalog)],
+				"상대 제안 (%s): %s" % [_confirmed_text(state.get("their_confirmed", false) == true), format_trade_offer(theirs as Array if typeof(theirs) == TYPE_ARRAY else [], catalog)],
+				"올리기 [%s] 내리기 [%s] | %s [%s] | 거래 취소 [%s]" % [key_label(settings.trade_offer_add_key), key_label(settings.trade_offer_remove_key), "확정 취소" if my_confirmed else "확정", accept, decline],
+			])
+	if not alive:
+		return PackedStringArray()
+	return PackedStringArray(["거래 요청 [%s]: %s" % [key_label(settings.trade_request_key), candidate_name if not candidate_name.is_empty() else "상대 없음 (가까이서 바라보기)"]])
+
+
+static func _confirmed_text(confirmed: bool) -> String:
+	return "확정" if confirmed else "미확정"
+
+
+## Server answer to a trade request of any kind. An accepted request needs
+## no text ("": the HUD shows the new state). What the player can do
+## something about is told as a sentence; everything else keeps its code.
+static func format_trade_result(ok: bool, reason: String) -> String:
+	if ok:
+		return ""
+	match reason:
+		TradeService.REASON_TARGET_TOO_FAR:
+			return "거래 거부: 상대가 너무 멉니다"
+		TradeService.REASON_TARGET_DEAD:
+			return "거래 거부: 상대가 사망했습니다"
+		TradeService.REASON_TARGET_UNAVAILABLE:
+			return "거래 거부: 그런 상대가 없습니다"
+		TradeService.REASON_TARGET_RESTING:
+			return "거래 거부: 상대가 자고 있습니다"
+		TradeService.REASON_TARGET_BUSY:
+			return "거래 거부: 상대가 다른 거래 중입니다"
+		TradeService.REASON_TARGET_IS_SELF:
+			return "거래 거부: 자기 자신과는 거래할 수 없습니다"
+		TradeService.REASON_ALREADY_TRADING:
+			return "거래 거부: 이미 거래 중입니다"
+		TradeService.REASON_STALE_OFFER, TradeService.REASON_OFFER_CHANGED:
+			return "거래 거부: 제안이 바뀌었습니다. 다시 확인하세요"
+		TradeService.REASON_NOTHING_OFFERED:
+			return "거래 거부: 올린 물건이 없습니다"
+		TradeService.REASON_INVENTORY_FULL:
+			return "거래 거부: 내 소지품에 자리가 없습니다"
+		TradeService.REASON_OTHER_INVENTORY_FULL:
+			return "거래 거부: 상대의 소지품에 자리가 없습니다"
+		TradeService.REASON_OFFER_FULL:
+			return "거래 거부: 더 올릴 수 없습니다"
+		TradeService.REASON_SESSION_CANCELLED, TradeService.REASON_NOT_IN_SESSION, TradeService.REASON_NO_SUCH_REQUEST:
+			return "거래 거부: 거래가 이미 끝났습니다"
+		InventoryService.REASON_NOT_IN_INVENTORY:
+			return "거래 거부: 가지고 있지 않은 아이템입니다"
+		InventoryService.REASON_BAD_QUANTITY:
+			return "거래 거부: 수량이 맞지 않습니다"
+	return "거래 거부: %s" % reason
+
+
+## Notice for a party when its request or session ended (`state` is the
+## closed state of ClientTradeState.session_closed): that the trade was
+## completed, or why it was cancelled and by whom. "" for a state that is
+## not closed.
+static func format_trade_closed(state: Dictionary, local_player_id: String, names: Dictionary) -> String:
+	if str(state.get("phase", "")) != TradeSession.PHASE_CLOSED:
+		return ""
+	var partner_id: String = ClientTradeState.partner_of(state, local_player_id)
+	var partner: String = str(names.get(partner_id, partner_id))
+	if str(state.get("outcome", "")) == TradeSession.OUTCOME_COMPLETED:
+		return "거래 완료: %s" % partner
+	var by_me: bool = str(state.get("by_player_id", "")) == local_player_id
+	var cause: String = str(state.get("cause", ""))
+	match cause:
+		TradeService.CAUSE_DECLINED:
+			return "거래 요청을 거절했습니다" if by_me else "%s이(가) 거래 요청을 거절했습니다" % partner
+		TradeService.CAUSE_WITHDRAWN:
+			return "거래 요청을 취소했습니다" if by_me else "%s이(가) 거래 요청을 취소했습니다" % partner
+		TradeService.CAUSE_CANCELLED:
+			return "거래를 취소했습니다" if by_me else "%s이(가) 거래를 취소했습니다" % partner
+		TradeService.CAUSE_TOO_FAR:
+			return "거래 취소: 서로 너무 멀어졌습니다"
+		TradeService.CAUSE_PLAYER_DEAD:
+			return "거래 취소: 사망했습니다" if by_me else "거래 취소: 상대가 사망했습니다"
+		TradeService.CAUSE_PLAYER_RESTING:
+			return "거래 취소: 잠들었습니다" if by_me else "거래 취소: 상대가 잠들었습니다"
+		TradeService.CAUSE_DISCONNECTED:
+			return "거래 취소: 상대가 접속을 끊었습니다"
+		TradeService.CAUSE_NEW_CHARACTER:
+			return "거래 취소: 새 캐릭터를 시작했습니다" if by_me else "거래 취소: 상대가 새 캐릭터를 시작했습니다"
+		TradeService.CAUSE_REQUEST_TIMEOUT:
+			return "거래 요청이 응답 없이 취소됐습니다"
+		TradeService.CAUSE_IDLE_TIMEOUT:
+			return "거래 취소: 오랫동안 진행이 없었습니다"
+	return "거래 취소: %s" % cause
+
+
+## Notice for a party about a change inside its session that it did not
+## ask for: the exchange was refused (and whose inventory has no room), or
+## the server adjusted an offer to what is carried. "" for every other
+## change (the HUD shows those).
+static func format_trade_change(state: Dictionary, local_player_id: String) -> String:
+	match str(state.get("change", "")):
+		TradeService.CHANGE_EXCHANGE_FAILED:
+			var cause: String = str(state.get("cause", ""))
+			if cause != TradeService.CAUSE_INVENTORY_FULL:
+				return "교환 실패: %s" % cause
+			return "교환 실패: 내 소지품에 자리가 없습니다" if str(state.get("by_player_id", "")) == local_player_id else "교환 실패: 상대의 소지품에 자리가 없습니다"
+		TradeService.CHANGE_OFFER_ADJUSTED:
+			return "제안이 소지품에 맞게 바뀌었습니다. 다시 확정하세요"
+	return ""
+
+
+## Event log line for a bystander's notice of a completed trade
+## (ClientTradeState.notice_received): who traded with whom, never what
+## (whatever the notice carries). `names` maps player ids to character
+## names. "" for anything else.
+static func format_trade_notice(notice: Dictionary, names: Dictionary) -> String:
+	var ids: Variant = notice.get("player_ids", null)
+	if typeof(ids) != TYPE_ARRAY or (ids as Array).size() != 2:
+		return ""
+	var first: String = str((ids as Array)[0])
+	var second: String = str((ids as Array)[1])
+	return "%s ↔ %s 거래" % [str(names.get(first, first)), str(names.get(second, second))]

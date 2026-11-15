@@ -87,6 +87,30 @@ const EVENT_ITEM_UNITS_DROPPED: String = "item_units_dropped"
 const REASON_SAME_INVENTORY: String = "same_inventory"
 ## No new item id could be registered (never expected; nothing changed).
 const REASON_ID_UNAVAILABLE: String = "id_unavailable"
+## Two inventories gave each other units of items (exchange_items, P2-T16):
+## {sides: [first, second]}, each side
+##  {inventory_id,
+##   gave: Array of {item_instance_id, definition_id, quantity} (what this
+##     inventory gave, in the order of its offer),
+##   removed_item_instance_ids: Array of String (ids that were in this
+##     inventory before and are not any more: moved over or merged away),
+##   changed_item_instance_ids: Array of String (ids that are in this
+##     inventory now and were not before, or hold another quantity; slot
+##     order)}.
+const EVENT_ITEMS_EXCHANGED: String = "items_exchanged"
+## Keys of one entry of an offer given to exchange_items.
+const OFFER_ITEM_ID: String = "item_instance_id"
+const OFFER_QUANTITY: String = "quantity"
+## An offer entry is no {item_instance_id: String, quantity: int}.
+const REASON_BAD_OFFER: String = "bad_offer"
+## One offer names the same stack twice.
+const REASON_DUPLICATE_ITEM: String = "duplicate_item"
+## Both offers are empty.
+const REASON_NOTHING_TO_EXCHANGE: String = "nothing_to_exchange"
+## The first / the second inventory of an exchange cannot take everything
+## that would come in, even after what it gives has left.
+const REASON_FIRST_INVENTORY_FULL: String = "first_inventory_full"
+const REASON_SECOND_INVENTORY_FULL: String = "second_inventory_full"
 
 const SNAPSHOT_ITEMS: String = "items"
 const SNAPSHOT_POSITIONS: String = "world_item_positions"
@@ -429,6 +453,190 @@ func transfer_item(from_inventory_id: String, item_instance_id: String, to_inven
 		"remaining_quantity": remaining,
 		"received": received,
 	})
+
+
+## Two inventories give each other units of items they carry, in ONE
+## transaction (P2-T16: a completed trade, docs/09 §14.30). `first_gives` /
+## `second_gives` are offers: arrays of {item_instance_id: String,
+## quantity: int}, each naming a stack of the giving inventory and
+## 1..its size units of it. One offer may be empty (a gift), not both.
+##
+## All or nothing. The whole exchange is planned before anything changes:
+##   - what leaves the one inventory is exactly what arrives in the other,
+##     so the units of every definition are conserved;
+##   - each inventory must fit what comes in AFTER what it gives has left:
+##     a slot that an offered whole stack frees can take an incoming stack,
+##     so two full inventories can swap. If either cannot take everything,
+##     the exchange is refused (`first_inventory_full` /
+##     `second_inventory_full`) and nothing changes on either side;
+##   - incoming units go into the receiving inventory's stacks of the same
+##     kind first (same definition, condition and quality; lowest slot number
+##     first; up to max_stack; also into the rest of a stack it gives from
+##     and into stacks that arrived earlier in this exchange), and what is
+##     left over of one offered stack becomes ONE stack in its lowest free
+##     slot (the rule of transfer_item and try_pickup).
+##
+## Item instance ids (docs/14 §1: unique, never reused), per offered stack:
+##   - everything merged, the giver keeps a rest: no instance arrives;
+##   - everything merged, the stack is emptied: its instance is deleted and
+##     its id retired;
+##   - something is left over and the whole stack was offered: that instance
+##     itself moves over and keeps its id;
+##   - something is left over and the giver keeps a rest: the left-over
+##     units become a NEW instance with a new id.
+## New ids are taken before anything changes.
+##
+## Failure reasons, in check order: unknown_inventory, same_inventory, then
+## per offer entry (first offer, then second) bad_offer, unknown_item,
+## item_not_in_inventory, bad_quantity, duplicate_item; nothing_to_exchange;
+## first_inventory_full / second_inventory_full; id_unavailable.
+func exchange_items(first_inventory_id: String, first_gives: Array, second_inventory_id: String, second_gives: Array) -> ActionResult:
+	const OPERATION: String = "exchange_items"
+	if not _inventories.has(first_inventory_id):
+		return _reject(REASON_UNKNOWN_INVENTORY, first_inventory_id, "", OPERATION)
+	if not _inventories.has(second_inventory_id):
+		return _reject(REASON_UNKNOWN_INVENTORY, second_inventory_id, "", OPERATION)
+	if first_inventory_id == second_inventory_id:
+		return _reject(REASON_SAME_INVENTORY, first_inventory_id, "", OPERATION)
+	var inventory_ids: Array[String] = [first_inventory_id, second_inventory_id]
+	var offers: Array[Array] = [first_gives, second_gives]
+	# 1. The offers: rows [ItemInstance, units], and how much leaves each stack.
+	var gives: Array[Array] = [[], []]
+	var leaving: Dictionary[String, int] = {}
+	for side: int in range(2):
+		for entry: Variant in offers[side]:
+			if typeof(entry) != TYPE_DICTIONARY or typeof((entry as Dictionary).get(OFFER_ITEM_ID, null)) != TYPE_STRING or typeof((entry as Dictionary).get(OFFER_QUANTITY, null)) != TYPE_INT:
+				return _reject(REASON_BAD_OFFER, inventory_ids[side], "", OPERATION)
+			var item_id: String = str((entry as Dictionary)[OFFER_ITEM_ID])
+			var units: int = int((entry as Dictionary)[OFFER_QUANTITY])
+			var item: ItemInstance = _items.get(item_id, null)
+			if item == null:
+				return _reject(REASON_UNKNOWN_ITEM, inventory_ids[side], item_id, OPERATION)
+			# Ownership before the quantity: nothing is learnt about a stack the
+			# giving inventory does not carry.
+			if not _is_carried_in(item, inventory_ids[side]):
+				return _reject(REASON_NOT_IN_INVENTORY, inventory_ids[side], item_id, OPERATION)
+			if units < 1 or units > item.quantity:
+				return _reject(REASON_BAD_QUANTITY, inventory_ids[side], item_id, OPERATION)
+			if leaving.has(item_id):
+				return _reject(REASON_DUPLICATE_ITEM, inventory_ids[side], item_id, OPERATION)
+			leaving[item_id] = units
+			gives[side].append([item, units])
+	if gives[0].is_empty() and gives[1].is_empty():
+		return _reject(REASON_NOTHING_TO_EXCHANGE, first_inventory_id, "", OPERATION)
+	# 2. Each inventory after what it gives has left: planned stacks ("rows":
+	#    {item: the instance or null for one still to be created, source: the
+	#    stack its kind comes from, quantity, slot}) in slot order, and its
+	#    free slots.
+	var before: Array[Dictionary] = [_quantities_in(first_inventory_id), _quantities_in(second_inventory_id)]
+	var rows: Array[Array] = [[], []]
+	var free_slots: Array[Array] = [[], []]
+	for side: int in range(2):
+		var used: Dictionary[int, bool] = {}
+		for item: ItemInstance in items_in_inventory(inventory_ids[side]):
+			var remaining: int = item.quantity - int(leaving.get(item.item_instance_id, 0))
+			if remaining < 1:
+				continue
+			var slot: int = slot_index_of(item.slot_id)
+			used[slot] = true
+			rows[side].append({"item": item, "source": item, "quantity": remaining, "slot": slot})
+		rows[side].sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["slot"]) < int(b["slot"]))
+		for slot: int in range(_inventories[inventory_ids[side]]):
+			if not used.has(slot):
+				free_slots[side].append(slot)
+	# 3. What comes in, offer entry by offer entry.
+	var created: Array[Dictionary] = []
+	var merged_away: Array[ItemInstance] = []
+	for side: int in range(2):
+		for give: Array in gives[1 - side]:
+			var source: ItemInstance = give[0]
+			var left: int = int(give[1])
+			var whole_stack: bool = left == source.quantity
+			var definition: ItemDefinition = _catalog.get_definition(source.definition_id)
+			var max_stack: int = definition.max_stack if definition != null else 0
+			for row: Dictionary in rows[side]:
+				if left == 0:
+					break
+				if not _stacks_with(row["source"] as ItemInstance, source) or int(row["quantity"]) >= max_stack:
+					continue
+				var units: int = mini(max_stack - int(row["quantity"]), left)
+				row["quantity"] = int(row["quantity"]) + units
+				left -= units
+			if left == 0:
+				if whole_stack:
+					merged_away.append(source)
+				continue
+			if free_slots[side].is_empty():
+				return _reject(REASON_FIRST_INVENTORY_FULL if side == 0 else REASON_SECOND_INVENTORY_FULL, inventory_ids[side], source.item_instance_id, OPERATION)
+			var arrived: Dictionary = {"item": source if whole_stack else null, "source": source, "quantity": left, "slot": int(free_slots[side].pop_front())}
+			var at: int = 0
+			while at < rows[side].size() and int((rows[side][at] as Dictionary)["slot"]) < int(arrived["slot"]):
+				at += 1
+			rows[side].insert(at, arrived)
+			if not whole_stack:
+				created.append(arrived)
+	# 4. The one thing that could still fail: ids for the new stacks. Taken
+	#    before anything changes.
+	for row: Dictionary in created:
+		var new_id: String = _ids.next_id(ENTITY_KIND_ITEM)
+		if new_id.is_empty() or _registry.has(new_id) or _registry.is_tombstoned(new_id):
+			GameLogger.error("inventory", "no id for an exchanged stack", {"inventory_id": first_inventory_id, "to_inventory_id": second_inventory_id, "operation": OPERATION})
+			return _reject(REASON_ID_UNAVAILABLE, first_inventory_id, "", OPERATION)
+		row["new_id"] = new_id
+	for row: Dictionary in created:
+		if _registry.register(str(row["new_id"]), ENTITY_KIND_ITEM) != OK:
+			GameLogger.error("inventory", "id of an exchanged stack could not be registered", {"entity_id": str(row["new_id"]), "operation": OPERATION})
+			return _reject(REASON_ID_UNAVAILABLE, first_inventory_id, "", OPERATION)
+
+	# Commit: every check passed, apply all changes together.
+	var gave: Array[Array] = [[], []]
+	for side: int in range(2):
+		for give: Array in gives[side]:
+			var given: ItemInstance = give[0]
+			gave[side].append({"item_instance_id": given.item_instance_id, "definition_id": given.definition_id, "quantity": int(give[1])})
+	for side: int in range(2):
+		for row: Dictionary in rows[side]:
+			var item: ItemInstance = row["item"]
+			if item == null:
+				var source: ItemInstance = row["source"]
+				item = ItemInstance.new()
+				item.item_instance_id = str(row["new_id"])
+				item.definition_id = source.definition_id
+				item.condition = source.condition
+				item.quality = source.quality
+				_items[item.item_instance_id] = item
+			item.quantity = int(row["quantity"])
+			item.location_type = ItemInstance.LOCATION_INVENTORY
+			item.location_id = inventory_ids[side]
+			item.slot_id = "%s%d" % [SLOT_PREFIX, int(row["slot"])]
+	for item: ItemInstance in merged_away:
+		_items.erase(item.item_instance_id)
+		if _registry.remove(item.item_instance_id) != OK:
+			GameLogger.error("inventory", "exchanged item was not registered", {"entity_id": item.item_instance_id, "operation": OPERATION})
+	var sides: Array = []
+	for side: int in range(2):
+		var now: Dictionary[String, int] = _quantities_in(inventory_ids[side])
+		var removed: Array = []
+		for item_id: String in before[side]:
+			if not now.has(item_id):
+				removed.append(item_id)
+		removed.sort()
+		var changed: Array = []
+		for row: Dictionary in rows[side]:
+			var held_id: String = (row["item"] as ItemInstance).item_instance_id if row["item"] != null else str(row["new_id"])
+			if int(before[side].get(held_id, 0)) != int(now.get(held_id, 0)):
+				changed.append(held_id)
+		sides.append({"inventory_id": inventory_ids[side], "gave": gave[side], "removed_item_instance_ids": removed, "changed_item_instance_ids": changed})
+	GameLogger.info("inventory", "items exchanged", {"inventory_id": first_inventory_id, "to_inventory_id": second_inventory_id, "first_gave": gave[0].size(), "second_gave": gave[1].size()})
+	return _commit({"event_type": EVENT_ITEMS_EXCHANGED, "sides": sides})
+
+
+## item_instance_id -> quantity of everything carried in an inventory.
+func _quantities_in(inventory_id: String) -> Dictionary[String, int]:
+	var quantities: Dictionary[String, int] = {}
+	for item: ItemInstance in items_in_inventory(inventory_id):
+		quantities[item.item_instance_id] = item.quantity
+	return quantities
 
 
 ## Number of a slot id ("slot_7" -> 7).

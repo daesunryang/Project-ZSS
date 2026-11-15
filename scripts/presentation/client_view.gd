@@ -12,6 +12,7 @@ extends Node3D
 @onready var _attack_result_label: Label = %AttackResultLabel
 @onready var _inventory_label: Label = %InventoryLabel
 @onready var _consume_result_label: Label = %ConsumeResultLabel
+@onready var _trade_label: Label = %TradeLabel
 @onready var _creation_screen: CharacterCreationScreen = %CharacterCreationScreen
 
 ## Children of a player's visual.
@@ -75,6 +76,11 @@ var _drop_policy: AttackIntentPolicy = null
 ## The world item the pickup key would name now (P2-T15), as last shown in
 ## the HUD ("" = nothing in reach).
 var _pickup_candidate: String = ""
+## Trade requests and the mirror of the local player's trade (P2-T16).
+var _trade_module: TradeNetModule = null
+var _trade_state: ClientTradeState = null
+## Flood guard of the trade keys (same rule as the attack guard).
+var _trade_policy: AttackIntentPolicy = null
 ## Character names and appearance, and the creation request (P2-T9).
 var _character_module: CharacterNetModule = null
 var _character_state: ClientCharacterState = null
@@ -107,6 +113,7 @@ func _ready() -> void:
 	_rest_policy = AttackIntentPolicy.new(_presentation.rest_min_interval_sec)
 	_posture_policy = AttackIntentPolicy.new(_presentation.rest_min_interval_sec)
 	_drop_policy = AttackIntentPolicy.new(_presentation.drop_min_interval_sec)
+	_trade_policy = AttackIntentPolicy.new(_presentation.trade_min_interval_sec)
 	_item_catalog = ItemCatalog.load_directory()
 	_world_item_markers = WorldItemMarkers.new(_world_items_root, _item_catalog, _presentation)
 	var shared_keys: PackedStringArray = _presentation.keys_shared_with(_settings)
@@ -166,6 +173,17 @@ func _physics_process(_delta: float) -> void:
 		move_selection(1)
 	if Input.is_action_just_pressed(ClientInputActions.DROP):
 		_request_drop_selected()
+	# P2-T16: the trade keys. What each means depends on the mirrored session.
+	if Input.is_action_just_pressed(ClientInputActions.TRADE_REQUEST):
+		_request_trade()
+	if Input.is_action_just_pressed(ClientInputActions.TRADE_ACCEPT):
+		_press_trade_accept()
+	if Input.is_action_just_pressed(ClientInputActions.TRADE_DECLINE):
+		_press_trade_decline()
+	if Input.is_action_just_pressed(ClientInputActions.TRADE_OFFER_ADD):
+		_change_trade_offer(_presentation.trade_offer_step)
+	if Input.is_action_just_pressed(ClientInputActions.TRADE_OFFER_REMOVE):
+		_change_trade_offer(-_presentation.trade_offer_step)
 	if Input.is_action_just_pressed(ClientInputActions.ATTACK):
 		_request_melee_attack()
 	for action: StringName in ClientInputActions.USE_ACTION_KINDS:
@@ -246,6 +264,17 @@ func _bind_network() -> void:
 		_inventory_module.drop_result.connect(_on_drop_result)
 	if not _network.pickup_result.is_connected(_on_pickup_result):
 		_network.pickup_result.connect(_on_pickup_result)
+	_trade_module = _network.get_module(TradeNetModule.MODULE_NAME) as TradeNetModule
+	if _trade_module != null:
+		_trade_state = _trade_module.client_state
+		if not _trade_state.changed.is_connected(_on_trade_state_changed):
+			_trade_state.changed.connect(_on_trade_state_changed)
+		if not _trade_state.session_closed.is_connected(_on_trade_closed):
+			_trade_state.session_closed.connect(_on_trade_closed)
+		if not _trade_state.notice_received.is_connected(_on_trade_notice):
+			_trade_state.notice_received.connect(_on_trade_notice)
+		if not _trade_module.trade_result.is_connected(_on_trade_result):
+			_trade_module.trade_result.connect(_on_trade_result)
 	_character_module = _network.get_module(CharacterNetModule.MODULE_NAME) as CharacterNetModule
 	if _character_module != null:
 		_character_state = _character_module.client_state
@@ -262,6 +291,7 @@ func _bind_network() -> void:
 	_sync_world_item_markers()
 	_refresh_survival_hud()
 	_refresh_inventory_hud()
+	_refresh_trade_hud()
 	_load_recent_events()
 
 
@@ -288,6 +318,7 @@ func _sync_world_item_markers() -> void:
 func _on_survival_state_changed() -> void:
 	_sync_player_visuals()
 	_refresh_survival_hud()
+	_refresh_trade_hud()
 
 
 func _on_zombie_state_changed() -> void:
@@ -706,6 +737,8 @@ func _update_treat_target() -> void:
 		return
 	_treat_target = target_id
 	_refresh_survival_hud()
+	# The same candidate is whom the trade request key would ask.
+	_refresh_trade_hud()
 
 
 ## Name shown for a player: its character name, or its id without one.
@@ -728,6 +761,125 @@ func _on_treatment_seen(notice: Dictionary) -> void:
 		var player_id: String = str(notice.get(key, ""))
 		names[player_id] = _player_label(player_id)
 	_append_event_line(ClientPresentationFormatter.format_treatment_notice(notice, names, _item_catalog))
+
+
+# ------------------------------------------------------------ trade (P2-T16)
+
+## Rebuilds the trade block: whom the request key would ask, a pending
+## request, or both offers of the open session. Hidden while not joined.
+func _refresh_trade_hud() -> void:
+	if _trade_state == null or _state == null or _state.local_player_id.is_empty():
+		_trade_label.visible = false
+		return
+	var session: Dictionary = _trade_state.session()
+	var names: Dictionary = {}
+	var partner_id: String = _trade_state.partner_id()
+	if not partner_id.is_empty():
+		names[partner_id] = _player_label(partner_id)
+	var alive: bool = _survival_state == null or not _survival_state.has_player(_state.local_player_id) or _survival_state.is_alive(_state.local_player_id)
+	var lines: PackedStringArray = ClientPresentationFormatter.build_trade_lines(session, _state.local_player_id, names, _player_label(_treat_target) if not _treat_target.is_empty() else "", alive, _item_catalog, _presentation)
+	_trade_label.text = "\n".join(lines)
+	_trade_label.visible = not lines.is_empty()
+
+
+## True when a trade key may send something now (joined, and the local
+## flood guard of the trade keys allows it).
+func _trade_key_allowed() -> bool:
+	var connected: bool = (
+		_trade_module != null
+		and _trade_state != null
+		and _network != null
+		and _network.is_client()
+		and _state != null
+		and not _state.local_player_id.is_empty()
+	)
+	return _trade_policy.should_send(connected, _now_sec())
+
+
+## Trade request key: asks the player the camera looks at (the candidate of
+## the "use on another player" keys). Only that player's id is sent; the
+## server decides.
+func _request_trade() -> void:
+	if not _trade_key_allowed() or not TradeIntentPolicy.can_request(_trade_state.phase()):
+		return
+	var target_id: String = _treat_target_id()
+	if target_id.is_empty():
+		_show_consume_text(ClientPresentationFormatter.no_treat_target_text())
+		return
+	_trade_module.request_trade(target_id)
+
+
+## Trade accept key: accepts a request addressed to the local player,
+## confirms the offers of the open session as the mirror shows them (the
+## revision it shows is sent along), or takes the confirmation back.
+func _press_trade_accept() -> void:
+	if not _trade_key_allowed():
+		return
+	match TradeIntentPolicy.accept_action(_trade_state.phase(), _trade_state.is_requester(), _trade_state.my_confirmed()):
+		TradeIntentPolicy.AcceptAction.ACCEPT:
+			_trade_module.request_accept(_trade_state.session_id())
+		TradeIntentPolicy.AcceptAction.CONFIRM:
+			_trade_module.request_confirm(_trade_state.session_id(), _trade_state.revision(), true)
+		TradeIntentPolicy.AcceptAction.UNCONFIRM:
+			_trade_module.request_confirm(_trade_state.session_id(), _trade_state.revision(), false)
+
+
+## Trade decline key: declines a request, takes the own request back or
+## cancels the session (one intent on the server: the caller backs out).
+func _press_trade_decline() -> void:
+	if not _trade_key_allowed():
+		return
+	if TradeIntentPolicy.decline_action(_trade_state.phase(), _trade_state.is_requester()) != TradeIntentPolicy.DeclineAction.NONE:
+		_trade_module.request_cancel(_trade_state.session_id())
+
+
+## Trade offer keys: `delta` more (or fewer) units of the stack under the
+## inventory cursor in the own offer. Only the stack's id and the wanted
+## quantity are sent; the server decides.
+func _change_trade_offer(delta: int) -> void:
+	if not _trade_key_allowed() or _trade_state.phase() != TradeSession.PHASE_OPEN:
+		return
+	var quantity: int = TradeIntentPolicy.offer_quantity_after(_state.inventory, _trade_state.my_offer(), _selected_item_id, delta)
+	if quantity == TradeIntentPolicy.NO_CHANGE:
+		return
+	_trade_module.request_offer(_trade_state.session_id(), _selected_item_id, quantity)
+
+
+## The mirrored session changed: the HUD block, and a notice for a change
+## the local player did not ask for (a refused exchange, an adjusted offer).
+func _on_trade_state_changed() -> void:
+	_refresh_trade_hud()
+	var notice: String = ClientPresentationFormatter.format_trade_change(_trade_state.session(), _state.local_player_id if _state != null else "")
+	if not notice.is_empty():
+		_show_consume_text(notice)
+
+
+## The local player's request or session ended: told where the use results
+## are shown (completed, or why it was cancelled and by whom).
+func _on_trade_closed(state: Dictionary) -> void:
+	var local_id: String = _state.local_player_id if _state != null else ""
+	var partner_id: String = ClientTradeState.partner_of(state, local_id)
+	_show_consume_text(ClientPresentationFormatter.format_trade_closed(state, local_id, {partner_id: _player_label(partner_id)}))
+
+
+## The answer to a trade request of any kind: a refusal is shown where the
+## use results are shown (an accepted one shows in the HUD block).
+func _on_trade_result(_request_id: int, ok: bool, reason: String) -> void:
+	# A session that was cancelled under the request has just said why.
+	if reason == TradeService.REASON_SESSION_CANCELLED:
+		return
+	var text: String = ClientPresentationFormatter.format_trade_result(ok, reason)
+	if not text.is_empty():
+		_show_consume_text(text)
+
+
+## Two other players traded: a line in the event log.
+func _on_trade_notice(notice: Dictionary) -> void:
+	var names: Dictionary = {}
+	var ids: Variant = notice.get("player_ids", [])
+	for player_id: Variant in (ids as Array if typeof(ids) == TYPE_ARRAY else []):
+		names[str(player_id)] = _player_label(str(player_id))
+	_append_event_line(ClientPresentationFormatter.format_trade_notice(notice, names))
 
 
 ## Rest key (P2-T8): asks the server to lie down, or to get up when the

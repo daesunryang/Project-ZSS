@@ -58,6 +58,13 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# it uses. It acts on requests (request_melee_attack), not in step().
 	if world.register_system(CombatService.new(config.combat, config.melee_weapons, world.clock)) != OK:
 		return null
+	# P2-T16: trades between two players. Last, so its step sees what this
+	# tick did to its parties (a death, a rest, a move). It is told about
+	# every inventory transaction, to keep offers backed by what is carried.
+	var trade: TradeService = TradeService.new(config.trade, world.clock)
+	if world.register_system(trade) != OK:
+		return null
+	world.inventory.transaction_committed.connect(trade.on_inventory_transaction)
 	return world
 
 
@@ -111,4 +118,11 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	if posture_net_error != OK:
 		posture_net.free()
 		return posture_net_error
+	# P2-T16: trade intents + session states to the two parties. After the
+	# inventory module, whose pending save it flushes for a completed trade.
+	var trade_net: TradeNetModule = TradeNetModule.new(config.trade_net)
+	var trade_net_error: Error = service.register_module(trade_net)
+	if trade_net_error != OK:
+		trade_net.free()
+		return trade_net_error
 	return OK

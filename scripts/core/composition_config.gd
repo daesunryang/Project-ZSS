@@ -36,6 +36,10 @@ var appearance: AppearanceCatalog
 ## network module (request rate; servers and clients).
 var posture: PostureSettings
 var posture_net: PostureNetSettings
+## P2-T16 (trades between two players, docs/09 §14.30): the server rules
+## and the network module (request rate; servers and clients).
+var trade: TradeSettings
+var trade_net: TradeNetSettings
 ## P2-T9: true = a player must create its character (name and appearance)
 ## before it is in the world, and again after every death. False (the
 ## default of a composition built directly: tests, tools) = ServerWorld.join()
@@ -69,6 +73,8 @@ static func from_defaults() -> CompositionConfig:
 	config.posture = PostureSettings.load_or_default()
 	config.posture_net = PostureNetSettings.load_or_default()
 	config.world_cells = WorldCellSettings.load_or_default()
+	config.trade = TradeSettings.load_or_default()
+	config.trade_net = TradeNetSettings.load_or_default()
 	return config
 
 
@@ -99,6 +105,9 @@ func validate() -> PackedStringArray:
 	if world_cells == null:
 		errors.append("composition config is incomplete (world_cells)")
 		return errors
+	if trade == null or trade_net == null:
+		errors.append("composition config is incomplete (trade)")
+		return errors
 	errors.append_array(gameplay.validate())
 	errors.append_array(clock.validate())
 	errors.append_array(dev_seed.validate())
@@ -119,4 +128,7 @@ func validate() -> PackedStringArray:
 	errors.append_array(posture_net.validate())
 	errors.append_array(world_cells.validate())
 	errors.append_array(world_cells.validate_play_area(gameplay.world_half_extent_m))
+	errors.append_array(trade.validate())
+	errors.append_array(trade_net.validate())
+	errors.append_array(trade_net.validate_against(trade))
 	return errors

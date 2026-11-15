@@ -631,6 +631,7 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 - `signal transaction_committed(event: Dictionary)`: 확정된 트랜잭션마다(줍기 `item_picked_up` 포함) 상태 반영이 끝난 직후, 확정 순서대로, 동기적으로 한 번 나온다. 인자는 이벤트의 사본이다. 실패한 요청은 내지 않는다.
 - P2-T14에서 네 번째 트랜잭션 `transfer_item`(한 인벤토리에서 다른 인벤토리로, 이벤트 `item_transferred`)이 추가됐다. 계약과 복제는 §14.28.
 - **P2-T15에서 바뀐 것(§14.29가 우선한다)**: `drop_item`에 수량 인자가 붙어 묶음의 일부를 내려놓을 수 있고(새 이벤트 `item_units_dropped`), `try_pickup`은 주운 수량을 들고 있는 같은 종류 묶음에 먼저 합치며(`item_picked_up` 이벤트에 `definition_id`, `quantity`, `merged` 추가), 내려놓기 의도 RPC는 `_rpc_request_drop(request_id, item_instance_id, quantity)`가 됐다. 이 절의 표와 "수량 인자는 없다"는 설명은 P2-T2 시점의 것이다.
+- P2-T16에서 다섯 번째 트랜잭션 `exchange_items`(두 인벤토리가 서로 아이템을 주는 교환, 이벤트 `items_exchanged`)와 `InventoryNetModule.flush_pending_save`가 추가됐다. 계약과 복제는 §14.30.
 - 보조: `item_count()`(존재하는 인스턴스 수). 저장 형식은 바뀌지 않았다: 내려놓은 아이템의 좌표는 기존대로 world_state `inventory.world_item_positions`(docs/15 P1-7)에, 삭제된 ID는 world_state `tombstones`에, 다음 순번은 `next_entity_sequence`에 들어간다.
 
 `ServerWorld` 래퍼(위치·셀·인벤토리 ID는 서버 상태에서 채운다. 셀은 `DevWorldSeed.DEV_CELL_ID`, 위치는 `clamp_to_world(플레이어 위치)`):
@@ -1750,6 +1751,163 @@ row = {
 화면 설명은 docs/11 §2.13.
 
 테스트: `tests/unit/ground_transfer_test.gd`(일부 내려놓기의 새 인스턴스·ID·이벤트·보존, 묶음 전체 세 가지 표현, 거부 사유와 불변, 줍기 합치기·넘침·가득 참·`condition`/`quality`·끄기 설정, 고정 seed 300회, A가 한 개씩 내려놓고 B가 주워 한 묶음이 됨, 누가 무엇을 내려놓을 수 있는지, 건네기 규칙·설정이 없음, 저장 → 재생성 → 로드), `tests/unit/item_transfer_test.gd`(`transfer_item` 트랜잭션: P2-T14의 것을 옮겼다), `tests/integration/ground_transfer_net_test.gd`(서버 1 + 클라이언트 3, 실제 ENet: 한 개 내려놓기 → 세 미러의 월드 아이템과 소유자 한정 인벤토리 메시지, 줍기 합치기와 미러, 넘침, 제3자는 인벤토리 메시지 0개 / 조작된 수량 10종·거짓 요청 7종·인자를 더 붙인 호출·자는·죽은 요청자 / 건네기 RPC가 없고 보내도 아무 일도 없음, 먹여 주기와 내려놓기는 남의 인벤토리에 넣지 않음 / 서버 규칙의 `transfer_item` 복제 / 저장·서버 재시작·재접속 / RPC 목록과 요청 검증), `tests/integration/ground_transfer_view_test.gd`(실제 클라이언트 세션의 `ClientView`: 바닥 아이템 표시와 미러 추종, HUD 목록·커서·줍기 후보, 실제 입력 액션으로 선택·내려놓기(한 개/묶음 전체)·줍기), `tests/unit/ground_transfer_presentation_test.gd`(커서 순서·이동·유지, 내려놓을 수량, 키 설정·액션·검증·겹침, HUD 목록과 창, 줍기 후보와 문구, 결과 문장, 표시 노드). 고친 기존 테스트는 docs/15 §14.6에 적었다.
+
+### 14.30 거래 요청(P2-T16, docs/00 ADR-022)
+
+사용자 결정(2026-11-16): 아이템을 넘기는 방법의 하나로 "트레이드를 거는 방식"을 채택한다. 가까이 있는 두 플레이어가 요청 → 수락 → 제안 → 양쪽 확정을 거쳐 아이템을 교환하고, 양쪽이 확정하기 전에는 아무것도 옮겨 가지 않는다. 클라이언트는 의도만 보내고(상대 ID, 세션 ID, 자기 소지품의 묶음 ID와 수량, 자기가 본 제안의 revision), 거리·상태·소유·자리는 모두 서버 상태에서 판정한다. 임시 가정은 docs/15 §14.7 P2-226~P2-245.
+
+구성: `scripts/domain/trade/`(`TradeService`: ServerSystem `trade`, `TradeSession`: 세션 상태, `TradeSettings`: `data/tuning/trade_settings.tres`), `InventoryService.exchange_items`(교환 트랜잭션), `TradeNetModule`(NetModule, 노드 이름 `TradeNet`: 의도 RPC 다섯, 결과, 세션 상태, 완료 알림)와 `TradeNetSettings`(`data/tuning/trade_net_settings.tres`), `ClientTradeState`(클라이언트 미러), `InventoryNetModule`(교환의 소유자 한정 복제 `_replicate_exchanged`, `flush_pending_save`), 클라이언트 `TradeIntentPolicy`·거래 키·HUD 블록·문구. 조립은 `ServerComposition`에서만 한다: `create_world`가 `TradeService`를 마지막 시스템으로 등록하고 `InventoryService.transaction_committed`를 `TradeService.on_inventory_transaction`에 연결하며, `install_net_modules`가 `TradeNetModule`을 마지막 모듈로 넣는다. `CompositionConfig`에 `trade`, `trade_net` 필드가 추가됐다(`validate()`에 포함). **`network_service.gd`는 수정하지 않았다**(§14.5의 공개 헬퍼만 쓴다). 저장 스키마는 바뀌지 않았다.
+
+**프로토콜 변경 있음**: RPC 여덟 개가 새로 생겨 `BuildInfo.PROTOCOL_VERSION`을 11로 올렸다. 기존 RPC와 메시지 형식은 그대로다(join 스냅샷의 `modules.TradeNet` 조각은 빈 객체).
+
+#### 데이터
+
+| 설정 | 기본값 | 뜻 |
+|---|---|---|
+| `TradeSettings.request_range_m` | 2.5 | 거래를 요청할 수 있는 최대 거리(m). 서버가 가진 두 위치 사이의 3차원 거리, 경계 포함 |
+| `TradeSettings.session_range_m` | 4.0 | 대기 중인 요청과 열린 세션이 유지되는 최대 거리. 이보다 멀어지면 취소된다. `request_range_m` 이상이어야 한다(한 걸음 움직였다고 세션이 끊기지 않게 한 여유) |
+| `TradeSettings.request_timeout_sec` | 20 | 응답 없는 요청이 취소되는 시간(행동 시간 = 실제 초, §14.16) |
+| `TradeSettings.session_idle_timeout_sec` | 120 | 열린 세션에서 승인된 동작(제안 변경, 확정, 확정 취소)이 없으면 취소되는 시간 |
+| `TradeSettings.max_offer_entries` | 8 | 한쪽 제안에 올릴 수 있는 묶음 수(프로토콜 상한 `ClientTradeState.MAX_OFFER_ENTRIES` = 32) |
+| `TradeSettings.max_pending_events` | 256 | 네트워크 모듈이 가져가기 전까지 쌓아 두는 세션 이벤트 수 |
+| `TradeNetSettings.trade_intent_rate_per_sec` / `trade_intent_burst` | 8/s / 8 | 거래 의도 다섯 종류가 함께 쓰는 peer별 토큰 버킷 |
+| `ClientPresentationSettings.trade_request_key` 등 | T, Y, N, O, P | 거래 키(클라이언트 전용, 아래 "클라이언트 표시") |
+
+#### 교환 트랜잭션(`InventoryService.exchange_items(first_inventory_id, first_gives, second_inventory_id, second_gives) -> ActionResult`)
+
+두 인벤토리가 서로 아이템을 주는 **하나의** 트랜잭션이다. `first_gives`·`second_gives`는 `[{item_instance_id: String, quantity: int}]`(주는 인벤토리가 들고 있는 묶음과 1..묶음 수량). 한쪽이 빈 배열이면 선물이고, 둘 다 비면 거부한다. §14.17의 규칙 그대로 검사를 전부 마치고 계획을 세운 뒤에만 반영하며, 실패하면 사유 코드만 있고 아무것도 바뀌지 않는다(아이템, ID 순번, tombstone, 시그널 모두).
+
+- **보존**: 한쪽에서 나간 수량이 그대로 다른 쪽에 들어간다. 정의별 총수량은 어떤 경우에도 변하지 않는다.
+- **자리 판정은 "나갈 것이 나간 뒤"**: 묶음 전체를 내주면 그 칸이 비고, 들어오는 묶음이 그 칸을 쓸 수 있다. 그래서 칸이 꽉 찬 두 인벤토리도 묶음 전체끼리는 맞바꿀 수 있다. 한쪽이라도 들어올 것을 다 받지 못하면 교환 전체를 거부한다(`first_inventory_full` / `second_inventory_full`: 어느 쪽인지가 사유에 있다).
+- **들어오는 수량이 가는 자리**(`transfer_item`·`try_pickup`과 같은 규칙): 받는 쪽의 같은 정의·같은 `condition`·같은 `quality` 묶음을 슬롯 번호 순으로 `max_stack`까지 채운다(자기가 일부를 내준 묶음의 남은 부분, 이 교환에서 먼저 들어온 묶음도 포함). 남은 수량은 가장 낮은 빈 칸에 한 묶음으로 들어간다.
+- **아이템 인스턴스 ID**(제안에 올린 묶음마다):
+
+| 경우 | 받는 쪽에 생기는 것 | 주는 쪽 인스턴스 |
+|---|---|---|
+| 전부 기존 묶음에 합쳐짐, 주는 쪽에 남는 수량 있음 | 새 인스턴스 없음 | 수량만 줄어듦 |
+| 전부 합쳐짐, 묶음 전체를 내줌 | 새 인스턴스 없음 | 삭제되고 ID는 tombstone 처리 |
+| 남은 수량이 빈 칸으로, 묶음 전체를 내줌 | 주는 쪽 인스턴스가 그 ID 그대로 옮겨 감 | 받는 쪽 것이 됨 |
+| 남은 수량이 빈 칸으로, 주는 쪽에 남는 수량 있음 | 새 ID의 새 인스턴스(`condition`·`quality`는 원래 묶음의 것) | 수량만 줄어듦 |
+
+  새 ID는 상태를 바꾸기 전에 모두 발급·등록한다. 두 묶음이 같은 ID를 갖는 경우는 없다.
+- 실패 사유(검사 순서): `unknown_inventory` → `same_inventory` → 제안 항목마다(첫 제안, 이어서 둘째 제안) `bad_offer`(항목 형식) → `unknown_item` → `item_not_in_inventory` → `bad_quantity` → `duplicate_item`(한 제안에 같은 묶음이 두 번) → `nothing_to_exchange` → `first_inventory_full` / `second_inventory_full` → `id_unavailable`. 소유 검사가 수량 검사보다 앞이다.
+- 성공 이벤트(JSON-safe, `transaction_committed`로 **한 번**) `items_exchanged` = `{event_type, sides: [첫째, 둘째]}`, 각 side = `{inventory_id, gave: [{item_instance_id, definition_id, quantity}], removed_item_instance_ids: [그 인벤토리에 있다가 없어진 ID], changed_item_instance_ids: [지금 그 인벤토리에 있고 전에 없었거나 수량이 달라진 ID, 슬롯 순서]}`.
+
+#### 거래 규칙(`TradeService`, system id `trade`)
+
+세션(`TradeSession`): `session_id`(서버 실행 중 1부터 증가, 재사용하지 않음), `requester_id`·`target_id`, `phase`(`requested` → `open` → `closed`), `revision`(어느 쪽이든 제안이 바뀔 때마다 +1), 양쪽 `offers`(`[{item_instance_id, definition_id, quantity}]`)와 `confirmed`, 끝났을 때 `outcome`(`completed` / `cancelled`)·`cause`·`by_player_id`. 저장하지 않는다.
+
+공개 API(모두 `ActionResult`, 성공 `event`는 세션 사전 `TradeSession.to_dict()`):
+
+| 메서드 | 동작 |
+|---|---|
+| `request_trade(world, requester_id, target_id)` | 요청을 만든다(아래 "요청 검사") |
+| `accept(world, player_id, session_id)` | 요청받은 쪽이 수락해 세션을 연다. 실패 `no_such_request`(그 ID의 대기 중인 요청이 자기에게 온 것이 아님. 요청한 쪽·제3자·이미 열린 세션 포함) |
+| `cancel(world, player_id, session_id)` | 당사자가 물러난다: 요청받은 쪽이면 거절(`declined`), 요청한 쪽이면 철회(`withdrawn`), 열린 세션이면 취소(`cancelled`). 당사자의 상태와 무관하게 항상 된다. 실패 `not_in_session` |
+| `set_offer(world, player_id, session_id, item_instance_id, quantity)` | 자기 제안에 묶음을 올리거나 수량을 바꾸거나(1..묶음 수량) 뺀다(0). 누구의 제안인지는 인자가 아니다: 항상 호출한 쪽의 것이다 |
+| `set_confirmed(world, player_id, session_id, revision, wanted)` | 지금 제안(`revision`)을 확정하거나 확정을 푼다. 양쪽이 확정되면 그 자리에서 교환한다 |
+| `session_of(player_id)`, `session_count()`, `drain_events()` | 조회와 네트워크 읽기 표면 |
+
+요청 검사(순서대로, 먼저 걸린 것 하나. 거부되면 아무것도 바뀌지 않는다):
+
+| 순서 | 사유 코드 | 조건 |
+|---|---|---|
+| 1 | `not_online` | 요청하는 쪽이 월드에 없음(모르는 플레이어, 오프라인, 캐릭터 없는 접속자) |
+| 2 | `player_dead`, `player_resting` | 요청하는 쪽이 행동할 수 없음 |
+| 3 | `already_trading` | 요청하는 쪽이 이미 요청·세션에 있음. 단 **자기에게 요청한 상대에게 요청하면 그 요청의 수락으로 처리한다** |
+| 4 | `target_is_self` | 자기 자신 |
+| 5 | `target_unavailable` | 대상이 월드에 없음(모르는 ID, 플레이어가 아닌 ID, 오프라인, 캐릭터 없는 접속자: 한 사유) |
+| 6 | `target_dead` | 대상이 죽음 |
+| 7 | `target_too_far` | 서버 위치 기준 거리 > `request_range_m` |
+| 8 | `target_resting` | 대상이 자는 중(행동할 수 없음). 자는 플레이어는 응답할 수 없으므로 요청받지 않는다 |
+| 9 | `target_busy` | 대상이 다른 요청·세션에 있음 |
+
+순서의 뜻: 누가 자는지·거래 중인지는 사거리 안에서만 알 수 있다(7이 8·9보다 앞). 엎드린 플레이어는 요청할 수도 받을 수도 있다.
+
+제안 검사(`set_offer`): 당사자인지(`not_in_session`) → 세션이 열렸는지(`session_not_open`) → 양쪽 상태(아래 "취소", 걸리면 세션을 취소하고 `session_cancelled`) → 수량 0이면 자기 제안에 그 묶음이 있는지(`not_in_offer`) / 아니면 아이템 존재(`unknown_item`) → 자기가 들고 있는지(`item_not_in_inventory`) → 1 ≤ 수량 ≤ 묶음(`bad_quantity`) → 바뀌는 것이 있는지(`offer_unchanged`) → 새 묶음이면 `max_offer_entries` 이내인지(`offer_full`). 승인되면 `revision` +1, **양쪽 확정 해제**. 상대의 묶음 ID를 넣어 "빼기"를 보내도 `not_in_offer`일 뿐 상대의 제안은 바뀌지 않는다.
+
+확정 검사(`set_confirmed`, `wanted` = true): 당사자·열린 세션·양쪽 상태 → `revision`이 세션의 것과 같은지(`stale_offer`: 자기가 보지 못한 제안은 확정되지 않는다) → 이미 확정했는지(`already_confirmed`) → 양쪽 제안이 모두 비었는지(`nothing_offered`) → 올린 묶음이 아직 다 있는지(없으면 제안을 고치고 `offer_changed`). 확정을 푸는 쪽(`wanted` = false)은 `not_confirmed`만 본다. 상대의 확정을 대신 하는 인자는 없다.
+
+교환: 양쪽이 확정된 그 호출 안에서 `exchange_items`를 한 번 부른다(요청한 쪽이 첫째 인벤토리).
+
+| 결과 | 세션 | 호출한 쪽이 받는 것 |
+|---|---|---|
+| 성공 | `closed`, `outcome` = `completed` | 성공(닫힌 세션) |
+| 한쪽이 받을 자리가 없음 | **열린 채로 남는다.** 양쪽 확정 해제, `revision` 그대로. 이벤트 `exchange_failed`(`cause` = `inventory_full`, `by_player_id` = 자리가 없는 쪽) | `inventory_full`(자기 쪽) 또는 `other_inventory_full`(상대 쪽) |
+
+**제안은 인벤토리를 따라간다**: 제안에 올려도 아이템은 잠기지 않는다(먹거나 내려놓을 수 있다). 인벤토리 트랜잭션이 확정될 때마다(`on_inventory_transaction`) 열린 세션의 제안을 다시 맞춘다: 올린 묶음이 인벤토리를 떠났으면 제안에서 빼고, 수량이 줄었으면 제안 수량을 낮추고, 그때 `revision` +1·양쪽 확정 해제·이벤트 `offer_adjusted`. 묶음이 늘기만 한 경우는 건드리지 않는다.
+
+**취소**(아무것도 옮기지 않고, 양쪽에 `cause`와 `by_player_id`를 알린다). 상태 검사는 매 서버 틱(`step`)과 모든 의도 처리 직전에 한다:
+
+| `cause` | 조건 | `by_player_id` |
+|---|---|---|
+| `declined` / `withdrawn` / `cancelled` | 당사자의 `cancel`(요청받은 쪽 / 요청한 쪽 / 열린 세션) | 그 플레이어 |
+| `too_far` | 두 위치 사이 거리 > `session_range_m` | "" |
+| `player_dead` | 한쪽이 죽음(`ServerWorld.is_player_dead`) | 죽은 쪽 |
+| `player_resting` | 한쪽이 자는 중(행동 차단 사유 코드 그대로: 다른 차단 사유가 생기면 그 코드가 `cause`가 된다) | 그 플레이어 |
+| `disconnected` | 한쪽이 월드를 떠남(`on_player_offline` 훅에서 즉시, 틱을 기다리지 않는다) | 떠난 쪽 |
+| `new_character` | 한쪽의 새 캐릭터가 시작됨(`on_character_started` 훅) | 그 플레이어 |
+| `request_timeout` | 요청 후 `request_timeout_sec`가 지남 | "" |
+| `idle_timeout` | 마지막 승인된 동작 후 `session_idle_timeout_sec`가 지남(거부된 요청은 시간을 되돌리지 않는다) | "" |
+
+죽은 캐릭터의 소지품은 기존 규칙대로 죽은 자리에 떨어진다(ADR-012). 상대에게 넘어가지 않는다.
+
+이벤트(`drain_events`, JSON-safe): `{event_type: "trade_session_changed", change, session, world_time}`. `change`는 `requested`, `opened`, `offer_changed`, `offer_adjusted`, `confirmed`, `unconfirmed`, `exchange_failed`, `closed` 중 하나다. 완료를 일으킨 확정은 `confirmed` 없이 `closed` 하나만 낸다.
+
+#### 네트워크 메시지(`TradeNetModule`, 모두 채널 0 reliable)
+
+| 방향 | RPC | 받는 쪽 검증 |
+|---|---|---|
+| C→S | `_rpc_request_trade(request_id: int, target_player_id: String)` | 아래 "요청 검증" |
+| C→S | `_rpc_request_trade_accept(request_id: int, session_id: int)` | 〃 |
+| C→S | `_rpc_request_trade_cancel(request_id: int, session_id: int)` | 〃 |
+| C→S | `_rpc_request_trade_offer(request_id: int, session_id: int, item_instance_id: String, quantity: int)` | 〃 |
+| C→S | `_rpc_request_trade_confirm(request_id: int, session_id: int, revision: int, confirmed: bool)` | 〃 |
+| S→요청자 | `_rpc_trade_result(request_id: int, ok: bool, reason: String)` | 서버 발신만 수용, 타입, `request_id` ≥ 0, `reason` 길이 ≤ 64, `ok`일 때만 `reason`이 빈 문자열 |
+| S→당사자 | `_rpc_trade_state(state: Dictionary)` | 서버 발신만 수용, `ClientTradeState.is_valid_state`(정확한 키, 받는 쪽이 두 당사자 중 하나) |
+| S→제3자 | `_rpc_trade_notice(notice: Dictionary)` | 서버 발신만 수용, `ClientTradeState.is_valid_notice`(정확한 키, 받는 쪽이 당사자가 아님) |
+
+의도에는 세션 ID가 실린다: 끝난 세션을 향해 늦게 도착한 의도가 그 플레이어의 다음 세션에 적용되지 않게 하기 위해서다. 행위자는 항상 보낸 peer의 플레이어이고, "누구의 제안·확정인지"나 위치·거리·인벤토리 내용을 싣는 인자는 없다. 인자를 더 붙인 호출은 엔진이 거부한다(테스트로 고정).
+
+요청 검증(순서대로, 먼저 걸린 것 하나. 거부되면 서버 상태는 바뀌지 않고 `rejected_intent_count(reason)`이 1 오른다):
+
+| 순서 | 사유 코드 | 조건 | 요청자에게 결과 전송 |
+|---|---|---|---|
+| 1 | `not_joined` | join 핸드셰이크를 마치지 않은 peer | 보내지 않음 |
+| 2 | `bad_type` | 인자 타입이 틀림(`request_id`·`session_id`·`quantity`·`revision`은 int, ID는 String, `confirmed`는 bool) | `request_id`가 0 이상 int일 때만 |
+| 3 | `bad_sequence` | `request_id` < 0 | 보내지 않음 |
+| 4 | `bad_target_id` / `bad_session_id` / `bad_item_id` / `bad_quantity` / `bad_revision` | 대상 ID가 비었거나 64자 초과 / `session_id` < 1 / 아이템 ID가 비었거나 64자 초과 / `quantity` < 0 / `revision` < 0 | 보냄 |
+| 5 | `rate_limited` | peer별 토큰 버킷(다섯 의도 공용) | 보냄 |
+| 6 | 규칙의 사유(위 표들) | `unknown_item`은 `item_not_in_inventory`로 바꿔 알린다 | 보냄 |
+
+1~5는 `reject_intent`(횟수 + 경고 로그), 6은 정상 플레이에서 생길 수 있어 `count_rejection`(횟수만)이다.
+
+**복제와 정보 공개**(ADR-009, ADR-022). 누가 무엇을 받는가:
+
+| 받는 쪽 | 받는 것 | 받지 않는 것 |
+|---|---|---|
+| 두 당사자 | 세션이 바뀔 때마다 **자기 쪽에서 본** 세션 상태: `{session_id, phase, requester_id, target_id, revision, my_offer: [{item_instance_id, definition_id, quantity}], their_offer: [{definition_id, quantity}], my_confirmed, their_confirmed, change, outcome, cause, by_player_id, world_time}`. 교환이 일어나면 그보다 먼저 자기 인벤토리 변화(`InventoryNet`의 소유자 전용 메시지: 빠진 ID, 이어서 들어오거나 달라진 묶음) | 상대 묶음의 인스턴스 ID·슬롯, 상대 인벤토리의 다른 내용. 단 `other_inventory_full`은 "상대가 이것을 받을 자리가 없다"를 알려 준다 |
+| 제3자(다른 접속자 전부) | 거래가 **완료됐을 때에만** 알림 `{player_ids: [a, b](ID 순), world_time}` | 요청·수락·거절·제안·확정·취소와 그 사유, 무엇을 얼마나 교환했는지, 누가 요청했는지. 세션 상태 메시지는 한 번도 가지 않는다 |
+
+- 서버는 보내기 전에 자기 메시지를 클라이언트와 같은 검증에 통과시킨다(당사자가 아닌 플레이어용 상태는 검증에서 걸려 전송되지 않는다).
+- 순서: 한 의도가 일으킨 변화는 (교환이면 인벤토리 메시지 →) 저장 → 세션 상태 → 알림 → 결과 순으로 나간다. 같은 채널이라 요청자는 결과보다 새 상태를 먼저 받는다. 시스템이 스스로 일으킨 변화(시간 초과, 사망, 수면, 거리)는 그 서버 틱의 끝(`server_physics`)에, 접속 종료로 인한 취소는 `on_player_left`에서 바로 나간다.
+- 알림과 상태에 거리·시야 제한은 없다.
+- 늦게 접속한 클라이언트: 세션은 접속 종료로 취소되므로 다시 접속한 플레이어에게는 세션이 없다(join 조각 없음, 미러 초기화).
+
+저장: 완료된 거래는 세션 상태와 결과를 보내기 전에 월드 전체를 **한 번** 저장한다(줍기·내려놓기와 같은 "주요 트랜잭션"). `InventoryNet`이 교환 트랜잭션으로 세운 "저장 대기"를 `TradeNet`이 `InventoryNetModule.flush_pending_save`로 그 자리에서 내보내므로 틱 끝에 다시 저장하지 않는다. 요청·제안·확정·취소는 저장하지 않는다. 세션은 서버 재시작 뒤에 남지 않는다.
+
+클라이언트 표면(`network.get_module(TradeNetModule.MODULE_NAME) as TradeNetModule`): `request_trade(target_player_id)`, `request_accept(session_id)`, `request_cancel(session_id)`, `request_offer(session_id, item_instance_id, quantity)`, `request_confirm(session_id, revision, confirmed)`(모두 요청 번호를 돌려주고 join 전이면 `NO_REQUEST`. 클라이언트에서 미리 판단하지 않는다), `signal trade_result(request_id, ok, reason)`, `send_raw_*`(테스트 전용), 순수 함수 `validate_trade_request`·`validate_session_request`·`validate_offer_request`·`validate_confirm_request`·`party_state`·`public_notice`. 미러 `client_state`(`ClientTradeState`): `has_session()`, `session()`, `phase()`, `session_id()`, `partner_id()`, `is_requester()`, `revision()`, `my_offer()`, `their_offer()`, `my_confirmed()`, `their_confirmed()`, `last_closed()`, `recent_notices()`(최근 16개), 시그널 `changed`·`session_closed(state)`·`notice_received(notice)`. 미러에는 권한이 없다.
+
+#### 클라이언트 표시(`scripts/presentation/`)
+
+- **키와 뜻**(`TradeIntentPolicy`, 순수 함수): 요청 키(T)는 세션이 없을 때만 "바라보는 상대"(§14.27의 대상 후보 `TreatTargetPolicy`)에게 요청한다. 수락 키(Y)는 상태에 따라 뜻이 다르다: 자기에게 온 요청이면 수락, 열린 세션이면 확정(미러가 보여 주는 `revision`을 실어 보낸다), 이미 확정했으면 확정 취소. 자기가 건 요청에는 아무 일도 하지 않는다. 거절 키(N)는 거절·철회·취소다(서버 의도는 `cancel` 하나). 올리기·내리기 키(O/P)는 **선택 커서(§14.29)가 가리키는 묶음**의 제안 수량을 `trade_offer_step`(1)만큼 늘리거나 줄인다: 미러의 자기 제안 수량에 더하고 0..미러 묶음 수량으로 자른 값을 보내며(`offer_quantity_after`), 바뀌는 것이 없으면 보내지 않는다.
+- **HUD 거래 블록**(`build_trade_lines`, 소지품 목록 아래): 세션이 없으면 "거래 요청 [T]: 이름" 또는 "거래 요청 [T]: 상대 없음 (가까이서 바라보기)", 요청 대기 중이면 "거래 요청 중: 이름 | 취소 [N]" 또는 "이름의 거래 요청 | 수락 [Y] 거절 [N]", 열린 세션이면 네 줄("거래 중: 이름", "내 제안 (확정/미확정): …", "상대 제안 (확정/미확정): …", 키 안내).
+- **문구**: 거부된 요청은 사용 결과 자리에 문장으로(`format_trade_result`, 승인은 HUD 블록이 바뀌는 것으로 충분해 문구가 없다), 세션이 끝나면 "거래 완료: 이름" 또는 취소 사유 문장(`format_trade_closed`), 자기가 요청하지 않은 세션 안의 변화(교환 실패, 서버가 제안을 고침)는 안내 문장(`format_trade_change`), 다른 두 플레이어의 거래는 이벤트 로그 한 줄 "이름 ↔ 이름 거래"(`format_trade_notice`).
+- 키 다섯 개는 `ClientPresentationSettings`에 있고, 설정 검증이 이 Resource의 키 열여섯 개가 서로 다른지, `keys_shared_with`가 이동·줍기 키와 겹치는지 본다(§14.29).
+
+화면 설명은 docs/11 §2.14.
+
+테스트: `tests/unit/item_exchange_test.gd`(묶음 전체 맞바꾸기와 ID 유지·이벤트, 일부 교환의 새 인스턴스와 보존, 합치기와 합쳐져 없어진 ID, 선물과 빈 제안, 꽉 찬 인벤토리끼리의 맞바꾸기, 한쪽이 못 받으면 전무(네 경우)와 불변, 잘못된 제안 사유와 불변, `condition`/`quality`, 고정 seed 300회 교환의 보존·ID·슬롯 불변식, 스냅샷 왕복), `tests/unit/trade_service_test.gd`(설정·조립·저장 문서 없음, 전체 흐름과 한 트랜잭션, 선물, 제안 변경이 양쪽 확정을 푸는 것과 낡은 확정 거부, 누가 누구에게 요청할 수 있는지와 검사 순서·서로 요청, 캐릭터 없는 접속자, 거절·철회·요청 시간 초과(주입된 시계), 세션 취소 사유 일곱 가지와 불변, 의도 직전의 상태 검사, 남의 묶음·수량 초과·상대 제안 건드리기·제3자의 의도·다른 세션 ID·제안 묶음 수 상한, 제안이 인벤토리를 따라감, 자리가 없을 때 세션 유지, 저장 → 재생성 → 로드), `tests/integration/trade_net_test.gd`(서버 1 + 클라이언트 3, 실제 ENet: 전체 흐름에서 두 당사자의 미러와 제3자가 받은 것(상태 0개, 알림 1개의 키 목록, 인벤토리 메시지 0개), 선물 / 거절·철회·시간 초과와 대기 중의 `target_busy` / 거리·수면·무동작·접속 종료·사망으로 인한 취소 / 형식이 틀린 요청 24종·인자를 더 붙인 호출·거짓 요청(남의 묶음, 수량 초과, 상대 제안 빼기, 낡은 revision, 다른 세션 ID, 자기 자신, 제3자의 의도)·클라이언트가 보낸 서버 메시지·끝난 세션에 대한 의도 / join 전 요청과 빈도 초과 / 완료 직후 저장 한 번, 서버 재시작 → 재접속 / RPC 구성·요청 검증·상태와 알림 검증 규칙), `tests/integration/trade_view_test.gd`(실제 클라이언트 세션의 `ClientView`: 실제 입력 액션으로 요청·올리기·내리기·확정·확정 취소·거절·수락·취소, HUD 블록과 결과 문구, 제3자의 이벤트 로그 한 줄), `tests/unit/trade_presentation_test.gd`(키 설정·액션·검증·겹침, 키의 뜻, 올릴 수량, HUD 블록, 결과·종료·변화 문구, 제3자 문구). 고친 기존 테스트: 프로토콜 버전을 단언하는 통합 테스트 일곱(10 → 11).
 
 ## 15. Phase 3 구현 현황
 

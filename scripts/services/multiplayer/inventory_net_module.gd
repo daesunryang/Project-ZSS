@@ -486,6 +486,8 @@ func _on_inventory_transaction(event: Dictionary) -> void:
 		_replicate_removed(event)
 	elif event_type == InventoryService.EVENT_ITEM_TRANSFERRED:
 		_replicate_transferred(event)
+	elif event_type == InventoryService.EVENT_ITEMS_EXCHANGED:
+		_replicate_exchanged(event)
 	elif event_type == InventoryService.EVENT_ITEM_PICKED_UP:
 		# The pickup itself is replicated (and saved) by NetworkService; only
 		# the carried stacks that grew are sent from here.
@@ -613,6 +615,35 @@ func _replicate_transferred(event: Dictionary) -> void:
 		_send_inventory_item(receiver_peer, arrived)
 
 
+## Two inventories gave each other items (InventoryService.exchange_items:
+## a completed trade, P2-T16): each owner is told what left its inventory,
+## then every stack that arrived in it or changed. Each owner is sent its
+## own inventory only, and nobody else is sent anything.
+func _replicate_exchanged(event: Dictionary) -> void:
+	var sides: Variant = event.get("sides", [])
+	for side: Variant in (sides as Array if typeof(sides) == TYPE_ARRAY else []):
+		if typeof(side) != TYPE_DICTIONARY:
+			continue
+		var inventory_id: String = str((side as Dictionary).get("inventory_id", ""))
+		var owner_peer: int = _owner_peer(inventory_id)
+		if owner_peer == 0:
+			continue
+		var removed_ids: Array = []
+		var removed: Variant = (side as Dictionary).get("removed_item_instance_ids", [])
+		for raw_id: Variant in (removed as Array if typeof(removed) == TYPE_ARRAY else []):
+			removed_ids.append(str(raw_id))
+		for message: Array in _split(removed_ids):
+			_rpc_inventory_items_removed.rpc_id(owner_peer, message)
+		var changed: Variant = (side as Dictionary).get("changed_item_instance_ids", [])
+		for raw_id: Variant in (changed as Array if typeof(changed) == TYPE_ARRAY else []):
+			var item: ItemInstance = _world.inventory.get_item(str(raw_id))
+			# Only what is in that inventory now is ever sent to its owner.
+			if item == null or item.location_type != ItemInstance.LOCATION_INVENTORY or item.location_id != inventory_id:
+				GameLogger.error("net", "exchanged item not replicated", {"entity_id": str(raw_id), "module": MODULE_NAME, "operation": "replicate_exchanged"})
+				continue
+			_send_inventory_item(owner_peer, item)
+
+
 ## Sends one carried item (added or changed) to the peer that owns it.
 func _send_inventory_item(owner_peer: int, item: ItemInstance) -> void:
 	var entry: Dictionary = item.to_dict()
@@ -655,6 +686,14 @@ func _send_result(peer_id: int, request_id: int, ok: bool, reason: String) -> vo
 func _send_consume_result(peer_id: int, request_id: int, ok: bool, reason: String) -> void:
 	if network.can_send_to(peer_id):
 		_rpc_consume_result.rpc_id(peer_id, request_id, ok, reason)
+
+
+## Server: saves now what committed transactions left to be saved at the
+## end of this tick (nothing happens when nothing is pending). For a module
+## that must have a rule's inventory change on disk before it answers the
+## request that caused it (TradeNetModule: a completed trade).
+func flush_pending_save(reason: String) -> void:
+	_flush_save(reason)
 
 
 func _flush_save(reason: String) -> void:
