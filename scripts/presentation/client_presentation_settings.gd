@@ -22,9 +22,9 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.01, 1.0) var attack_min_interval_sec: float = 0.15
 @export_range(0.1, 10.0) var attack_result_duration_sec: float = 2.0
 @export_range(1, 20) var hud_event_line_count: int = 5
-@export var death_message: String = "사망했습니다. 서버의 부활을 기다리는 중입니다."
+@export var death_message: String = "사망했습니다. 이 캐릭터는 끝났습니다. 소지품은 죽은 자리에 남고, 잠시 뒤 새 캐릭터로 시작합니다."
 
-## P2-T3 (docs/15 P2-124): the consume key asks the server to eat / drink the
+## P2-T3 (docs/15 P2-125): the consume key asks the server to eat / drink the
 ## first consumable item of the mirrored inventory.
 @export var consume_key: Key = KEY_F
 ## Local flood guard between two consume requests (the server has its own).

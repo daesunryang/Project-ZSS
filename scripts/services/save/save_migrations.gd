@@ -7,12 +7,17 @@ extends RefCounted
 ## world_state  v2 -> v3 (P2-T1): adds "action_time_sec" (WorldClock action
 ##              time, docs/09 §14.16).
 ## player       v1 -> v2 (Phase 2 P2-0): adds "systems" (per-system fragments).
+## player       v2 -> v3 (P2-T4): adds "character_generation" (docs/00
+##              ADR-007); every player saved before is on its first character.
 
 const WORLD_SCHEMA_VERSION: int = 3
-const PLAYER_SCHEMA_VERSION: int = 2
+const PLAYER_SCHEMA_VERSION: int = 3
 ## Same keys as ServerWorld.KEY_WORLD_TIME / KEY_ACTION_TIME.
 const KEY_WORLD_TIME: String = "world_time_sec"
 const KEY_ACTION_TIME: String = "action_time_sec"
+## Same key and first value as PlayerState.
+const KEY_CHARACTER_GENERATION: String = "character_generation"
+const FIRST_CHARACTER_GENERATION: int = 1
 
 
 static func defaults() -> Dictionary[String, SaveMigrator]:
@@ -20,7 +25,10 @@ static func defaults() -> Dictionary[String, SaveMigrator]:
 		1: func(doc: Dictionary) -> Dictionary: return world_v1_to_v2(doc),
 		2: func(doc: Dictionary) -> Dictionary: return world_v2_to_v3(doc),
 	}
-	var player_steps: Dictionary[int, Callable] = {1: func(doc: Dictionary) -> Dictionary: return player_v1_to_v2(doc)}
+	var player_steps: Dictionary[int, Callable] = {
+		1: func(doc: Dictionary) -> Dictionary: return player_v1_to_v2(doc),
+		2: func(doc: Dictionary) -> Dictionary: return player_v2_to_v3(doc),
+	}
 	var migrators: Dictionary[String, SaveMigrator] = {
 		SaveService.CATEGORY_WORLD: SaveMigrator.new(WORLD_SCHEMA_VERSION, world_steps),
 		SaveService.CATEGORY_PLAYER: SaveMigrator.new(PLAYER_SCHEMA_VERSION, player_steps),
@@ -57,4 +65,13 @@ static func player_v1_to_v2(document: Dictionary) -> Dictionary:
 	if not result.has("systems"):
 		result["systems"] = {}
 	result["schema_version"] = 2
+	return result
+
+
+## Before P2-T4 a player was one character that respawned: the first one.
+static func player_v2_to_v3(document: Dictionary) -> Dictionary:
+	var result: Dictionary = document.duplicate(true)
+	if not result.has(KEY_CHARACTER_GENERATION):
+		result[KEY_CHARACTER_GENERATION] = FIRST_CHARACTER_GENERATION
+	result["schema_version"] = 3
 	return result

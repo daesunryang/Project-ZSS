@@ -305,6 +305,7 @@ func _refresh_survival_hud() -> void:
 		"needs": needs,
 		"wounds": _survival_state.wounds(),
 		"infection_stage": _survival_state.infection_stage(),
+		"character_generation": _survival_state.character_generation(),
 	}
 	_survival_label.text = "\n".join(ClientPresentationFormatter.build_survival_lines(vitals, _presentation))
 	_survival_label.visible = true

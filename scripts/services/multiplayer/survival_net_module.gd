@@ -5,7 +5,9 @@ extends NetModule
 ## only alive/dead, respawn position and observable wound facts.
 
 const MODULE_NAME: String = "SurvivalNet"
-const SCHEMA_VERSION: int = 1
+## Join fragment / owner snapshot format. 2 (P2-T4): the owner snapshot
+## carries "character_generation".
+const SCHEMA_VERSION: int = 2
 
 var client_state: ClientSurvivalState
 
@@ -129,6 +131,8 @@ func _make_owner_snapshot(player_id: String) -> Dictionary:
 		"needs": needs,
 		"wounds": wounds,
 		"infection_stage": InfectionState.stage_name(vitals.infection.stage),
+		# Which character of the player this is (docs/00 ADR-007). Owner only.
+		"character_generation": _world.get_player(player_id).character_generation,
 	}
 
 

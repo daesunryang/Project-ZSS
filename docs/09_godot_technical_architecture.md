@@ -226,12 +226,12 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 |---|---|---|
 | `WorldClock` / `WorldClockSettings` | `scripts/core/world_clock.gd`, `world_clock_settings.gd`, `data/tuning/world_clock_settings.tres` | 서버 권한 시계. 달력 시각 `world_time_sec`(실제 초 × `time_scale`, 기본 24)와 행동 시각 `action_time_sec`(실제 초)를 함께 진행한다(§14.16). `step(real_delta, any_online) -> world_delta`, 같은 틱의 증분은 `last_world_delta`/`last_action_delta`. 접속자 0명이면 둘 다 일시정지(설정). world_state `world_time_sec`·`action_time_sec`로 저장 |
 | `BucketScheduler` | `scripts/core/bucket_scheduler.gd` | `new(period_sec, bucket_count)`, `add/remove/has/size/bucket_of`, `advance(delta) -> PackedStringArray`. 등록 순서 라운드로빈(결정론), 주기당 각 id 정확히 1회, 한 호출에서 같은 id 중복 없음 |
-| `ServerSystem` | `scripts/services/world/server_system.gd` | `get_system_id()`(필수, snake_case), `seed_new_world(world)`, `step(world, action_delta, world_delta)`(매 서버 physics tick. `action_delta` = 실제 초, `world_delta` = 달력 초 = `action_delta` × 배율. 일시정지 중에는 둘 다 0. P2-T1에서 두 번째 매개변수의 뜻을 `real_delta`에서 바꿨다, §14.16), `on_player_online/offline(world, player_id)`, `player_movement_multiplier(player_id)`(기본 1.0, 서버 이동 속도 배율: 모든 시스템 값의 곱을 0~1로 제한), `to_world_document()`/`restore_world_document(doc)`, `to_player_fragment(player_id)`/`restore_player_fragment(player_id, doc)`. 문서는 JSON-safe + `schema_version` |
-| `ServerWorld` seam | `scripts/services/world/server_world.gd` | `register_system(system) -> Error`, `get_system(id)`, `system_ids()`, `clock`, `step_systems(real_delta) -> world_delta`(시계를 진행하고 각 시스템에 두 증분을 넘긴다). 저장: world_state 스키마 v3(`world_time_sec`, `action_time_sec`), world_state `systems.{id}`, players/<id>.json `systems.{id}`. 저장에 없는 시스템은 기본값 유지, 등록되지 않은 시스템 데이터는 경고 후 무시 |
+| `ServerSystem` | `scripts/services/world/server_system.gd` | `get_system_id()`(필수, snake_case), `seed_new_world(world)`, `step(world, action_delta, world_delta)`(매 서버 physics tick. `action_delta` = 실제 초, `world_delta` = 달력 초 = `action_delta` × 배율. 일시정지 중에는 둘 다 0. P2-T1에서 두 번째 매개변수의 뜻을 `real_delta`에서 바꿨다, §14.16), `on_player_online/offline(world, player_id)`, `player_movement_multiplier(player_id)`(기본 1.0, 서버 이동 속도 배율: 모든 시스템 값의 곱을 0~1로 제한), `on_registered(world)`(등록될 때 한 번. 월드를 보관해야 하는 시스템은 약한 참조만, P2-T4), `player_action_block_reason(player_id)`(기본 `""`. 플레이어가 아이템을 줍거나 내려놓지 못하게 하는 사유 코드, 예: `player_dead`. P2-T4, §14.19), `to_world_document()`/`restore_world_document(doc)`, `to_player_fragment(player_id)`/`restore_player_fragment(player_id, doc)`. 문서는 JSON-safe + `schema_version` |
+| `ServerWorld` seam | `scripts/services/world/server_world.gd` | `register_system(system) -> Error`, `get_system(id)`, `system_ids()`, `clock`, `step_systems(real_delta) -> world_delta`(시계를 진행하고 각 시스템에 두 증분을 넘긴다). 저장: world_state 스키마 v3(`world_time_sec`, `action_time_sec`), world_state `systems.{id}`, players/<id>.json 스키마 v3(`character_generation`, P2-T4)과 `systems.{id}`. 저장에 없는 시스템은 기본값 유지, 등록되지 않은 시스템 데이터는 경고 후 무시. P2-T4에서 `start_new_character(player_id)`(예전 `respawn_player_at_spawn`을 대체), `player_action_block_reason(player_id)`가 추가됐다(§14.19) |
 | `NetModule` | `scripts/services/multiplayer/net_module.gd` | `NetworkService`의 자식 노드(모든 peer에서 같은 `name`). 훅: `on_server_started(world)`, `on_player_joined/left(peer_id, player_id)`, `server_physics(delta)`, `build_join_fragment(player_id)`(서버), `apply_join_fragment(fragment)`(클라이언트). 자체 `@rpc` 메서드 사용 |
 | `NetworkService` 공개 헬퍼 | `scripts/services/multiplayer/network_service.gd` | `register_module(module)`(시작 전만), `get_module(name)`, `is_server()`, `is_client()`, `is_from_server()`, `sender_player_id()`, `joined_peers()`, `peer_of_player(id)`, `player_of_peer(peer)`, `can_send_to(peer)`, `reject_intent(peer, intent, reason, player_id)`, `count_rejection(reason)`, `rejected_intent_count(reason)`, `persist(reason)`, `get_world()`, `get_settings()` |
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
-| 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가). `SaveService` 기본 마이그레이터 |
+| 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가), player v2→v3(`character_generation` 추가, 값은 1. P2-T4). `SaveService` 기본 마이그레이터 |
 
 채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 5(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18)).
 
@@ -248,6 +248,8 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 단계별 스태미나 회복 배율은 기존 욕구 배율과 곱하고, 단계별 체력 감소율은 출혈·굶주림·탈수 피해와 합산한다. 양수인 감염 체력 감소가 적용되는 동안에는 자연 회복을 허용하지 않는다. 치료 seam `apply_infection_treatment(player_id, source_id)`는 설정된 최대 단계 이하에서 감염을 해제하고 `player_infection_cured`를 반환·기록하며, 아이템·품질·의료 능력 판정은 후속 티켓 소유다. 읽기 전용 `infection_stage(player_id)`는 현재 단계를 반환한다. 임시 수치는 docs/15 P2-7/P2-8/P2-18/P2-19에 기록한다. 감염 복제는 §14.14(P2-N1c), 섭취는 §14.18(P2-T3: `reduce_needs`, `check_reduce_needs`)에서 추가됐다. 수면은 아직 없다.
 
 P2-T1부터 이 절의 "월드 시간"은 달력 시간이고, 스태미나 회복·리스폰 대기·피해 이벤트 묶는 간격만 행동 시간(실제 초)이다. 설정 이름은 `stamina_regen_per_sec`, `respawn_delay_sec`, `survival_damage_event_interval_sec`로 바뀌었고 생존 fragment 스키마 v4가 `died_at_action_time`을 추가했다. 구간 적분이 두 축을 함께 다루는 방식은 §14.16.
+
+P2-T4부터 위 B3·B4의 "리스폰"은 **영구 사망 뒤 새 캐릭터 시작**이다(§14.19가 우선): 사망 순간 소지품이 전부 죽은 자리에 놓이고, 대기 시간 뒤 스폰 지점에서 빈 인벤토리·다음 세대 번호로 시작한다. "인벤토리 유지"와 `ServerWorld.respawn_player_at_spawn`은 더 이상 없다(`start_new_character`). 대기 시간·초기 욕구 설정(`respawn_delay_sec`, `respawn_hunger` 등)과 이벤트 이름 `player_respawned`는 그대로 쓴다. 죽은 캐릭터는 아이템을 줍거나 내려놓을 수 없다(`player_action_block_reason`).
 
 테스트 더블: `tests/framework/test_counter_system.gd`, `tests/framework/test_echo_module.gd`(배포 코드 아님). `NetTestCluster.extra_module_factories`로 테스트 전용 모듈을 추가할 수 있다.
 
@@ -446,21 +448,22 @@ P2-T1부터 이 절의 "월드 시간"은 달력 시간이고, 스태미나 회�
 | `_rpc_survival_status(status)` | 접속 중 클라이언트 | `{player_id: String, alive: bool}`. 새 플레이어 접속 시 기존 미러 보강 |
 | `_rpc_survival_events(events)` | 이벤트 공개 범위에 따른 본인/타인 | 검증된 이벤트 Dictionary 배열. 한 서버 틱에 peer별로 묶어 전송 |
 
-접속 조각(`snapshot.modules.SurvivalNet`) 스키마 버전은 1이다.
+접속 조각(`snapshot.modules.SurvivalNet`)과 본인 스냅샷의 스키마 버전은 2다(P2-T4에서 `character_generation`을 추가하며 1 → 2. 이전 형식은 클라이언트가 버린다).
 
 ```text
 {
-  schema_version: 1,
+  schema_version: 2,
   self: <owner snapshot>,
   players: [{player_id: String, alive: bool}, ...]  # 접속 중인 전 플레이어
 }
 
 owner snapshot = {
-  schema_version: 1, player_id: String, alive: bool,
+  schema_version: 2, player_id: String, alive: bool,
   health: float, stamina: float,
   needs: {hunger: "good|caution|danger", thirst: ..., fatigue: ...},
   wounds: [Wound.to_dict(), ...],
-  infection_stage: "none|latent|early|progressing|severe|terminal|zombified"
+  infection_stage: "none|latent|early|progressing|severe|terminal|zombified",
+  character_generation: int >= 1   # 그 플레이어의 몇 번째 캐릭터인지(§14.19). 본인만 받는다
 }
 ```
 
@@ -474,7 +477,7 @@ owner snapshot = {
 
 타인용 DTO에는 체력·피해 수치, wound 상세/심각도, 욕구, 감염 여부·단계·노출·원인을 넣지 않는다. `SurvivalService.drain_events()`는 JSON-safe 이벤트를 발생 순서로 반환하고 비우며, 설정 상한을 넘으면 좀비/전투 큐와 같이 가장 오래된 것부터 버리고 `dropped_event_count`를 올린다. `apply_damage`의 기존 `player_wounded` ActionResult 계약은 유지한다.
 
-`ClientSurvivalState`는 권한 없는 순수 미러다. 공개 API는 `health()`, `stamina()`, `need_category(kind)`, `wounds()`, `infection_stage()`, `has_player(id)`, `is_alive(id)`, `last_respawn_position(id)`, `recent_events()`이며 변경 알림은 `changed`, `own_vitals_changed`, `player_alive_changed`, `event_received`, `player_respawned` 시그널이다. 최근 이벤트 목록은 설정된 개수만 보관한다. 수치는 `data/tuning/survival_net_settings.tres`와 `survival_settings.tres`에 있고 임시 결정은 docs/15 P2-70~P2-74다.
+`ClientSurvivalState`는 권한 없는 순수 미러다. 공개 API는 `health()`, `stamina()`, `need_category(kind)`, `wounds()`, `infection_stage()`, `character_generation()`(P2-T4), `has_player(id)`, `is_alive(id)`, `last_respawn_position(id)`, `recent_events()`이며 변경 알림은 `changed`, `own_vitals_changed`, `player_alive_changed`, `event_received`, `player_respawned` 시그널이다. 최근 이벤트 목록은 설정된 개수만 보관한다. 수치는 `data/tuning/survival_net_settings.tres`와 `survival_settings.tres`에 있고 임시 결정은 docs/15 P2-70~P2-74다.
 
 ### 14.13 전투 네트워크 계약(P2-N1b, 모듈 `CombatNet`)
 
@@ -555,7 +558,7 @@ owner snapshot = {
 
 좀비와 플레이어 캡슐은 미러의 가장 최근 위치를 그대로 사용한다. 프레젠테이션 보간·외삽·예측은 없고, 시체는 X축으로 기울여 눕힌다. 좀비의 `idle/investigate/chase/attack/search/dormant/dead` 색과 임시 크기, 사망 플레이어 색은 `data/tuning/client_presentation_settings.tres`에 있다. 플레이어의 살아 있는 로컬/원격 색과 크기는 기존 `camera_settings.tres`를 유지한다.
 
-HUD는 owner 미러가 존재할 때만 체력·스태미나 수치, 세 욕구 범주, 감염 단계, 상처 수/출혈, 사망 문구를 만든다. 다른 플레이어의 owner 상태를 추론하거나 표시하지 않는다. 최근 이벤트 로그는 `ClientCombatState`와 `ClientZombieState`가 보관한 서버 이벤트만 사용하며, 좀비 공격의 `infection`은 `target_id == local_player_id`이고 해당 필드가 있을 때만 문자열로 만든다.
+HUD는 owner 미러가 존재할 때만 체력·스태미나 수치, 세 욕구 범주, 감염 단계, 상처 수/출혈, 사망 문구를 만든다. P2-T4부터 첫 줄에 "캐릭터 #N"(본인 미러의 세대 번호)이 붙고 사망 문구는 영구 사망 안내다(§14.19). 다른 플레이어의 owner 상태를 추론하거나 표시하지 않는다. 최근 이벤트 로그는 `ClientCombatState`와 `ClientZombieState`가 보관한 서버 이벤트만 사용하며, 좀비 공격의 `infection`은 `target_id == local_player_id`이고 해당 필드가 있을 때만 문자열로 만든다.
 
 `ClientInputActions`는 공격 액션을 중복 없이 등록한다. `AttackIntentPolicy`는 연결된 클라이언트에서 설정된 최소 간격만 지났는지 판단하는 노드 없는 로컬 flood guard이며, 쿨다운·스태미나·명중·피해는 판단하지 않는다. 통과하면 `CombatNetModule.request_melee_attack(_yaw)`만 호출한다(yaw 0 = −Z). 마지막 `melee_result`의 승인 또는 서버 사유 코드를 설정 시간 동안 HUD에 표시한다.
 
@@ -590,7 +593,7 @@ HUD는 owner 미러가 존재할 때만 체력·스태미나 수치, 세 욕구 
 - 테스트: `tests/unit/time_axes_test.gd`. 같은 실제 시간을 배율 1과 24로 돌려 행동 시간 결과(좀비 이동 거리·공격 틱·조사/수색 전환·시체 제거, 발소리 수, 소음 만료 틱, 근접 공격 승인 틱, 스태미나, 리스폰 틱, 피해 이벤트 수)는 같고 달력 시간 결과(욕구, 감염 경과, 출혈 피해, 체력·상처 회복)는 24배임을 비교한다. 접속자 0명일 때 두 시각 정지, 이벤트 `world_time`이 달력 시각임, 두 시각의 저장 → 재생성 → 로드, 저장된 좀비 공격 기한과 리스폰 기한이 재시작 뒤에도 남은 시간만큼 흐르는지, P2-T1 이전 저장(월드 v2, 생존 fragment v3)의 마이그레이션, 배율 24에서의 생존 구간 적분을 포함한다. Phase 2 수용 시나리오는 기본 배율 24로 실행된다.
 ### 14.17 인벤토리 변화 복제 기반(P2-T2, 모듈 `InventoryNet`)
 
-Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절은 반대 방향(아이템이 인벤토리에서 월드로 가거나 인벤토리에서 없어지는 변화)의 서버 트랜잭션과 복제를 정한다. 먹기(P2-T3, §14.18)와 영구 사망(P2-T4)은 이 절의 서버 API를 호출하는 후속 티켓이다. 임시 가정은 docs/15 §10 P2-110~P2-119.
+Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절은 반대 방향(아이템이 인벤토리에서 월드로 가거나 인벤토리에서 없어지는 변화)의 서버 트랜잭션과 복제를 정한다. 먹기(P2-T3, §14.18)와 영구 사망(P2-T4, §14.19)은 이 절의 서버 API를 호출하는 후속 티켓이다. 임시 가정은 docs/15 §10 P2-110~P2-119.
 
 구성: `InventoryService`(트랜잭션 3개와 `transaction_committed` 시그널 추가), `ServerWorld`(줍기 옆의 래퍼 3개), `InventoryNetModule`(NetModule, 노드 이름 `InventoryNet`: 내려놓기 의도 RPC, 결과 응답, 변화 복제, 클라이언트 표면), `InventoryNetSettings`(`data/tuning/inventory_net_settings.tres`), `ClientWorldState`(미러 적용 메서드 추가). 조립은 `ServerComposition.install_net_modules`에서만 하고 `CompositionConfig`에 `inventory_net` 필드가 추가됐다(`validate()`에 포함). `network_service.gd`는 수정하지 않았고 §14.5의 공개 헬퍼만 쓴다.
 
@@ -615,7 +618,7 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 
 | 메서드 | 대상 | 추가 실패 사유 |
 |---|---|---|
-| `try_drop_item(player_id, item_instance_id)` | 접속 중인 플레이어(의도 처리용) | `not_online` |
+| `try_drop_item(player_id, item_instance_id)` | 접속 중인 플레이어(의도 처리용) | `not_online`, 시스템이 막는 사유(`player_dead`, P2-T4 §14.19. `try_pickup`도 같다) |
 | `drop_all_player_items(player_id)` | 알려진 플레이어(오프라인 포함, 서버 규칙용) | `unknown_player` |
 | `remove_player_item(player_id, item_instance_id, quantity)` | 알려진 플레이어(오프라인 포함, 서버 규칙용) | `unknown_player` |
 
@@ -753,3 +756,55 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 클라이언트 표시(`scripts/presentation/`): 소비 키(`ClientPresentationSettings.consume_key`, 기본 F)를 누르면 `ConsumeIntentPolicy.first_consumable_item_id`가 인벤토리 미러에서 첫 소비 가능 아이템(미러 순서, 정적 아이템 카탈로그로 판단)을 골라 그 ID만 `request_consume`으로 보낸다. 없으면 보내지 않고 안내 문구만 띄운다. 요청 사이 최소 간격(`consume_min_interval_sec`)은 공격 입력과 같은 로컬 flood guard(`AttackIntentPolicy`)다. HUD에 인벤토리 요약(`ClientPresentationFormatter.build_inventory_lines`: 묶음 수, 종류별 이름·합계 수량, 설정된 줄 수까지)과 마지막 소비 결과(승인 또는 서버 사유 코드, 설정 시간 동안)를 표시한다. 월드에 놓인 아이템은 여전히 화면에 그려지지 않는다.
 
 테스트: `tests/unit/item_consumption_test.gd`(욕구 감소·하한·사망자와 잘못된 양 거부, 소비의 성공·수량 감소·삭제, 거부 경우마다 아이템과 욕구가 그대로임, 생존 시스템 없는 월드, 정의 데이터, 기본 개발용 월드, seed 수량, 저장 → 재생성 → 로드), `tests/integration/consume_net_test.gd`(서버 1 + 클라이언트 2, 실제 ENet: 주워서 먹고 마시면 서버와 본인 미러의 욕구 범주·인벤토리가 일치하고 다른 클라이언트는 아무것도 받지 않음, 조작된 요청 13종, join 전 요청, 빈도 초과와 버킷 분리, 죽은 플레이어, 클라이언트가 보낸 결과 RPC, 소비 저장 방침과 재시작, 즉시 저장 설정, 설정·검증 규칙), `tests/unit/client_presentation_test.gd`(첫 소비 가능 아이템 선택, 인벤토리 요약, 결과 문구, 소비 키 등록·설정 검증).
+
+### 14.19 영구 사망(P2-T4, docs/00 ADR-007)
+
+캐릭터가 죽으면 그 캐릭터는 끝난다. 소지품은 죽은 자리의 월드에 남고, 플레이어는 설정된 대기 시간 뒤 새 캐릭터로 시작한다. Phase 2의 개발용 리스폰(인벤토리 유지, §14.6의 B3 서술)을 대체하며 이 절이 §14.6보다 우선한다. 임시 가정은 docs/15 §11.2 P2-126~P2-131.
+
+구성: `SurvivalService`(사망 시 소지품 내려놓기, 새 캐릭터 시작), `ServerWorld.start_new_character`·`player_action_block_reason`, `ServerSystem.on_registered`·`player_action_block_reason`(새 훅 2개), `PlayerState.character_generation`(플레이어 파일 스키마 v3), `SurvivalNetModule`/`ClientSurvivalState`(본인 스냅샷에 세대 번호), HUD. `network_service.gd`는 수정하지 않았다. 새 RPC는 없다. 본인 스냅샷과 접속 조각의 형식이 바뀌었고(아래), 프로토콜 버전은 P2-T3에서 올린 5를 그대로 쓴다(같은 브랜치에서 한 번만 올림).
+
+#### 사망 순간
+
+`SurvivalService._mark_dead`(전투 피해 `apply_damage`, 생존 규칙의 시간 피해, 감염 좀비화 모두 이 한 곳을 지난다)가 순서대로 한다: 체력 0과 사망 시각(달력·행동) 기록 → 아직 내보내지 않은 시간 피해 이벤트 → **소지품 전부를 그 플레이어의 서버 위치에 내려놓기**(`ServerWorld.drop_all_player_items`, §14.17의 `drop_all_items` 트랜잭션 한 번) → `player_died` 이벤트.
+
+- 내려놓는 시점은 **사망 즉시**다(새 캐릭터가 시작될 때가 아니다). 이유: (1) 대기 시간 동안에도 다른 플레이어가 그 자리의 아이템을 보고 주울 수 있다. (2) "죽은 캐릭터는 아무것도 들고 있지 않다"가 사망 순간부터 성립하므로, 죽은 채 접속을 끊거나 서버가 저장·재시작되어도 소지품이 두 번 떨어지거나 사라질 중간 상태가 없다.
+- 위치는 `clamp_to_world(플레이어 위치)`, 셀은 `DevWorldSeed.DEV_CELL_ID`(§14.17과 같다). 한 점에 겹쳐 놓인다. 묶음은 나뉘지 않고, 아이템 수는 보존된다(생성·삭제 없음).
+- 복제와 저장은 `InventoryNet`이 한다(§14.17): 트랜잭션이 확정되는 자리에서 소유자에게 `_rpc_inventory_items_removed`, 이어서 모든 peer에게 `_rpc_world_items_added`를 보내고, 그 서버 틱 끝에 월드를 저장한다. 생존 이벤트(`player_wounded`, `player_died`)는 그 틱의 `server_physics`에서 나가므로 클라이언트는 "인벤토리 비워짐 → 월드 아이템 → 사망" 순서로 받는다. 빈손으로 죽으면 트랜잭션이 없어 그 틱에 저장되지 않는다(사망 상태는 다음 저장에 들어간다).
+- 오프라인 플레이어가 서버 규칙으로 죽어도(`apply_damage`는 접속 여부를 보지 않는다) 똑같이 내려놓는다.
+- `apply_damage`에는 월드 인자가 없으므로 `SurvivalService`는 등록될 때(`ServerSystem.on_registered(world)`, `ServerWorld.register_system`이 호출) 월드의 **약한 참조**를 보관한다(월드가 시스템을 소유하므로 강한 참조는 순환이 된다). 월드에 등록되지 않은 채 쓰이면 내려놓지 못하고 오류 로그를 남기며, 그 경우에도 아래 "새 캐릭터 시작"이 한 번 더 내려놓는다.
+
+#### 죽어 있는 동안
+
+- 죽은 캐릭터는 아이템을 줍거나 내려놓을 수 없다. `ServerSystem.player_action_block_reason(player_id) -> String`(기본 `""`)을 `SurvivalService`가 구현해 죽은 플레이어에게 `player_dead`를 돌려주고, `ServerWorld.try_pickup`/`try_drop_item`이 모든 시스템에 물어 첫 사유로 거부한다(`ServerWorld.player_action_block_reason`). 그래서 줍기 RPC의 결과 사유에 `player_dead`가 추가됐다(Phase 1 줍기 계약의 확장. `network_service.gd`는 그대로이고 `try_pickup`의 반환 사유를 그대로 전한다). 소비 의도는 `ItemConsumption`이, 내려놓기 의도는 `InventoryNetModule`이 먼저 같은 사유로 거부한다(§14.17, §14.18). 서버 규칙용 래퍼(`drop_all_player_items`, `remove_player_item`)는 이 검사를 하지 않는다.
+- 이동 배율 0, 욕구·피해·회복 정지(§14.6)는 그대로다. 위치는 죽은 자리에 남는다.
+- 대기 시간은 `SurvivalSettings.respawn_delay_sec`(행동 시간, 기본 10초)이고 기한은 `died_at_action_time + respawn_delay_sec`다(§14.16). 시간 규칙은 접속 중인 플레이어에게만 돌므로, 죽은 채 접속을 끊으면 아무 일도 일어나지 않고 기한이 지난 뒤 다시 접속하면 접속 직후 첫 서버 틱에 새 캐릭터가 시작된다(접속 스냅샷에는 아직 죽은 상태로 들어간다).
+
+#### 새 캐릭터 시작
+
+`SurvivalService._start_new_character`가 `ServerWorld.start_new_character(player_id) -> ActionResult`를 부른 뒤 생존 상태를 초기화한다.
+
+| 단계 | 내용 |
+|---|---|
+| `ServerWorld.start_new_character` | (1) 아직 들고 있는 것이 있으면 지금 위치(죽은 자리)에 전부 내려놓는다. 보통은 없다. P2-T4 이전 규칙으로 저장된 "소지품을 든 죽은 플레이어"와 내려놓기가 실패한 경우를 위한 안전망이며, 그래서 새 캐릭터는 항상 빈 인벤토리로 시작한다. (2) 위치를 `clamp_to_world(GameplaySettings.player_spawn_position)`으로, (3) 이전 이동 입력을 버리고, (4) `PlayerState.character_generation`을 1 올린다. 성공 이벤트 `{event_type: "character_started", player_id, character_generation, position: [x, y, z], dropped_item_instance_ids}`. 실패: `unknown_player`, 내려놓기 실패 사유(아무것도 바뀌지 않음). 예전의 `respawn_player_at_spawn`을 대체한다 |
+| 생존 상태 | 체력·스태미나 최대, 허기·갈증·피로는 `respawn_hunger`/`respawn_thirst`/`respawn_fatigue`(기본 0), 상처 전부 제거, 감염 없음, 사망 시각 해제. 플레이어별 감염 RNG는 이어진다 |
+| 이벤트 | `player_respawned`(이름과 복제 형식은 그대로, §14.14) + 서버 쪽 필드 `character_generation`. 이 필드는 복제 DTO에 없다(허용 목록 방식이라 타인·본인 이벤트 어느 쪽에도 나가지 않는다) |
+
+- 시작 소지품은 없다(아이템을 인벤토리에 바로 만들어 주는 트랜잭션이 없다, docs/15 P2-119).
+- 새 캐릭터 시작은 그것만으로 저장하지 않는다. 다음 저장에 들어간다. 그 전에 서버가 비정상 종료하면 "죽은 상태"로 복구되고 남은 대기 시간 뒤 같은 세대 번호로 다시 시작한다(소지품은 사망 때 이미 월드에 저장됐다).
+
+#### 캐릭터 식별
+
+- `player_id`는 접속 신원이고 죽어도 바뀌지 않는다. 인벤토리 컨테이너(`inventory_id`)도 그대로 쓴다.
+- `PlayerState.character_generation`(정수, 첫 캐릭터 1, 새 캐릭터마다 +1)이 "그 플레이어의 몇 번째 캐릭터인지"다. `(player_id, character_generation)`이 캐릭터 하나를 가리킨다. 이후 NPC 관계 등이 캐릭터 단위로 붙을 수 있게 하는 최소 장치이며 임시안이다(docs/15 P2-128).
+- 저장: players/<id>.json 스키마 v3이 `character_generation`을 추가한다. v2 → v3 마이그레이션은 1을 넣는다(`SaveMigrations.player_v2_to_v3`). 현재 스키마 문서에 이 값이 없거나 1 미만·정수가 아니면 그 플레이어 문서는 거부된다.
+- 복제: 본인 스냅샷(§14.14의 owner snapshot)에 `character_generation: int ≥ 1`이 추가됐고 접속 조각과 본인 스냅샷의 `schema_version`이 2가 됐다. 이 값이 없거나 형식이 틀린 스냅샷은 클라이언트가 통째로 버린다. `ClientSurvivalState.character_generation() -> int`(아직 받은 것이 없으면 0). 다른 플레이어에게는 보내지 않는다: 다른 클라이언트는 기존대로 `player_died`(원인 없음)와 `player_respawned`(위치)만 받는다.
+
+#### 저장과 이전 저장
+
+- 사망 대기 중 저장 → 재시작: 죽은 플레이어(체력 0, 사망 시각), 빈 인벤토리, 월드에 놓인 소지품, 세대 번호가 그대로 복구되고, 다시 접속하면 남은 대기 시간이 흐른 뒤 새 캐릭터가 시작된다(행동 시각 기한, §14.16).
+- P2-T4 이전 저장의 죽은 플레이어(인벤토리를 들고 있음): 그대로 로드되고, 접속 뒤 새 캐릭터가 시작될 때 소지품이 그 자리에 한 번 떨어진다.
+- 결함 수정(P2-T1 보고의 추정 결함, 실제 결함으로 확인): 생존 fragment v1(B3 이전)에는 사망 시각이 없다. 그런 죽은 플레이어를 로드한 뒤 그 플레이어가 한 번도 접속하지 않은 채 월드를 다시 저장하면 "체력 0 + 사망 시각 없음"인 현재 버전 fragment가 쓰였고, 다음 로드가 `health/death timestamp mismatch`로 월드 복구를 거부했다. `SurvivalService.restore_player_fragment`가 사망 시각 없는 죽은 플레이어에게 복구된 달력 시각을 넣도록 고쳤다(행동 사망 시각은 비워 두어 대기 시간은 다음 접속 순간부터 센다, §14.16과 같다). 재현 테스트: `permanent_death_test.gd::test_a_dead_player_of_a_v1_fragment_can_be_saved_again_before_logging_in`.
+
+클라이언트 표시: 생존 HUD 첫 줄에 "캐릭터 #N"(본인 미러가 세대 번호를 받은 뒤에만), 사망 안내 문구를 "캐릭터가 끝났고 새 캐릭터로 시작한다"는 내용으로 바꿨다(`ClientPresentationSettings.death_message`).
+
+테스트: `tests/unit/permanent_death_test.gd`(사망 즉시 소지품이 죽은 위치에·총수 보존·한 트랜잭션, 생존 규칙 사망과 오프라인 사망, 월드 경계, 새 캐릭터의 위치·빈 인벤토리·초기 상태·세대 증가·이벤트, 죽은 캐릭터의 줍기·내려놓기 거부와 다른 플레이어의 줍기, 사망 중 퇴장·재접속, 사망 대기 중 저장 → 재시작, 이전 규칙 저장, 세대 번호 저장·마이그레이션·검증, v1 fragment 결함, 본인 미러의 세대 번호), `tests/integration/permanent_death_net_test.gd`(서버 1 + 클라이언트 2, 실제 ENet: 사망 → 두 클라이언트가 같은 위치의 월드 아이템을 봄·소유자만 인벤토리 메시지를 받음·죽은 플레이어의 줍기 거부 → 새 캐릭터(본인만 세대 2를 앎) → 다른 플레이어와 새 캐릭터가 각각 줍기, 사망 중 퇴장 → 재접속, 사망 상태 저장 → 서버 재시작 → 재접속), `tests/unit/client_presentation_test.gd`(HUD 세대 줄과 사망 안내).

@@ -264,13 +264,20 @@ func test_a_refused_consumption_changes_neither_the_item_nor_the_needs() -> void
 	assert_eq(world.inventory.to_snapshot(), before_items, "no item changed")
 	assert_eq(vitals.to_dict(), before_vitals, "no need changed")
 
-	# A dead player keeps the item.
+	assert_eq(transactions.size(), 0, "no inventory transaction was committed")
+	assert_eq(survival.drain_events().size(), 0, "no survival event was queued")
+
+	# A dead player eats nothing. (Since P2-T4 a death puts the character's
+	# items down where it died; the refused request must not touch them.)
 	assert_true(survival.apply_damage(alice.player_id, DamageInput.create("zombie_000001", BodyPart.Part.TORSO, Wound.Type.LACERATION, LETHAL_DAMAGE)).ok)
 	survival.drain_events()
+	transactions.clear()
+	var after_death: Dictionary = world.inventory.to_snapshot()
+	assert_eq(world.inventory.get_item(food_id).quantity, 3, "the stack left by the dead character is whole")
 	var dead: ActionResult = ItemConsumption.try_consume(world, alice.player_id, food_id)
 	assert_false(dead.ok)
 	assert_eq(dead.reason, SurvivalService.REASON_PLAYER_DEAD)
-	assert_eq(world.inventory.to_snapshot(), before_items, "a dead player's item is not used up")
+	assert_eq(world.inventory.to_snapshot(), after_death, "a dead player's item is not used up")
 	assert_eq(vitals.hunger, 70.0)
 	assert_eq(transactions.size(), 0, "no inventory transaction was committed")
 	assert_eq(survival.drain_events().size(), 0, "no survival event was queued")

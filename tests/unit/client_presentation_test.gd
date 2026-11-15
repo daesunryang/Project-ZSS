@@ -202,3 +202,28 @@ func test_consume_result_text_and_action_use_settings() -> void:
 	invalid.consume_min_interval_sec = 0.0
 	invalid.hud_inventory_line_count = 0
 	assert_eq(invalid.validate().size(), 3, "; ".join(invalid.validate()))
+
+
+# ------------------------------------------------------------ P2-T4: permanent death
+
+func test_survival_hud_shows_which_character_and_the_permanent_death_notice() -> void:
+	var settings: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
+	var vitals: Dictionary = {
+		"alive": false,
+		"health": 0.0,
+		"stamina": 0.0,
+		"needs": {"hunger": "good", "thirst": "good", "fatigue": "good"},
+		"infection_stage": "none",
+		"wounds": [],
+		"character_generation": 3,
+	}
+	var lines: PackedStringArray = ClientPresentationFormatter.build_survival_lines(vitals, settings)
+	assert_eq(lines[0], "캐릭터 #3", "the owner sees which character this is")
+	assert_eq(lines[lines.size() - 1], settings.death_message)
+	assert_contains(settings.death_message, "새 캐릭터", "the notice says the character is over, not that it revives")
+	assert_not_contains(settings.death_message, "부활")
+	# No generation is shown until the server has told the owner one.
+	vitals.erase("character_generation")
+	assert_not_contains("\n".join(ClientPresentationFormatter.build_survival_lines(vitals, settings)), "캐릭터 #")
+	vitals["character_generation"] = 0
+	assert_not_contains("\n".join(ClientPresentationFormatter.build_survival_lines(vitals, settings)), "캐릭터 #")

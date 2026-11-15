@@ -23,6 +23,7 @@ const ENTITY_KIND_PLAYER: String = "player"
 const REASON_NOT_ONLINE: String = "not_online"
 const REASON_STALE_SEQUENCE: String = "stale_sequence"
 const REASON_UNKNOWN_PLAYER: String = "unknown_player"
+const EVENT_CHARACTER_STARTED: String = "character_started"
 
 var world_id: String
 var gameplay: GameplaySettings
@@ -81,6 +82,7 @@ func register_system(system: ServerSystem) -> Error:
 		return ERR_ALREADY_EXISTS
 	_systems[system_id] = system
 	_system_order.append(system)
+	system.on_registered(self)
 	return OK
 
 
@@ -147,16 +149,38 @@ func get_player(player_id: String) -> PlayerState:
 	return _players.get(player_id, null)
 
 
-## Restores the authoritative transform at the configured spawn and discards
-## any pre-death movement intent. SurvivalService owns the respawn decision;
-## this hook only changes world-owned player state.
-func respawn_player_at_spawn(player_id: String) -> bool:
+## Ends the player's current character and starts the next one (docs/00
+## ADR-007 permanent death, docs/09 §14.19). SurvivalService decides when;
+## this changes the world-owned player state only:
+##   - whatever is still carried goes to the world where the old character
+##     is (normally nothing: a death drops everything at once; this covers
+##     saves written before P2-T4), so a new character always starts empty;
+##   - the transform returns to the configured spawn and pending movement
+##     intent is discarded;
+##   - the character generation goes up by one.
+## The player id and the inventory container stay. Success event:
+##   {event_type: "character_started", player_id, character_generation,
+##    position: [x, y, z], dropped_item_instance_ids: Array of String}
+## Failure: unknown_player, or the reason the drop was refused; nothing
+## changes then.
+func start_new_character(player_id: String) -> ActionResult:
 	var state: PlayerState = _players.get(player_id, null)
 	if state == null:
-		return false
+		return ActionResult.failure(REASON_UNKNOWN_PLAYER)
+	var dropped: ActionResult = drop_all_player_items(player_id)
+	if not dropped.ok:
+		return dropped
 	state.position = clamp_to_world(gameplay.player_spawn_position)
 	_move_inputs.erase(player_id)
-	return true
+	state.character_generation += 1
+	GameLogger.info("world", "new character started", {"world_id": world_id, "player_id": player_id, "character_generation": state.character_generation})
+	return ActionResult.success({
+		"event_type": EVENT_CHARACTER_STARTED,
+		"player_id": player_id,
+		"character_generation": state.character_generation,
+		"position": [state.position.x, state.position.y, state.position.z],
+		"dropped_item_instance_ids": dropped.event.get("item_instance_ids", []),
+	})
 
 
 func online_player_ids() -> PackedStringArray:
@@ -209,21 +233,41 @@ func player_movement_multiplier(player_id: String) -> float:
 	return clampf(product, 0.0, 1.0)
 
 
+## "" when every system lets the player act on items in the world, otherwise
+## the first system's reason code (ServerSystem.player_action_block_reason;
+## e.g. "player_dead").
+func player_action_block_reason(player_id: String) -> String:
+	for system: ServerSystem in _system_order:
+		var reason: String = system.player_action_block_reason(player_id)
+		if not reason.is_empty():
+			return reason
+	return ""
+
+
 ## Pickup by an online player, using the server-known position (the client
-## never supplies a position). Returns the InventoryService result.
+## never supplies a position). Returns the InventoryService result, or the
+## reason a system blocks the player from acting (a dead character cannot
+## pick anything up, P2-T4).
 func try_pickup(player_id: String, item_instance_id: String) -> ActionResult:
 	if not _online.has(player_id):
 		return ActionResult.failure(REASON_NOT_ONLINE)
+	var blocked: String = player_action_block_reason(player_id)
+	if not blocked.is_empty():
+		return ActionResult.failure(blocked)
 	var state: PlayerState = _players[player_id]
 	return inventory.try_pickup(state.inventory_id, item_instance_id, state.position)
 
 
 ## Drop by an online player (P2-T2): the item goes to the world where the
 ## server knows the player to be. The client supplies neither a position nor
-## an owner. Returns the InventoryService result.
+## an owner. Returns the InventoryService result, or the reason a system
+## blocks the player from acting.
 func try_drop_item(player_id: String, item_instance_id: String) -> ActionResult:
 	if not _online.has(player_id):
 		return ActionResult.failure(REASON_NOT_ONLINE)
+	var blocked: String = player_action_block_reason(player_id)
+	if not blocked.is_empty():
+		return ActionResult.failure(blocked)
 	var state: PlayerState = _players[player_id]
 	return inventory.drop_item(state.inventory_id, item_instance_id, DevWorldSeed.DEV_CELL_ID, clamp_to_world(state.position))
 

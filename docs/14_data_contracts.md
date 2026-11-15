@@ -16,7 +16,7 @@
 ## 3. 핵심 엔티티 계약
 
 ### PlayerState
-`player_id`, `peer_id`(런타임 연결 정보), `position`, `rotation`, `health`, `injuries`, `needs`, `infection`, `inventory_id`, `shelter_membership`, `last_saved_at`.
+`player_id`, `peer_id`(런타임 연결 정보), `position`, `rotation`, `health`, `injuries`, `needs`, `infection`, `inventory_id`, `shelter_membership`, `last_saved_at`, `character_generation`(P2-T4 임시안: 같은 `player_id`의 몇 번째 캐릭터인지. 첫 캐릭터 1, 영구 사망 뒤 새 캐릭터마다 +1. docs/09 §14.19).
 
 ### NPCDefinition (정적)
 `npc_definition_id`, 외형/초기 특성/기본 능력/시작 장비/배경 태그.

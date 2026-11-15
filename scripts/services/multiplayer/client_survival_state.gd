@@ -9,7 +9,8 @@ signal player_alive_changed(player_id: String, alive: bool)
 signal event_received(event: Dictionary)
 signal player_respawned(player_id: String, position: Vector3)
 
-const SCHEMA_VERSION: int = 1
+## Join fragment / owner snapshot format (same value as SurvivalNetModule).
+const SCHEMA_VERSION: int = 2
 const SCOPE_OWNER: String = "owner"
 const SCOPE_PUBLIC: String = "public"
 
@@ -137,6 +138,12 @@ func wounds() -> Array[Dictionary]:
 	return result
 
 
+## Which character of the local player this is (1 = the first one; 0 while
+## nothing has been received). Only the owner is told (docs/00 ADR-007).
+func character_generation() -> int:
+	return int(_own_vitals.get("character_generation", 0))
+
+
 func infection_stage() -> String:
 	return str(_own_vitals.get("infection_stage", ""))
 
@@ -217,7 +224,7 @@ func _set_alive(player_id: String, alive: bool) -> void:
 
 
 func _validate_owner_snapshot(data: Dictionary, expected_player_id: String) -> bool:
-	if not _has_exact_keys(data, ["schema_version", "player_id", "alive", "health", "stamina", "needs", "wounds", "infection_stage"]):
+	if not _has_exact_keys(data, ["schema_version", "player_id", "alive", "health", "stamina", "needs", "wounds", "infection_stage", "character_generation"]):
 		return false
 	if typeof(data["schema_version"]) != TYPE_INT or int(data["schema_version"]) != SCHEMA_VERSION:
 		return false
@@ -236,6 +243,8 @@ func _validate_owner_snapshot(data: Dictionary, expected_player_id: String) -> b
 	for wound: Variant in data["wounds"] as Array:
 		if typeof(wound) != TYPE_DICTIONARY or not _validate_wound(wound as Dictionary):
 			return false
+	if typeof(data["character_generation"]) != TYPE_INT or int(data["character_generation"]) < PlayerState.FIRST_CHARACTER_GENERATION:
+		return false
 	return typeof(data["infection_stage"]) == TYPE_STRING and InfectionState.STAGE_NAMES.has(str(data["infection_stage"]))
 
 

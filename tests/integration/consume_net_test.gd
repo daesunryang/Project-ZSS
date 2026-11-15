@@ -474,9 +474,12 @@ func test_a_dead_player_cannot_consume() -> void:
 		return
 	_vitals(alice_id).hunger = 90.0
 	var a_consumes: Array[Array] = _consume_results_of(a)
-	var a_signals: Array[Array] = _mirror_signals_of(a)
 	assert_true(_survival().apply_damage(alice_id, DamageInput.create("test", BodyPart.Part.TORSO, Wound.Type.BRUISE, LETHAL_DAMAGE)).ok, "test setup: kill alice")
 	assert_false(_survival().is_alive(alice_id))
+	# Since P2-T4 the death put her food down where she died. Wait for that
+	# to reach her mirror, then watch that the refused request changes nothing.
+	assert_true(await _wait(func() -> bool: return a.client_state.world_items.has(food_id) and a.client_state.inventory.is_empty()), "the death's drop reached alice")
+	var a_signals: Array[Array] = _mirror_signals_of(a)
 	var before: Dictionary = _world.inventory.to_snapshot()
 	var request_id: int = _module(a).request_consume(food_id)
 	assert_true(await _wait(func() -> bool: return a_consumes.size() == 1), "dead alice got an answer")

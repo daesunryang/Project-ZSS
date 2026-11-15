@@ -24,6 +24,17 @@ extends ServerSystem
 ## B3 adds bleeding/recovery/death/respawn. B4 adds configured infection
 ## stages, effects and treatment. Time rules run only for online players.
 ##
+## Permanent death (P2-T4, docs/00 ADR-007, docs/09 §14.19): a character
+## that dies is finished. At the moment of death everything it carries is
+## put down where it died (ServerWorld.drop_all_player_items). After
+## `respawn_delay_sec` (action time, counted only while the player is
+## online) the player starts a NEW character: ServerWorld.start_new_character
+## (spawn point, empty inventory, next character generation) and initial
+## vitals, no wounds, no infection. The event of that moment keeps the name
+## "player_respawned" (existing replication contract) and carries the new
+## `character_generation`. A dead character cannot pick up or put down
+## items (player_action_block_reason).
+##
 ## Two time axes (docs/00 ADR-006, docs/09 §14.16):
 ##   calendar time (world_delta, WorldClock.world_time_sec): needs, infection
 ##     stages and their health loss, bleeding, natural health/wound recovery,
@@ -81,6 +92,9 @@ const DEAD_MULTIPLIER: float = 0.0
 var _settings: SurvivalSettings
 var _ids: EntityIdGenerator
 var _clock: WorldClock
+## The world this system is registered in. Weak: the world owns its systems.
+## Needed where no hook passes the world (a death inside apply_damage).
+var _world_ref: WeakRef = null
 var _vitals: Dictionary[String, PlayerVitals] = {}
 var _online: Dictionary[String, bool] = {}
 var _events: Array[Dictionary] = []
@@ -369,9 +383,20 @@ func reduce_needs(player_id: String, hunger_amount: float, thirst_amount: float,
 
 # ------------------------------------------------------------ ServerSystem
 
+func on_registered(world: ServerWorld) -> void:
+	_world_ref = weakref(world)
+
+
 ## Server movement factor (ServerWorld.step_movement): wounds, needs, death.
 func player_movement_multiplier(player_id: String) -> float:
 	return movement_speed_multiplier(player_id)
+
+
+## A dead character is finished: it can neither pick up nor put down items
+## while the player waits for the new character (P2-T4).
+func player_action_block_reason(player_id: String) -> String:
+	var vitals: PlayerVitals = _vitals.get(player_id, null)
+	return REASON_PLAYER_DEAD if vitals != null and not vitals.is_alive() else ""
 
 
 func on_player_online(_world: ServerWorld, player_id: String) -> void:
@@ -380,7 +405,7 @@ func on_player_online(_world: ServerWorld, player_id: String) -> void:
 		_vitals[player_id] = PlayerVitals.create_default(_settings, _seed_for(player_id))
 	elif not _vitals[player_id].is_alive():
 		# A dead player from an older fragment has no death timestamp (schema v1)
-		# or no action death time (before v4). Start the development respawn
+		# or no action death time (before v4). Start the new-character
 		# delay on the first online instant after migration.
 		var dead: PlayerVitals = _vitals[player_id]
 		if dead.died_at_world_time == PlayerVitals.NOT_DEAD_TIME:
@@ -431,6 +456,13 @@ func restore_player_fragment(player_id: String, fragment: Dictionary) -> PackedS
 	var vitals: PlayerVitals = parsed[0]
 	for wound: Wound in vitals.injuries:
 		_ids.reserve_existing_id(wound.wound_id)
+	# A schema v1 fragment has no death time. Without one a dead player that
+	# is saved again before coming online would be written as a current
+	# fragment the next load refuses (health/death timestamp mismatch): stamp
+	# the (already restored) calendar clock. The action death time stays
+	# unset, so the new-character delay starts at the next login.
+	if not vitals.is_alive() and vitals.died_at_world_time == PlayerVitals.NOT_DEAD_TIME:
+		vitals.died_at_world_time = _clock.world_time_sec
 	_vitals[player_id] = vitals
 	return PackedStringArray()
 
@@ -455,7 +487,7 @@ func _advance_player(world: ServerWorld, player_id: String, vitals: PlayerVitals
 				return
 			# A deadline that passed before this tick (offline) fires at once.
 			var respawn_at: float = clampf(_world_time_at(respawn_action_at), cursor, end_time)
-			if not _respawn(world, player_id, vitals, respawn_at):
+			if not _start_new_character(world, player_id, vitals, respawn_at):
 				return
 			cursor = respawn_at
 			continue
@@ -720,13 +752,15 @@ func _flush_survival_damage(player_id: String, vitals: PlayerVitals, world_time:
 
 
 ## `world_time` (calendar) stamps the death and its events; `action_time`
-## starts the respawn delay.
+## starts the new-character delay. The character's belongings are put down
+## where it died before the death is reported (docs/00 ADR-007).
 func _mark_dead(player_id: String, vitals: PlayerVitals, world_time: float, action_time: float, cause: String) -> void:
 	vitals.health = 0.0
 	vitals.died_at_world_time = world_time
 	vitals.died_at_action_time = action_time
 	# Report damage taken up to the death before the death itself.
 	_flush_survival_damage(player_id, vitals, world_time)
+	_leave_belongings(player_id)
 	var event: Dictionary = {
 		"event_type": EVENT_PLAYER_DIED,
 		"player_id": player_id,
@@ -737,9 +771,26 @@ func _mark_dead(player_id: String, vitals: PlayerVitals, world_time: float, acti
 	GameLogger.info("survival", "player died", event)
 
 
-func _respawn(world: ServerWorld, player_id: String, vitals: PlayerVitals, world_time: float) -> bool:
-	if not world.respawn_player_at_spawn(player_id):
-		GameLogger.error("survival", "respawn rejected for missing world player", {"player_id": player_id, "operation": "respawn_player"})
+## Everything the (dead) player carries goes to the world where it is. A
+## failure is logged and left to ServerWorld.start_new_character, which
+## drops again before the new character starts, so nothing is carried over.
+func _leave_belongings(player_id: String) -> void:
+	var world: ServerWorld = (_world_ref.get_ref() as ServerWorld) if _world_ref != null else null
+	if world == null:
+		GameLogger.error("survival", "dead player's items not dropped: system is not registered in a world", {"player_id": player_id, "operation": "leave_belongings"})
+		return
+	var dropped: ActionResult = world.drop_all_player_items(player_id)
+	if not dropped.ok:
+		GameLogger.error("survival", "dead player's items not dropped", {"player_id": player_id, "reason": dropped.reason, "operation": "leave_belongings"})
+
+
+## The player's next character starts (docs/00 ADR-007): spawn point, empty
+## inventory and the next character generation (ServerWorld), initial vitals,
+## no wounds, no infection. The infection RNG stream of the player continues.
+func _start_new_character(world: ServerWorld, player_id: String, vitals: PlayerVitals, world_time: float) -> bool:
+	var started: ActionResult = world.start_new_character(player_id)
+	if not started.ok:
+		GameLogger.error("survival", "new character rejected", {"player_id": player_id, "reason": started.reason, "operation": "start_new_character"})
 		return false
 	vitals.health = _settings.max_health
 	vitals.stamina = _settings.max_stamina
@@ -756,10 +807,11 @@ func _respawn(world: ServerWorld, player_id: String, vitals: PlayerVitals, world
 		"event_type": EVENT_PLAYER_RESPAWNED,
 		"player_id": player_id,
 		"position": [state.position.x, state.position.y, state.position.z],
+		"character_generation": state.character_generation,
 		"world_time": world_time,
 	}
 	_push_event(event)
-	GameLogger.info("survival", "player respawned", event)
+	GameLogger.info("survival", "new character started", event)
 	return true
 
 ## Action time at a calendar instant of the tick set up by step().

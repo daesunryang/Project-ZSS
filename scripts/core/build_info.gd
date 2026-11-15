@@ -20,7 +20,9 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    snapshots/events, survival replication, melee attack intent).
 ## 4: P2-T2 (InventoryNet module: drop intent and its result, world items
 ##    added, owner inventory items removed/changed).
-## 5: P2-T3 (InventoryNet: consume intent and its result).
+## 5: P2-T3..T5 (InventoryNet: consume intent and its result; P2-T4: the
+##    SurvivalNet owner snapshot / join fragment carry "character_generation",
+##    format 2; the pickup result may say "player_dead").
 const PROTOCOL_VERSION: int = 5
 
 const _VERSION_SETTING: String = "application/config/version"

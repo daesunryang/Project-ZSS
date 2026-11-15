@@ -8,8 +8,12 @@ extends RefCounted
 
 ## v2 (Phase 2): the player file may carry "systems" fragments written by
 ## ServerWorld; PlayerState itself ignores that key.
-const SCHEMA_VERSION: int = 2
+## v3 (P2-T4): adds "character_generation".
+const SCHEMA_VERSION: int = 3
 const PLAYER_ID_PATTERN: String = "^player_[0-9]+$"
+## Generation of a player's first character.
+const FIRST_CHARACTER_GENERATION: int = 1
+const KEY_CHARACTER_GENERATION: String = "character_generation"
 
 var player_id: String = ""
 ## PROVISIONAL client-chosen identity key used to find the same player on
@@ -19,6 +23,13 @@ var position: Vector3 = Vector3.ZERO
 ## Facing around the Y axis, radians.
 var yaw: float = 0.0
 var inventory_id: String = ""
+## Which character of this player this is (docs/00 ADR-007, permanent death):
+## 1 for the first one, +1 every time a new character starts after a death.
+## `player_id` is the connection identity and stays the same; the pair
+## (player_id, character_generation) names one character. PROVISIONAL
+## (docs/15 P2-128): the minimum needed so later systems (NPC relationships)
+## can attach to a character instead of a player.
+var character_generation: int = FIRST_CHARACTER_GENERATION
 ## Real-time (UTC unix seconds) of the last save. Not world time (docs/14 §2).
 var last_saved_at_utc: int = 0
 
@@ -31,6 +42,7 @@ func to_dict() -> Dictionary:
 		"position": [position.x, position.y, position.z],
 		"yaw": yaw,
 		"inventory_id": inventory_id,
+		KEY_CHARACTER_GENERATION: character_generation,
 		"last_saved_at_utc": last_saved_at_utc,
 	}
 
@@ -48,13 +60,14 @@ static func from_dict(data: Dictionary) -> PlayerState:
 	state.position = Vector3(float(p[0]), float(p[1]), float(p[2]))
 	state.yaw = float(data["yaw"])
 	state.inventory_id = str(data["inventory_id"])
+	state.character_generation = int(data[KEY_CHARACTER_GENERATION])
 	state.last_saved_at_utc = int(data.get("last_saved_at_utc", 0))
 	return state
 
 
 static func validate_dict(data: Dictionary) -> PackedStringArray:
 	var errors: PackedStringArray = []
-	for key: String in ["schema_version", "player_id", "player_key", "position", "yaw", "inventory_id"]:
+	for key: String in ["schema_version", "player_id", "player_key", "position", "yaw", "inventory_id", KEY_CHARACTER_GENERATION]:
 		if not data.has(key):
 			errors.append("missing " + key)
 	if not errors.is_empty():
@@ -77,6 +90,9 @@ static func validate_dict(data: Dictionary) -> PackedStringArray:
 		errors.append("yaw must be a finite number")
 	if typeof(data["inventory_id"]) != TYPE_STRING or str(data["inventory_id"]).is_empty():
 		errors.append("invalid inventory_id")
+	var generation: Variant = data[KEY_CHARACTER_GENERATION]
+	if not ItemInstance.is_integer_value(generation) or int(generation) < FIRST_CHARACTER_GENERATION:
+		errors.append("character_generation must be an integer >= %d" % FIRST_CHARACTER_GENERATION)
 	return errors
 
 

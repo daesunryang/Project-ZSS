@@ -541,9 +541,13 @@ func test_a_dead_player_cannot_drop() -> void:
 	if not await _pick_up(b, [bobs]):
 		return
 	var b_drops: Array[Array] = _drop_results_of(b)
-	var a_signals: Array[Array] = _mirror_signals_of(a)
 	assert_true(_survival().apply_damage(bob_id, DamageInput.create("test", BodyPart.Part.TORSO, Wound.Type.BRUISE, LETHAL_DAMAGE)).ok, "test setup: kill bob")
 	assert_false(_survival().is_alive(bob_id))
+	# Since P2-T4 the death itself put bob's item down where he died. Let
+	# that reach the mirrors first, then watch that the refused request of
+	# the dead player changes nothing more.
+	await _assert_mirrors_match(clients, "after bob's death")
+	var a_signals: Array[Array] = _mirror_signals_of(a)
 	var before: Dictionary = _world.inventory.to_snapshot()
 	var request_id: int = _module(b).request_drop(bobs)
 	assert_true(await _wait(func() -> bool: return b_drops.size() == 1), "dead bob got an answer")

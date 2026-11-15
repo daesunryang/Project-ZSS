@@ -25,6 +25,11 @@ static func build_survival_lines(vitals: Dictionary, settings: ClientPresentatio
 	if vitals.is_empty():
 		return PackedStringArray()
 	var lines: PackedStringArray = []
+	# Which character of the player this is (permanent death, ADR-007); only
+	# shown once the server has told the owner.
+	var generation: int = int(vitals.get("character_generation", 0))
+	if generation > 0:
+		lines.append("캐릭터 #%d" % generation)
 	lines.append("체력 %.1f | 스태미나 %.1f" % [float(vitals.get("health", 0.0)), float(vitals.get("stamina", 0.0))])
 	var needs: Dictionary = vitals.get("needs", {})
 	lines.append("허기 %s | 갈증 %s | 피로 %s" % [

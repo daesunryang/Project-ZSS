@@ -17,6 +17,15 @@ func get_system_id() -> String:
 	return ""
 
 
+## Called once by ServerWorld.register_system() when this system was added
+## to `world` (before seeding / restoring). A system that must reach the
+## world outside the hooks below (which all receive it) may keep a WEAK
+## reference here: the world owns its systems, so a strong reference would
+## be a cycle and never be freed (P2-T4).
+func on_registered(_world: ServerWorld) -> void:
+	return
+
+
 ## Called once when a brand-new world is created (not for loaded saves).
 func seed_new_world(_world: ServerWorld) -> Error:
 	return OK
@@ -49,6 +58,14 @@ func on_player_offline(_world: ServerWorld, _player_id: String) -> void:
 ## clamps the product to [0, 1], so a system can only slow a player down.
 func player_movement_multiplier(_player_id: String) -> float:
 	return 1.0
+
+
+## "" when this system lets the player act on items in the world (pick up,
+## put down), otherwise a stable reason code such as "player_dead".
+## ServerWorld asks every system before such an action and refuses it with
+## the first reason (P2-T4: a dead character is finished).
+func player_action_block_reason(_player_id: String) -> String:
+	return ""
 
 
 ## World-level save document ({} = nothing to save).
