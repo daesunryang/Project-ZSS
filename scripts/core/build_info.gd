@@ -1,0 +1,61 @@
+class_name BuildInfo
+extends RefCounted
+## Static build/version information for logs, UI and diagnostics.
+##
+## The game version is read from ProjectSettings `application/config/version`
+## so there is exactly one place to bump it. Protocol and save-schema versions
+## are intentionally NOT defined here yet (Phase 1+ concerns, see docs/15).
+
+## Engine version this project is pinned to (docs/00 ADR-001).
+const REQUIRED_ENGINE_MAJOR: int = 4
+const REQUIRED_ENGINE_MINOR: int = 7
+const REQUIRED_ENGINE_PATCH: int = 2
+const REQUIRED_ENGINE_STATUS: String = "stable"
+
+const _VERSION_SETTING: String = "application/config/version"
+const _NAME_SETTING: String = "application/config/name"
+const _UNKNOWN_VERSION: String = "0.0.0"
+
+
+## Game version string, e.g. "0.0.1".
+static func game_version() -> String:
+	return str(ProjectSettings.get_setting(_VERSION_SETTING, _UNKNOWN_VERSION))
+
+
+## Game display name.
+static func game_name() -> String:
+	return str(ProjectSettings.get_setting(_NAME_SETTING, "LAST HAVEN"))
+
+
+## Running engine version as "major.minor.patch.status".
+static func engine_version_string() -> String:
+	var info: Dictionary = Engine.get_version_info()
+	return "%d.%d.%d.%s" % [int(info["major"]), int(info["minor"]), int(info["patch"]), str(info["status"])]
+
+
+## True when the running engine matches the pinned version exactly.
+static func is_supported_engine(info: Dictionary = Engine.get_version_info()) -> bool:
+	return (
+		int(info.get("major", -1)) == REQUIRED_ENGINE_MAJOR
+		and int(info.get("minor", -1)) == REQUIRED_ENGINE_MINOR
+		and int(info.get("patch", -1)) == REQUIRED_ENGINE_PATCH
+		and str(info.get("status", "")) == REQUIRED_ENGINE_STATUS
+	)
+
+
+## True when `version` is a "MAJOR.MINOR.PATCH" string of non-negative integers.
+static func is_valid_semver(version: String) -> bool:
+	var parts: PackedStringArray = version.split(".")
+	if parts.size() != 3:
+		return false
+	for part: String in parts:
+		if part.is_empty() or not part.is_valid_int() or int(part) < 0:
+			return false
+	return true
+
+
+## One-line summary used in startup logs.
+static func summary() -> String:
+	return "%s v%s (engine %s, debug=%s)" % [
+		game_name(), game_version(), engine_version_string(), str(OS.is_debug_build())
+	]

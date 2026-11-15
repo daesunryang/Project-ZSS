@@ -1,0 +1,8 @@
+# Godot 4 generated
+.godot/
+/android/
+*.translation
+# Exports / local output
+/build/
+/export/
+*.tmp
