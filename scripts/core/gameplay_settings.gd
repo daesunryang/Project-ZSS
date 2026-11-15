@@ -1,0 +1,45 @@
+class_name GameplaySettings
+extends Resource
+## Gameplay tuning values used by server rules (docs/14 §7: no hard-coded
+## balance numbers). Defaults live in `res://data/tuning/gameplay_settings.tres`.
+## Every value here is PROVISIONAL (docs/15 §5) until play-tested.
+
+const DEFAULT_PATH: String = "res://data/tuning/gameplay_settings.tres"
+
+## Server-side walking speed, metres per second.
+@export_range(0.1, 20.0) var move_speed_mps: float = 4.0
+## Half size of the square play area around the origin, metres
+## (docs/00: initial test map 500 m x 500 m -> 250).
+@export_range(1.0, 10000.0) var world_half_extent_m: float = 250.0
+## Maximum distance between player and world item for pickup, metres.
+@export_range(0.1, 50.0) var pickup_range_m: float = 2.5
+## Number of item stacks a player inventory can hold.
+@export_range(1, 1000) var inventory_slot_capacity: int = 20
+## Where new players appear.
+@export var player_spawn_position: Vector3 = Vector3.ZERO
+
+
+func validate() -> PackedStringArray:
+	var errors: PackedStringArray = []
+	if move_speed_mps <= 0.0:
+		errors.append("move_speed_mps must be > 0")
+	if world_half_extent_m <= 0.0:
+		errors.append("world_half_extent_m must be > 0")
+	if pickup_range_m <= 0.0:
+		errors.append("pickup_range_m must be > 0")
+	if inventory_slot_capacity < 1:
+		errors.append("inventory_slot_capacity must be >= 1")
+	if absf(player_spawn_position.x) > world_half_extent_m or absf(player_spawn_position.z) > world_half_extent_m:
+		errors.append("player_spawn_position is outside the world")
+	return errors
+
+
+static func load_or_default(path: String = DEFAULT_PATH) -> GameplaySettings:
+	if ResourceLoader.exists(path):
+		var loaded: Resource = ResourceLoader.load(path)
+		if loaded is GameplaySettings:
+			return loaded as GameplaySettings
+		GameLogger.error("config", "gameplay settings has wrong type, using defaults", {"path": path, "operation": "load_settings"})
+	else:
+		GameLogger.warning("config", "gameplay settings missing, using defaults", {"path": path, "operation": "load_settings"})
+	return GameplaySettings.new()
