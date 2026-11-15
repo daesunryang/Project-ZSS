@@ -183,34 +183,58 @@ func test_the_new_character_does_not_bring_another_zombie() -> void:
 
 # ------------------------------------------------------------ other causes
 
-func test_other_causes_of_death_leave_no_zombie() -> void:
+func test_deaths_of_uninfected_players_leave_no_zombie() -> void:
 	_survival_settings.dehydration_health_loss_per_world_sec = 1000.0
-	# The infection of the bitten players below must not run out in this test.
-	_survival_settings.infection_latent_hours = 1000.0
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
 	var zombies: ZombieService = _zombies(world)
 	var healthy: PlayerState = world.join("healthy")
-	var infected: PlayerState = world.join("infected")
 	var thirsty: PlayerState = world.join("thirsty")
 	var bleeding: PlayerState = world.join("bleeding")
-	# Combat: a healthy player, and a player who is infected but dies of the hit.
+	# Combat, thirst and bleeding (the last two inside the survival step).
 	_kill(world, healthy.player_id)
-	_infect(world, infected.player_id)
-	assert_eq(survival.infection_stage(infected.player_id), InfectionState.Stage.LATENT)
-	_kill(world, infected.player_id)
-	# Thirst and bleeding (survival rules inside the step).
 	survival.get_vitals(thirsty.player_id).thirst = _survival_settings.need_max
 	assert_true(survival.apply_damage(bleeding.player_id, DamageInput.create("zombie_000001", BodyPart.Part.TORSO, Wound.Type.LACERATION, _survival_settings.max_health - 0.001)).ok)
 	_run(world, 1.0)
 	var events: Array[Dictionary] = survival.drain_events()
 	assert_eq(_death_causes(events, healthy.player_id), [SurvivalService.CAUSE_COMBAT])
-	assert_eq(_death_causes(events, infected.player_id), [SurvivalService.CAUSE_COMBAT])
 	assert_eq(_death_causes(events, thirsty.player_id), [SurvivalService.CAUSE_DEHYDRATION])
 	assert_eq(_death_causes(events, bleeding.player_id), [SurvivalService.CAUSE_BLEEDING])
-	assert_eq(zombies.zombie_count(), 0, "no death here was caused by infection")
+	assert_eq(zombies.zombie_count(), 0, "nobody here was infected")
 	assert_eq(zombies.player_zombie_count, 0)
 	assert_eq(zombies.skipped_player_zombie_count, 0, "nothing was skipped either: no zombie was due")
+
+
+## User decision 2026-11-15 (docs/00 ADR-008, amended): by default every death
+## of an infected player leaves a zombie, whatever killed the player.
+func test_by_default_an_infected_player_turns_whatever_the_cause_of_death() -> void:
+	_survival_settings.dehydration_health_loss_per_world_sec = 1000.0
+	# The infections below must not run out in this test.
+	_survival_settings.infection_latent_hours = 1000.0
+	var world: ServerWorld = _world()
+	var survival: SurvivalService = _survival(world)
+	var zombies: ZombieService = _zombies(world)
+	var hit: PlayerState = world.join("hit")
+	var thirsty: PlayerState = world.join("thirsty")
+	var bleeding: PlayerState = world.join("bleeding")
+	hit.position = DEATH_AT
+	for player: PlayerState in [hit, thirsty, bleeding]:
+		_infect(world, player.player_id)
+		assert_eq(survival.infection_stage(player.player_id), InfectionState.Stage.LATENT)
+	# Killed by a hit while only latently infected: turns at once.
+	_kill(world, hit.player_id)
+	assert_eq(zombies.zombie_count(), 1, "an infected player killed by a hit turns")
+	assert_eq(zombies.get_zombie(zombies.zombie_ids()[0]).position, DEATH_AT, "where it died")
+	# Thirst and bleeding kill the other two inside the survival step.
+	survival.get_vitals(thirsty.player_id).thirst = _survival_settings.need_max
+	assert_true(survival.apply_damage(bleeding.player_id, DamageInput.create("zombie_000001", BodyPart.Part.TORSO, Wound.Type.LACERATION, _survival_settings.max_health - 0.001)).ok)
+	_run(world, 1.0)
+	var events: Array[Dictionary] = survival.drain_events()
+	assert_eq(_death_causes(events, hit.player_id), [SurvivalService.CAUSE_COMBAT])
+	assert_eq(_death_causes(events, thirsty.player_id), [SurvivalService.CAUSE_DEHYDRATION])
+	assert_eq(_death_causes(events, bleeding.player_id), [SurvivalService.CAUSE_BLEEDING])
+	assert_eq(zombies.zombie_count(), 3, "one zombie per infected player, whatever the cause")
+	assert_eq(zombies.player_zombie_count, 3)
 
 
 func test_which_causes_count_as_death_by_infection() -> void:
@@ -268,9 +292,18 @@ func test_the_rule_is_a_setting() -> void:
 	assert_eq(_zombies(world).zombie_count(), 1, "rule: any death while infected")
 	assert_eq(_zombies(world).get_zombie(_zombies(world).zombie_ids()[0]).position, DEATH_AT)
 
+	# Death by infection only: an infected player killed by a hit does not
+	# turn, the infection itself still does (the earlier default).
+	_zombie_settings.player_death_zombie_rule = ZombieSettings.PlayerDeathZombieRule.INFECTION_DEATH
+	world = _world()
+	var bitten: PlayerState = world.join("bitten")
+	_infect(world, bitten.player_id)
+	_kill(world, bitten.player_id)
+	assert_eq(_zombies(world).zombie_count(), 0, "rule: death by infection only")
+
 	# Settings validation.
-	assert_eq(ZombieSettings.new().player_death_zombie_rule, ZombieSettings.PlayerDeathZombieRule.INFECTION_DEATH, "default rule")
-	assert_eq(ZombieSettings.load_or_default().player_death_zombie_rule, ZombieSettings.PlayerDeathZombieRule.INFECTION_DEATH, "shipped rule")
+	assert_eq(ZombieSettings.new().player_death_zombie_rule, ZombieSettings.PlayerDeathZombieRule.INFECTED_AT_DEATH, "default rule")
+	assert_eq(ZombieSettings.load_or_default().player_death_zombie_rule, ZombieSettings.PlayerDeathZombieRule.INFECTED_AT_DEATH, "shipped rule")
 	assert_eq(ZombieSettings.load_or_default().validate().size(), 0)
 	var broken: ZombieSettings = ZombieSettings.new()
 	broken.player_death_zombie_rule = 7

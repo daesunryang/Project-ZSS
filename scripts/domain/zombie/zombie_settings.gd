@@ -32,7 +32,7 @@ enum PlayerDeathZombieRule { NEVER = 0, INFECTION_DEATH = 1, INFECTED_AT_DEATH =
 @export var rng_seed: int = 0
 ## PlayerDeathZombieRule: which player deaths leave a zombie (P2-T5). The
 ## zombie counts against max_active_zombies; at the limit it is skipped.
-@export_enum("Never:0", "Death by infection:1", "Any death while infected:2") var player_death_zombie_rule: int = PlayerDeathZombieRule.INFECTION_DEATH
+@export_enum("Never:0", "Death by infection:1", "Any death while infected:2") var player_death_zombie_rule: int = PlayerDeathZombieRule.INFECTED_AT_DEATH
 
 @export_group("Health")
 @export_range(1.0, 100000.0) var max_health: float = 100.0

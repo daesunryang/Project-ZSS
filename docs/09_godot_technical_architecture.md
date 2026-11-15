@@ -835,8 +835,8 @@ P2-T6부터 `ItemConsumption`은 아이템 정의의 사용 효과 전부를 적
 | 값(`ZombieSettings.PlayerDeathZombieRule`) | 좀비가 생기는 사망 |
 |---|---|
 | `NEVER`(0) | 없음 |
-| `INFECTION_DEATH`(1, 기본) | 감염이 사망 원인인 경우: `SurvivalService.is_infection_death(cause)`가 참. 말기가 끝나 `ZOMBIFIED`가 된 사망(원인 `infection`)과, 감염 단계의 체력 감소로 죽은 사망(원인 `infection`, 또는 출혈·굶주림·탈수와 함께 죽어 원인이 `..._infection`으로 끝나는 경우)이다 |
-| `INFECTED_AT_DEATH`(2) | 위에 더해, 감염된 상태(단계가 `NONE`이 아님)에서 일어난 모든 사망(전투 피해 포함) |
+| `INFECTION_DEATH`(1) | 감염이 사망 원인인 경우: `SurvivalService.is_infection_death(cause)`가 참. 말기가 끝나 `ZOMBIFIED`가 된 사망(원인 `infection`)과, 감염 단계의 체력 감소로 죽은 사망(원인 `infection`, 또는 출혈·굶주림·탈수와 함께 죽어 원인이 `..._infection`으로 끝나는 경우)이다 |
+| `INFECTED_AT_DEATH`(2, 기본: 사용자 결정 2026-11-15, docs/00 ADR-011) | 위에 더해, 감염된 상태(단계가 `NONE`이 아님)에서 일어난 모든 사망(전투 피해 포함) |
 
 - 기본 규칙에서 전투 피해(`combat`), 출혈, 굶주림, 탈수만으로 죽으면 감염된 플레이어라도 좀비가 생기지 않는다. 물려서 그 자리에서 죽은 비감염 플레이어도 마찬가지다(치명타에는 감염 판정이 적용되지 않는다, §14.9).
 - 생성: 기존 `spawn_zombie(world, 플레이어 위치, 플레이어 yaw)` 그대로다. 일반 좀비와 같은 ID 계열·체력·AI·수치이고 상태는 `idle`, 배회 기준점은 죽은 자리다. 좀비 상태에도 이벤트에도 어느 플레이어였는지는 없다(서버 로그 `player zombie spawned`에만 `player_id`가 남는다).
