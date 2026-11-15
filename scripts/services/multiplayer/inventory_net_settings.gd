@@ -8,9 +8,9 @@ extends Resource
 const DEFAULT_PATH: String = "res://data/tuning/inventory_net_settings.tres"
 
 ## Drop requests accepted per second per peer (token bucket rate / burst).
-## Hand-over requests (P2-T14, docs/09 §14.28) use the same bucket: both take
-## an item out of the inventory and write a save, so one allowance bounds the
-## saves a peer can cause this way (docs/15 P2-208).
+## Every accepted drop writes a save, so this also bounds the saves a peer
+## can cause by putting items down one unit at a time (P2-T15, docs/15
+## P2-215).
 @export_range(0.01, 240.0) var drop_intent_rate_per_sec: float = 4.0
 @export_range(1, 240) var drop_intent_burst: int = 4
 ## Items (world items added / inventory ids removed) packed into one message;

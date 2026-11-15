@@ -429,12 +429,13 @@ func test_manipulated_drop_requests_are_rejected_and_change_nothing() -> void:
 	module.send_raw_drop_request(null, null)
 	const EXPECTED_REJECTIONS: int = 12
 	assert_true(await _wait(func() -> bool: return server.rejected_intent_count() == EXPECTED_REJECTIONS), "every manipulated request was rejected (%d)" % server.rejected_intent_count())
-	# A request cannot carry a position or an owner: the handler takes two
-	# arguments, and the engine refuses a call with more (reported as an
-	# engine error, which is the expected outcome, so printing is off here).
+	# A request cannot carry a position or an owner: the handler takes three
+	# arguments (P2-T15: the third is the quantity), and the engine refuses a
+	# call with more (reported as an engine error, which is the expected
+	# outcome, so printing is off here).
 	Engine.print_error_messages = false
-	module._rpc_request_drop.rpc_id(NetworkService.SERVER_PEER_ID, FORGED_REQUEST_ID, bobs, bob_id)
-	module._rpc_request_drop.rpc_id(NetworkService.SERVER_PEER_ID, FORGED_REQUEST_ID, mine, Vector3(100, 0, 100))
+	module._rpc_request_drop.rpc_id(NetworkService.SERVER_PEER_ID, FORGED_REQUEST_ID, bobs, InventoryService.WHOLE_STACK, bob_id)
+	module._rpc_request_drop.rpc_id(NetworkService.SERVER_PEER_ID, FORGED_REQUEST_ID, mine, InventoryService.WHOLE_STACK, Vector3(100, 0, 100))
 	await _settle()
 	Engine.print_error_messages = true
 
@@ -605,7 +606,7 @@ func test_server_only_rpcs_sent_by_a_client_are_ignored() -> void:
 		_module(service)._rpc_inventory_items_removed([bobs])
 		_module(service)._rpc_inventory_item_changed(forged_carried)
 	# ... and a client never acts on a request addressed to it.
-	_module(b)._rpc_request_drop(FORGED_REQUEST_ID, bobs)
+	_module(b)._rpc_request_drop(FORGED_REQUEST_ID, bobs, InventoryService.WHOLE_STACK)
 	await _settle()
 
 	assert_eq(b_drops.size() + b_signals.size(), 0, "bob received nothing forged")
@@ -903,7 +904,7 @@ func test_default_settings_and_composition() -> void:
 	assert_true(config.validate().size() > 0, "composition validation covers the inventory network settings")
 	config.inventory_net = null
 	assert_true(config.validate().size() > 0, "a missing settings object is reported")
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 9, "new RPCs are a protocol change: 4 for the drop RPCs, 5 since the consume RPCs (P2-T3), 6 since the rest RPCs (P2-T8), 7 since the character RPCs (P2-T9), 8 since P2-T10..T12, 9 since the hand-over RPCs (P2-T14)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 10, "new RPCs are a protocol change: 4 for the drop RPCs, 5 since the consume RPCs (P2-T3), 6 since the rest RPCs (P2-T8), 7 since the character RPCs (P2-T9), 8 since P2-T10..T12, 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15)")
 
 	var service: NetworkService = NetworkService.new()
 	assert_eq(ServerComposition.install_net_modules(service, CompositionConfig.from_defaults()), OK)
@@ -923,10 +924,8 @@ func test_default_settings_and_composition() -> void:
 		"_rpc_request_use_on": MultiplayerAPI.RPC_MODE_ANY_PEER,
 		"_rpc_use_on_result": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_treatment_notice": MultiplayerAPI.RPC_MODE_AUTHORITY,
-		# P2-T14 added the hand-over intent (hand_over_net_test.gd).
-		"_rpc_request_hand_over": MultiplayerAPI.RPC_MODE_ANY_PEER,
-		"_rpc_hand_over_result": MultiplayerAPI.RPC_MODE_AUTHORITY,
-		"_rpc_hand_over_notice": MultiplayerAPI.RPC_MODE_AUTHORITY,
+		# P2-T14 added the hand-over intent; P2-T15 withdrew it again
+		# (ground_transfer_net_test.gd).
 		"_rpc_world_items_added": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_inventory_items_removed": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_inventory_item_changed": MultiplayerAPI.RPC_MODE_AUTHORITY,

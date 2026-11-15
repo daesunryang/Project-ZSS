@@ -262,39 +262,107 @@ static func nothing_to_use_text(kind: ConsumeIntentPolicy.Kind) -> String:
 	return "쓸 수 있는 것이 없습니다"
 
 
-## HUD inventory summary from the local inventory mirror (ItemInstance
-## dictionaries): a header with the number of carried stacks, then one line
-## per item kind ("name x quantity", stacks of the same definition summed) in
-## first-seen order. At most `max_kinds` kinds are listed; the rest is
-## counted in a last line. Names come from the static item catalog (the
-## definition id when a definition or its name is missing). Malformed
-## entries are skipped.
-static func build_inventory_lines(inventory: Array[Dictionary], catalog: ItemCatalog, max_kinds: int) -> PackedStringArray:
-	var order: PackedStringArray = []
-	var quantities: Dictionary[String, int] = {}
-	var stacks: int = 0
-	for entry: Dictionary in inventory:
-		var definition_id: Variant = entry.get("definition_id", null)
-		var quantity: Variant = entry.get("quantity", null)
-		if typeof(definition_id) != TYPE_STRING or not ItemInstance.is_integer_value(quantity) or int(quantity) < 1:
-			continue
-		stacks += 1
-		var key: String = str(definition_id)
-		if not quantities.has(key):
-			order.append(key)
-			quantities[key] = 0
-		quantities[key] += int(quantity)
-	if stacks == 0:
+## Name shown for an item definition: its display name, or its id when the
+## definition or its name is missing.
+static func item_display_name(definition_id: String, catalog: ItemCatalog) -> String:
+	var definition: ItemDefinition = catalog.get_definition(definition_id) if catalog != null else null
+	return definition.display_name if definition != null and not definition.display_name.is_empty() else definition_id
+
+
+## HUD inventory list from the local inventory mirror (ItemInstance
+## dictionaries), P2-T15: a header with the number of carried stacks and the
+## cursor / drop keys, then one line per stack ("name x quantity") in cursor
+## order (InventorySelectionPolicy), the line of `selected_id` marked with
+## ">". At most `settings.hud_inventory_line_count` stacks are listed, a
+## window that always contains the cursor; the stacks above and below it are
+## counted. Names come from the static item catalog (the definition id when
+## a definition or its name is missing). Malformed entries are skipped.
+static func build_inventory_lines(inventory: Array[Dictionary], catalog: ItemCatalog, selected_id: String, settings: ClientPresentationSettings) -> PackedStringArray:
+	var ids: PackedStringArray = InventorySelectionPolicy.ordered_item_ids(inventory)
+	if ids.is_empty():
 		return PackedStringArray(["소지품: 없음"])
-	var lines: PackedStringArray = ["소지품 (%d)" % stacks]
-	var listed: int = mini(order.size(), maxi(max_kinds, 1))
-	for index: int in range(listed):
-		var definition: ItemDefinition = catalog.get_definition(order[index]) if catalog != null else null
-		var item_name: String = definition.display_name if definition != null and not definition.display_name.is_empty() else order[index]
-		lines.append("%s x%d" % [item_name, quantities[order[index]]])
-	if order.size() > listed:
-		lines.append("... 외 %d종" % (order.size() - listed))
+	var rows: Dictionary[String, Dictionary] = {}
+	for entry: Dictionary in inventory:
+		if InventorySelectionPolicy.quantity_of_row(entry) >= 1:
+			rows[str(entry["item_instance_id"])] = entry
+	var drop: String = key_label(settings.drop_key)
+	var lines: PackedStringArray = ["소지품 (%d) | 선택 [%s/%s] 내려놓기 [%s] 묶음째 [%s+%s]" % [
+		ids.size(),
+		key_label(settings.select_previous_key), key_label(settings.select_next_key),
+		drop,
+		key_label(settings.drop_stack_modifier_key), drop,
+	]]
+	var listed: int = mini(ids.size(), maxi(settings.hud_inventory_line_count, 1))
+	var first: int = clampi(maxi(ids.find(selected_id), 0) - (listed >> 1), 0, ids.size() - listed)
+	if first > 0:
+		lines.append("  ... 위 %d개" % first)
+	for index: int in range(first, first + listed):
+		var entry: Dictionary = rows[ids[index]]
+		var definition_id: Variant = entry.get("definition_id", null)
+		var item_name: String = item_display_name(str(definition_id), catalog) if typeof(definition_id) == TYPE_STRING else "?"
+		lines.append("%s %s x%d" % [">" if ids[index] == selected_id else " ", item_name, InventorySelectionPolicy.quantity_of_row(entry)])
+	if first + listed < ids.size():
+		lines.append("  ... 아래 %d개" % (ids.size() - first - listed))
 	return lines
+
+
+## Label of an item lying in the world (a mirror row of
+## ClientWorldState.world_items): "name x quantity". "" for a row that is no
+## world item.
+static func world_item_label(entry: Dictionary, catalog: ItemCatalog) -> String:
+	var definition_id: Variant = entry.get(ClientWorldState.KEY_DEFINITION_ID, null)
+	var quantity: Variant = entry.get(ClientWorldState.KEY_QUANTITY, null)
+	if typeof(definition_id) != TYPE_STRING or str(definition_id).is_empty() or not ItemInstance.is_integer_value(quantity) or int(quantity) < 1:
+		return ""
+	return "%s x%d" % [item_display_name(str(definition_id), catalog), int(quantity)]
+
+
+## HUD line about what the pickup key would pick up now (P2-T15):
+## `candidate` is the mirror row of the nearest world item in reach, {} when
+## there is none.
+static func build_pickup_lines(candidate: Dictionary, catalog: ItemCatalog, pickup_key: Key) -> PackedStringArray:
+	var label: String = world_item_label(candidate, catalog)
+	return PackedStringArray(["줍기 [%s]: %s" % [key_label(pickup_key), label if not label.is_empty() else "가까이에 없음"]])
+
+
+## Server answer to a drop request (P2-T15). What the player can do
+## something about is told as a sentence; everything else keeps its code.
+static func format_drop_result(ok: bool, reason: String) -> String:
+	if ok:
+		return "내려놓기 승인"
+	match reason:
+		InventoryService.REASON_NOT_IN_INVENTORY:
+			return "내려놓기 거부: 가지고 있지 않은 아이템입니다"
+		InventoryService.REASON_BAD_QUANTITY:
+			return "내려놓기 거부: 수량이 맞지 않습니다"
+	return "내려놓기 거부: %s" % reason
+
+
+## Server answer to a pickup request (P2-T15: shown since items travel over
+## the ground and a full inventory must be noticed).
+static func format_pickup_result(ok: bool, reason: String) -> String:
+	if ok:
+		return "줍기 승인"
+	match reason:
+		InventoryService.REASON_INVENTORY_FULL:
+			return "줍기 거부: 소지품이 가득 찼습니다"
+		InventoryService.REASON_TOO_FAR:
+			return "줍기 거부: 너무 멉니다"
+		InventoryService.REASON_NOT_IN_WORLD, InventoryService.REASON_UNKNOWN_ITEM:
+			return "줍기 거부: 이미 없는 아이템입니다"
+	return "줍기 거부: %s" % reason
+
+
+## Local notice: the drop key was pressed but the cursor is on nothing (no
+## request was sent).
+static func nothing_selected_text() -> String:
+	return "내려놓을 아이템이 없습니다"
+
+
+## Local notice: the pickup key was pressed but nothing lies in reach (no
+## request was sent).
+static func nothing_to_pick_up_text() -> String:
+	return "가까이에 주울 것이 없습니다"
 
 
 static func format_combat_event(event: Dictionary) -> String:
@@ -408,27 +476,22 @@ static func creation_hint(first_character: bool) -> String:
 
 # ------------------------------------------------------------ treating another player (P2-T12)
 
-## HUD line about whom a "use on another player" key would treat and a
-## hand-over key (P2-T14) would hand an item to: the name of the candidate
-## and the key combinations, or that there is nobody. Nothing for a dead
-## character or without a mirror.
+## HUD line about whom a "use on another player" key would treat: the name
+## of the candidate and the key combinations, or that there is nobody.
+## Nothing for a dead character or without a mirror.
 static func build_treat_target_lines(vitals: Dictionary, target_name: String, settings: ClientPresentationSettings) -> PackedStringArray:
 	if vitals.is_empty() or vitals.get("alive", true) != true:
 		return PackedStringArray()
 	if target_name.is_empty():
 		return PackedStringArray(["줄 대상: 없음 (가까이서 바라보기)"])
 	var modifier: String = key_label(settings.treat_other_modifier_key)
-	# Food and drink can be given too (P2-T13), with the same modifier. The
-	# hand-over keys (P2-T14) are the same four keys with the other modifier:
-	# listed in short, so the line stays one line.
-	return PackedStringArray(["줄 대상: %s | 음식 [%s+%s] 물 [%s+%s] 붕대 [%s+%s] 치료제 [%s+%s] | 건네기 [%s+%s/%s/%s/%s]" % [
+	# Food and drink can be given too (P2-T13), with the same modifier.
+	return PackedStringArray(["줄 대상: %s | 음식 [%s+%s] 물 [%s+%s] 붕대 [%s+%s] 치료제 [%s+%s]" % [
 		target_name,
 		modifier, key_label(settings.consume_key),
 		modifier, key_label(settings.drink_key),
 		modifier, key_label(settings.bandage_key),
 		modifier, key_label(settings.cure_key),
-		key_label(settings.hand_over_modifier_key),
-		key_label(settings.consume_key), key_label(settings.drink_key), key_label(settings.bandage_key), key_label(settings.cure_key),
 	]])
 
 
@@ -455,51 +518,6 @@ static func format_use_on_result(ok: bool, reason: String) -> String:
 		ItemConsumption.REASON_NOT_USABLE_ON_OTHERS:
 			return "남에게 사용 거부: 줄 수 없는 아이템입니다"
 	return "남에게 사용 거부: %s" % reason
-
-
-## Server answer to a hand-over request (P2-T14). What the giver can do
-## something about is told as a sentence; everything else keeps its code.
-## "The other player's belongings are full" is all the giver learns about
-## what the other player carries.
-static func format_hand_over_result(ok: bool, reason: String) -> String:
-	if ok:
-		return "건네기 승인"
-	match reason:
-		ServerWorld.REASON_TARGET_TOO_FAR:
-			return "건네기 거부: 대상이 너무 멉니다"
-		ServerWorld.REASON_TARGET_DEAD:
-			return "건네기 거부: 대상이 사망했습니다"
-		ServerWorld.REASON_TARGET_UNAVAILABLE:
-			return "건네기 거부: 그런 대상이 없습니다"
-		ServerWorld.REASON_TARGET_INVENTORY_FULL:
-			return "건네기 거부: 상대의 소지품이 가득 찼습니다"
-		ServerWorld.REASON_TARGET_IS_SELF:
-			return "건네기 거부: 자기 자신에게는 건넬 수 없습니다"
-		InventoryService.REASON_BAD_QUANTITY:
-			return "건네기 거부: 건넬 수량이 맞지 않습니다"
-		InventoryService.REASON_NOT_IN_INVENTORY:
-			return "건네기 거부: 가지고 있지 않은 아이템입니다"
-	return "건네기 거부: %s" % reason
-
-
-## Event log line for a hand-over notice (InventoryNetModule.hand_over_seen):
-## for the receiver who handed it what and how many, for a bystander only
-## who handed something to whom (never the item, whatever the notice
-## carries). `names` maps player ids to character names (ids are shown for
-## players without one). "" for anything else.
-static func format_hand_over_notice(notice: Dictionary, names: Dictionary, catalog: ItemCatalog) -> String:
-	var giver_id: String = str(notice.get("giver_id", ""))
-	var receiver_id: String = str(notice.get("receiver_id", ""))
-	var giver_name: String = str(names.get(giver_id, giver_id))
-	match str(notice.get("scope", "")):
-		InventoryNetModule.NOTICE_SCOPE_PUBLIC:
-			return "%s → %s 물건 건넴" % [giver_name, str(names.get(receiver_id, receiver_id))]
-		InventoryNetModule.NOTICE_SCOPE_TARGET:
-			var definition_id: String = str(notice.get("definition_id", ""))
-			var definition: ItemDefinition = catalog.get_definition(definition_id) if catalog != null else null
-			var item_name: String = definition.display_name if definition != null and not definition.display_name.is_empty() else definition_id
-			return "%s이(가) 나에게 %s x%d 건넴" % [giver_name, item_name, int(notice.get("quantity", 0))]
-	return ""
 
 
 ## Local notice: a use-on-another-player key was pressed but nobody is in

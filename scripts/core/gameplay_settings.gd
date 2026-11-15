@@ -22,11 +22,11 @@ const DEFAULT_PATH: String = "res://data/tuning/gameplay_settings.tres"
 ## drops). false: only treatments (bandage, cure) can be used on others
 ## (P2-T12, docs/15 P2-196).
 @export var allow_feeding_others: bool = true
-## Maximum distance between two players for one to hand an item over to the
-## other, metres (P2-T14, docs/00 ADR-020, docs/09 §14.28; PROVISIONAL,
-## docs/15 P2-205). Measured between server positions, like the pickup and
-## the treat range. A setting of its own: handing over is not treating.
-@export_range(0.1, 50.0) var hand_over_range_m: float = 2.5
+## true (default, P2-T15, docs/00 ADR-021; PROVISIONAL, docs/15 P2-216): an
+## item that is picked up joins the carried stacks of the same kind before
+## it takes a slot of its own. false: every picked-up item takes a free slot
+## (the rule before P2-T15).
+@export var merge_stacks_on_pickup: bool = true
 ## Number of item stacks a player inventory can hold.
 @export_range(1, 1000) var inventory_slot_capacity: int = 20
 ## Where new players appear.
@@ -43,8 +43,6 @@ func validate() -> PackedStringArray:
 		errors.append("pickup_range_m must be > 0")
 	if not is_finite(treat_range_m) or treat_range_m <= 0.0:
 		errors.append("treat_range_m must be > 0")
-	if not is_finite(hand_over_range_m) or hand_over_range_m <= 0.0:
-		errors.append("hand_over_range_m must be > 0")
 	if inventory_slot_capacity < 1:
 		errors.append("inventory_slot_capacity must be >= 1")
 	if absf(player_spawn_position.x) > world_half_extent_m or absf(player_spawn_position.z) > world_half_extent_m:

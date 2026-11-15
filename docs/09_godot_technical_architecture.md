@@ -630,6 +630,7 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 - 이벤트 형식(JSON-safe): `items_dropped` = `{event_type, inventory_id, item_instance_ids: Array[String](슬롯 순서), cell_id, position: [x, y, z]}`, `item_removed` = `{event_type, inventory_id, item_instance_id, definition_id, removed_quantity, remaining_quantity}`(`remaining_quantity` 0 = 인스턴스 삭제됨).
 - `signal transaction_committed(event: Dictionary)`: 확정된 트랜잭션마다(줍기 `item_picked_up` 포함) 상태 반영이 끝난 직후, 확정 순서대로, 동기적으로 한 번 나온다. 인자는 이벤트의 사본이다. 실패한 요청은 내지 않는다.
 - P2-T14에서 네 번째 트랜잭션 `transfer_item`(한 인벤토리에서 다른 인벤토리로, 이벤트 `item_transferred`)이 추가됐다. 계약과 복제는 §14.28.
+- **P2-T15에서 바뀐 것(§14.29가 우선한다)**: `drop_item`에 수량 인자가 붙어 묶음의 일부를 내려놓을 수 있고(새 이벤트 `item_units_dropped`), `try_pickup`은 주운 수량을 들고 있는 같은 종류 묶음에 먼저 합치며(`item_picked_up` 이벤트에 `definition_id`, `quantity`, `merged` 추가), 내려놓기 의도 RPC는 `_rpc_request_drop(request_id, item_instance_id, quantity)`가 됐다. 이 절의 표와 "수량 인자는 없다"는 설명은 P2-T2 시점의 것이다.
 - 보조: `item_count()`(존재하는 인스턴스 수). 저장 형식은 바뀌지 않았다: 내려놓은 아이템의 좌표는 기존대로 world_state `inventory.world_item_positions`(docs/15 P1-7)에, 삭제된 ID는 world_state `tombstones`에, 다음 순번은 `next_entity_sequence`에 들어간다.
 
 `ServerWorld` 래퍼(위치·셀·인벤토리 ID는 서버 상태에서 채운다. 셀은 `DevWorldSeed.DEV_CELL_ID`, 위치는 `clamp_to_world(플레이어 위치)`):
@@ -1533,6 +1534,10 @@ row = {
 
 ### 14.28 아이템 건네기(P2-T14, docs/00 ADR-020)
 
+> **P2-T15에서 철회됨(사용자 결정 2026-11-16, docs/00 ADR-021, §14.29).** 이 절은 기록으로 남긴다. 지금의 코드와 다른 부분은 다음과 같다.
+> - **없어진 것**: 서버 규칙 `ServerWorld.try_hand_over_item`과 이벤트 `item_handed_over`, 사유 코드 `target_is_self`·`target_inventory_full`, 설정 `GameplaySettings.hand_over_range_m`, RPC 셋(`_rpc_request_hand_over`, `_rpc_hand_over_result`, `_rpc_hand_over_notice`)과 `InventoryNetModule`의 건네기 API(`request_hand_over`, `hand_over_result`, `hand_over_seen`, `validate_hand_over_request`, `is_valid_hand_over_notice`), 클라이언트의 건네기 보조 키·수량 설정(`hand_over_modifier_key`, `hand_over_quantity`)·`UseMode.HAND_OVER`·HUD 대상 줄의 "건네기 [Ctrl+…]"·결과와 알림 문구, 테스트 `hand_over_net_test.gd`·`hand_over_presentation_test.gd`와 `hand_over_test.gd`의 규칙 부분.
+> - **남은 것**: 트랜잭션 `InventoryService.transfer_item`(아래 "서버 트랜잭션" 항 그대로)과 그 복제(`item_transferred` → 두 소유자에게만), 훅 `ServerSystem.player_is_dead`·`ServerWorld.is_player_dead`, 대상 사유 코드 셋(`target_unavailable`, `target_dead`, `target_too_far`: 치료·먹여 주기가 쓴다). `transfer_item`을 부르는 플레이어 의도는 없다: 서버 규칙용 진입점으로만 남았다. 단위 테스트는 `tests/unit/item_transfer_test.gd`(`hand_over_test.gd`의 트랜잭션 부분), 복제 테스트는 `ground_transfer_net_test.gd::test_a_server_rule_that_transfers_reaches_both_owners_only`.
+
 사용자 결정(2026-11-15): "건네기도 추가". 들고 있는 아이템을 가까이 있는 다른 플레이어에게 건네면 그 아이템이 받는 쪽 인벤토리로 옮겨 가고, 받는 쪽은 그것을 보관했다가 나중에 쓴다. 먹여 주기(§14.27, ADR-019: 받는 쪽의 허기·갈증이 바로 내려가고 아이템은 없어진다)는 그대로이고, 건네기는 그것과 별개의 경로다: 건네기로는 누구의 허기·갈증·상처·감염도 바뀌지 않는다. 클라이언트는 아이템·대상 플레이어·수량만 지정하고 나머지는 모두 서버 상태에서 판정한다. 임시 가정은 docs/15 §14.5 P2-205~P2-212.
 
 구성: `InventoryService.transfer_item`(트랜잭션), `ServerWorld.try_hand_over_item`(서버 규칙)과 `is_player_dead`, `ServerSystem.player_is_dead`(새 훅, `SurvivalService`가 구현, §14.5), `GameplaySettings.hand_over_range_m`, `InventoryNetModule`(건네기 의도 RPC와 결과, 건네기 알림, `item_transferred` 복제), 클라이언트 건네기 보조 키·HUD·문구. `network_service.gd`는 수정하지 않았다. `ItemConsumption`은 대상 사유 상수 셋(`target_unavailable`, `target_dead`, `target_too_far`)이 `ServerWorld`의 같은 상수를 가리키게 했을 뿐 동작은 그대로다(같은 뜻의 사유는 같은 코드 하나를 쓴다).
@@ -1643,6 +1648,108 @@ row = {
 클라이언트 표시(`scripts/presentation/`): **건네기 보조 키(`hand_over_modifier_key`, 기본 Ctrl)를 누른 채 사용 키(음식 F, 물 G, 붕대 B, 치료제 V)**를 누르면, 미러 인벤토리에서 그 종류의 첫 아이템을 `hand_over_quantity`개(기본 1. 미러의 묶음 수량보다 많이는 요청하지 않는다: `ConsumeIntentPolicy.hand_over_quantity`) "남에게 쓰기"와 같은 대상 후보(`TreatTargetPolicy`, §14.27)에게 건네 달라는 의도를 보낸다. 보조 키 둘의 뜻은 순수 함수 `ConsumeIntentPolicy.use_mode(kind, treat_other_held, hand_over_held)`가 정한다: 아무것도 누르지 않으면 자기 사용, Shift면 남에게 쓰기, Ctrl이면 건네기, **둘 다 누르면 건네기**(아무것도 소비하지 않는 쪽). 네 종류 어디에도 속하지 않는 아이템(개발용 `dev_test_item`, `dev_melee_pipe`)은 서버 규칙으로는 건넬 수 있지만 **클라이언트 입력이 아직 없다**(docs/15 P2-211). HUD의 대상 줄 끝에 건네기 키가 붙는다: "줄 대상: 이름 | 음식 [Shift+F] 물 [Shift+G] 붕대 [Shift+B] 치료제 [Shift+V] | 건네기 [Ctrl+F/G/B/V]". 결과는 사용 결과 자리에 문장으로 표시하고("건네기 승인", "건네기 거부: 상대의 소지품이 가득 찼습니다" 등), 받는 쪽·제3자가 받는 알림은 이벤트 로그에 한 줄로 남긴다("영희이(가) 나에게 Development Ration x2 건넴": 아이템 이름은 정의의 표시 이름이다. "영희 → 민수 물건 건넴"). 화면 설명은 docs/11 §2.12.
 
 테스트: `tests/unit/hand_over_test.gd`(트랜잭션: 묶음 전체가 ID 그대로 옮겨 감, 일부는 새 ID의 새 인스턴스, 같은 정의 묶음에 합치기와 합쳐져 없어진 ID의 tombstone, `max_stack` 넘침이 빈 슬롯으로 가는 두 경우, 묶음을 슬롯 번호 순으로 채움, 자리가 없으면 전체 거부와 불변, `condition`·`quality`가 다른 묶음은 합치지 않음, 실패 사유마다 불변, 고정 seed로 300회 주고받으며 정의별 총수량 보존·슬롯·묶음 크기 불변식 / 규칙: 설정과 사유 코드, 일부 건네기와 그 뒤 받은 쪽이 먹기, 사용 효과가 없는 아이템·무기·치료제 건네기(건네받은 파이프가 받은 쪽의 근접 무기가 됨), 건네는 쪽과 아이템 검증(남의 것, 월드의 것, 없는 ID, 플레이어 ID, 수량 0·음수·초과·아주 큰 값, 모르는·오프라인·자는·죽은 건네는 쪽, 엎드린 건네는 쪽), 대상 검증(자기 자신, 없는 ID, 빈 ID, 좀비 ID, 인벤토리 ID, 오프라인, 사거리 경계와 설정, 사망), 캐릭터 없는 접속자, 자는·엎드린 대상과 깨우지 않음, 받는 쪽이 가득 찬 경우와 자리를 비운 뒤, 검사 순서, 거부마다 저장 문서 전체(`to_documents()`)가 그대로이고 트랜잭션·생존 이벤트 0개, 저장 → 재생성 → 로드 뒤 두 인벤토리·ID·tombstone과 이어서 건네기), `tests/integration/hand_over_net_test.gd`(서버 1 + 클라이언트 3, 실제 ENet: A가 B에게 음식 2개 → 서버와 세 미러의 인벤토리 일치, A는 자기 묶음 변화와 결과만, B는 자기 새 묶음과 대상 알림(키 목록 고정), C는 공개 알림만(키 목록 고정, 아이템·수량 단어 없음)이고 인벤토리·소유자 전용 메시지 0개, 치료 알림·생존 이벤트 0개, B가 받은 것을 먹음, 마지막 한 개가 B의 묶음에 합쳐지고 A는 묶음 삭제를 받음 / 묶음 전체·단일 아이템·넘침과 자는 받는 쪽 / 거부 11종과 불변, 알림·인벤토리 메시지 0개, 죽은 건네는 쪽 / 형식이 틀린 요청 17종과 인자를 더 붙인 호출, 형식은 맞지만 거짓인 요청(남의 아이템을 자기나 제3자에게, 다른 종류의 ID, 아주 큰 수량), 클라이언트가 보낸 서버 메시지 / join 전 요청, 빈도 초과와 내려놓기 버킷 공유·소비 버킷과의 분리 / 건네기 직후 저장, 거부는 저장하지 않음, 서버 재시작 → 재접속 뒤 두 미러 / RPC 구성·요청 검증·알림 검증 규칙), `tests/unit/hand_over_presentation_test.gd`(건네기 보조 키의 기본값·액션 등록·설정 검증(다른 모든 키와 달라야 함), 보조 키 조합의 뜻, 요청 수량, HUD 대상 줄, 결과 문장, 알림 문구). 고친 기존 테스트: 프로토콜 버전을 단언하는 통합 테스트 여섯(8 → 9), `tests/integration/inventory_net_test.gd`의 RPC 목록에 새 RPC 셋 추가, `tests/unit/treat_target_test.gd`의 HUD 대상 줄 기대값(건네기 키가 붙음. 설정을 바꿔 보는 경우의 보조 키는 Ctrl 대신 Alt).
+
+### 14.29 아이템을 바닥에 두어 옮기기(P2-T15, docs/00 ADR-021)
+
+사용자 결정(2026-11-16, 원문): "아이템을 단축키 눌러서 건네는 방식보다는 트레이드를 거는 방식이나 아이템을 땅이나 창고에 넣어서 옮기는 방식을 채택하고 지금부터 쭉 작업을 진행하고 마지막에 수치랑 규칙 조정을 하자". 한쪽이 단축키로 상대 인벤토리에 아이템을 넣던 건네기(§14.28)를 없애고, 아이템은 바닥에 내려놓고 줍는 것으로 옮긴다(거래는 §14.30, 보관함은 Phase 3). 이 티켓 뒤로는 어떤 클라이언트 요청도 받는 쪽의 동의 없이 다른 플레이어의 인벤토리에 아이템을 넣지 못한다. 먹여 주기·치료(§14.27)는 그대로다. 임시 가정은 docs/15 §14.6 P2-213~P2-225.
+
+구성: `InventoryService`(`drop_item`의 수량, `try_pickup`의 합치기), `ServerWorld.try_drop_item`(수량 인자), `GameplaySettings.merge_stacks_on_pickup`, `InventoryNetModule`(내려놓기 의도의 수량, 일부 내려놓기와 합쳐진 줍기의 복제, 건네기 RPC 제거), `network_service.gd`(줍기 핸들러 세 줄, 아래 "줍기 복제"), 클라이언트 `InventorySelectionPolicy`(선택 커서와 내려놓을 수량), `WorldItemMarkers`(바닥 아이템 표시), `ClientView`·`ClientPresentationFormatter`·`ClientPresentationSettings`·`ClientInputActions`·`InputIntentMath`(키, HUD, 줍기 후보). 저장 스키마는 바뀌지 않았다.
+
+**프로토콜 변경 있음**: 건네기 RPC 셋이 없어지고 내려놓기 의도에 인자가 하나 늘어 `BuildInfo.PROTOCOL_VERSION`을 10으로 올렸다. 서버→클라이언트 메시지 형식과 join 스냅샷 형식은 그대로다.
+
+#### 데이터
+
+| 설정 | 기본값 | 뜻 |
+|---|---|---|
+| `GameplaySettings.merge_stacks_on_pickup` | true | 주운 아이템을 들고 있는 같은 종류 묶음에 먼저 합친다. false면 P2-T15 이전처럼 주운 아이템마다 빈 칸 하나를 쓴다 |
+| `InventoryNetSettings.drop_intent_rate_per_sec` / `drop_intent_burst` | 4/s / 4 | 내려놓기 의도의 빈도 제한(값은 그대로, 건네기와 함께 쓰던 버킷이 내려놓기 전용이 됐다) |
+| `ClientPresentationSettings.select_previous_key` / `select_next_key` | Z / X | 소지품 선택 커서를 앞·뒤 묶음으로(클라이언트 전용, 아무것도 보내지 않는다) |
+| `ClientPresentationSettings.drop_key` / `drop_quantity` | Q / 1 | 선택한 묶음에서 한 번에 내려놓는 수량 |
+| `ClientPresentationSettings.drop_stack_modifier_key` | Ctrl | 누른 채 내려놓기 키 = 선택한 묶음 전체 |
+| `ClientPresentationSettings.drop_min_interval_sec` | 0.25 | 내려놓기 요청 사이의 클라이언트 쪽 최소 간격 |
+| `ClientPresentationSettings.pickup_candidate_range_m` | 2.5 | HUD에 표시하고 줍기 키가 고르는 후보의 거리(미러 기준 제안. 서버는 `pickup_range_m`으로 따로 판정) |
+| `ClientPresentationSettings.world_item_marker_*`, `world_item_label_*` | 상자 0.25m 등 | 바닥 아이템 임시 표시의 크기·색·라벨 |
+
+아이템 정의는 바뀌지 않았다. 없어진 설정: `GameplaySettings.hand_over_range_m`, `ClientPresentationSettings.hand_over_modifier_key`·`hand_over_quantity`.
+
+#### 서버 트랜잭션(`InventoryService`)
+
+§14.17의 규칙 그대로다: 검사를 전부 마친 뒤에만 반영하고, 실패하면 사유 코드만 있고 아무것도 바뀌지 않으며, 성공하면 `transaction_committed`가 한 번 나온다.
+
+**내려놓기** `drop_item(inventory_id, item_instance_id, cell_id, position, quantity = InventoryService.WHOLE_STACK)`:
+
+| `quantity` | 동작 | 이벤트 |
+|---|---|---|
+| `WHOLE_STACK`(0, 기본값) 또는 묶음 수량과 같음 | 인스턴스 자체가 그 ID 그대로 월드로 간다(P2-T2와 같다) | `items_dropped`(형식 그대로) |
+| 1 ≤ 수량 < 묶음 수량 | 들고 있는 묶음은 수량만 줄고, 내려놓은 수량이 **새 ID의 새 인스턴스**로 월드에 생긴다(`condition`·`quality`는 원래 묶음의 것). 두 묶음이 같은 ID를 갖는 경우는 없다 | `item_units_dropped` = `{event_type, inventory_id, item_instance_id(들고 있는 묶음), definition_id, quantity, remaining_quantity, world_item_instance_id(바닥의 새 인스턴스), cell_id, position: [x, y, z]}` |
+| 그 밖(음수, 묶음 수량 초과) | 거부 | `bad_quantity` |
+
+검사 순서: `unknown_inventory` → `unknown_item` → `item_not_in_inventory` → `bad_quantity` → `bad_cell`/`bad_position` → `id_unavailable`(새 ID를 등록할 수 없음. 일어나지 않아야 하는 경우의 방어). 소유 검사가 수량 검사보다 앞이라 남의 묶음에 몇 개가 있는지는 알 수 없다. 새 ID는 상태를 바꾸기 전에 발급·등록한다.
+
+**줍기** `try_pickup(inventory_id, item_instance_id, actor_position)`(검사는 그대로: 인벤토리, 아이템, 월드에 있음, 사거리, 자리):
+
+1. `merge_on_pickup`이 켜져 있으면 주운 수량을 들고 있는 **같은 정의·같은 `condition`·같은 `quality`** 묶음에 슬롯 번호가 작은 것부터 `max_stack`까지 채운다(`transfer_item`과 같은 규칙, 같은 계획 함수 `_plan_fills`).
+2. 남은 수량이 있으면 **주운 인스턴스 자체가 그 ID 그대로** 첫 빈 슬롯에 남은 수량으로 들어간다.
+3. 남은 수량이 있는데 빈 슬롯이 없으면 **전체를 거부**한다(`inventory_full`). 들어가는 만큼만 줍는 일은 없고, 바닥의 아이템은 그대로다. 반대로 전부가 기존 묶음에 합쳐지면 빈 슬롯이 없어도 승인된다.
+4. 남은 수량이 0이면 주운 인스턴스는 삭제되고 그 ID는 tombstone 처리된다(재사용 불가).
+
+- 이벤트 `item_picked_up` = `{event_type, item_instance_id(바닥에 있던 아이템), inventory_id, slot_id(그 인스턴스가 들어간 슬롯. **빈 문자열 = 전부 합쳐져 없어짐**), from_cell_id, definition_id, quantity(주운 수량), merged: [{item_instance_id, quantity}](수량이 늘어난 묶음과 늘어난 수량, 채운 순서)}`. 앞의 다섯 키는 Phase 1 그대로이고 뒤의 셋이 추가됐다.
+- **보존**: 내려놓기·줍기 어느 경우에도(일부 내려놓기, 합치기, 넘침, 거부) 정의별 총수량은 변하지 않는다. `condition`·`quality`가 다른 묶음끼리는 합치지 않는다. 테스트는 고정 seed로 내려놓기·줍기 300회를 섞어 총수량·ID·슬롯·묶음 크기 불변식을 확인한다.
+- 합치기를 줍기에 넣은 이유(P2-T14의 `transfer_item`만 합치던 것과 달라진 점): 아이템이 바닥을 거쳐 옮겨 가게 되면서 한 개씩 내려놓은 것을 한 개씩 주우면 칸이 낱개로 찬다. 합치지 않으면 "한 개 내려놓기"가 받는 쪽의 20칸을 금방 채운다. 그래서 기본값을 켰고, 끌 수 있게 설정으로 뒀다(docs/15 P2-216).
+
+`ServerWorld.try_drop_item(player_id, item_instance_id, quantity = WHOLE_STACK)`: 검사는 그대로(접속 → 행동 가능: `player_dead`·`player_resting` → 트랜잭션)이고 수량만 넘긴다. 엎드린 채로는 내려놓을 수 있고 자는 플레이어는 먼저 일어나야 한다. `ServerWorld` 생성자가 `GameplaySettings.merge_stacks_on_pickup`을 `inventory.merge_on_pickup`에 넣는다.
+
+#### 네트워크 메시지
+
+| 방향 | RPC | 채널/모드 | 받는 쪽 검증 |
+|---|---|---|---|
+| C→S | `_rpc_request_drop(request_id: int, item_instance_id: String, quantity: int)` | 0 reliable | 아래 "요청 검증" |
+
+그 밖의 RPC(결과, 월드 아이템 추가, 소유자 인벤토리 메시지 둘, 줍기)는 형식이 그대로다. 없어진 RPC: `_rpc_request_hand_over`, `_rpc_hand_over_result`, `_rpc_hand_over_notice`. `InventoryNetModule`의 RPC는 열 개다(테스트가 목록 전체를 고정한다): 내려놓기·소비·남에게 쓰기의 요청과 결과 여섯, 치료 알림, 월드 아이템 추가, 소유자 인벤토리 메시지 둘.
+
+요청 검증(순서대로, 먼저 걸린 것 하나. 거부되면 서버 상태는 바뀌지 않고 `rejected_intent_count(reason)`이 1 오른다):
+
+| 순서 | 사유 코드 | 조건 | 요청자에게 결과 전송 |
+|---|---|---|---|
+| 1 | `not_joined` | join 핸드셰이크를 마치지 않은 peer | 보내지 않음 |
+| 2 | `bad_type` | `request_id`·`quantity`가 int가 아니거나 아이템 ID가 String이 아님 | `request_id`가 0 이상 int일 때만 |
+| 3 | `bad_sequence` | `request_id` < 0 | 보내지 않음 |
+| 4 | `bad_item_id` | 아이템 ID가 비었거나 64자 초과 | 보냄 |
+| 5 | `bad_quantity` | `quantity` < 0(0은 "묶음 전체") | 보냄 |
+| 6 | `rate_limited` | peer별 토큰 버킷(내려놓기 버킷) | 보냄 |
+| 7 | `player_dead` | 요청자가 살아 있지 않음 | 보냄 |
+| 8 | 트랜잭션·규칙의 사유(`item_not_in_inventory`, `bad_quantity`(묶음 수량 초과), `player_resting`, `not_online` 등) | `unknown_item`은 `item_not_in_inventory`로 바꿔 알린다 | 보냄 |
+
+위치·소유자·받을 사람을 싣는 인자는 없고, 인자를 더 붙인 호출은 엔진이 거부한다(테스트로 고정). 예전 프로토콜의 건네기 RPC를 보내는 호출도 엔진이 거부한다(테스트로 고정).
+
+**복제와 정보 공개**(ADR-009):
+
+| 서버에서 확정된 사실 | 소유자에게 | 접속 중인 모든 peer에게 |
+|---|---|---|
+| `items_dropped`(묶음 전체) | `_rpc_inventory_items_removed`(§14.17 그대로) | `_rpc_world_items_added` |
+| `item_units_dropped`(묶음의 일부) | `_rpc_inventory_item_changed`(줄어든 묶음) 먼저 | 이어서 `_rpc_world_items_added`(새 아이템: 정의 ID, 수량, 위치) |
+| `item_picked_up`, 합쳐진 묶음 있음 | 늘어난 묶음마다 `_rpc_inventory_item_changed`(`InventoryNet`). 이어서 `NetworkService`의 기존 메시지 | `_rpc_world_item_removed`(`NetworkService`, 그대로) |
+
+- **줍기 복제**: 줍기 RPC와 그 복제는 동결된 `network_service.gd` 안에 있다(§14.17). 합쳐져 없어진 인스턴스에는 `_rpc_inventory_item`으로 보낼 것이 없으므로, 핸들러가 "그 아이템이 아직 있을 때만" 보내게 **세 줄을 고쳤다**(동결 이후 두 번째 수정. 메시지 형식·순서·저장 시점은 그대로다). 늘어난 묶음은 `InventoryNet`이 `transaction_committed`를 듣고 그 자리에서 소유자에게 보내므로 `NetworkService`의 메시지보다 먼저 도착한다. 클라이언트 미러에는 합쳐져 없어진 아이템이 들어오지 않는다.
+- 바닥의 아이템은 접속 중인 모든 클라이언트가 거리·시야 제한 없이 받는다(정의 ID, 수량, 위치). 누가 내려놓았는지는 없다. 인벤토리 변화는 소유자에게만 간다. 건네기에 있던 "A가 B에게 물건을 건넸다" 알림은 없어졌고, 내려놓기·줍기에는 알림이 없다(바닥에 생기고 없어지는 것이 곧 모두가 보는 사실이다).
+- **누구나 줍는다**: 바닥에 놓인 아이템은 받을 사람이 정해져 있지 않다. 사거리 안의 누구든 먼저 요청한 쪽이 줍는다. 받을 사람을 보장하려면 거래(§14.30)를 쓴다.
+
+저장: 내려놓기 의도는 승인되면 결과를 보내기 전에 월드 전체를 저장한다(§14.17 그대로, 한 개씩 내려놓아도 매번). 줍기도 그대로다. 저장 스키마는 바뀌지 않았다: 새 인스턴스는 일반 아이템이고, 합쳐져 없어진 ID는 world_state `tombstones`에, 새 ID의 다음 순번은 `next_entity_sequence`에 들어간다.
+
+클라이언트 표면(`InventoryNetModule`): `request_drop(item_instance_id, quantity = InventoryService.WHOLE_STACK) -> int`, `send_raw_drop_request(request_id, item_instance_id, quantity = WHOLE_STACK)`(테스트 전용), `validate_drop_request(request_id, item_instance_id, quantity = WHOLE_STACK)`. 시그널은 그대로다.
+
+#### 클라이언트 표시(`scripts/presentation/`)
+
+- **선택 커서**(`InventorySelectionPolicy`, 순수 함수): 미러 인벤토리의 묶음을 슬롯 번호 순으로 놓고(미러 자체는 도착 순서다) 커서가 그중 하나를 가리킨다. `step`(앞·뒤, 양끝에서 돈다), `resolve`(미러가 바뀐 뒤: 가리키던 묶음이 남아 있으면 그대로, 없어졌으면 같은 자리의 묶음, 아무것도 없으면 선택 없음), `drop_quantity`(보조 키가 눌렸으면 `WHOLE_STACK`, 아니면 `drop_quantity`와 미러 수량 중 작은 값, 보낼 것이 없으면 `NOTHING_TO_DROP`). 커서는 클라이언트에만 있고 서버에는 "선택" 개념이 없다.
+- **입력**: 선택 키(Z/X)는 커서만 옮긴다. 내려놓기 키(Q)는 선택한 묶음의 ID와 수량을 보낸다(Ctrl을 누르고 있으면 묶음 전체). 선택한 것이 없으면 요청 없이 "내려놓을 아이템이 없습니다"를 표시한다. 줍기 키(E)는 HUD에 표시된 후보를 요청하고, 후보가 없으면 요청 없이 "가까이에 주울 것이 없습니다"를 표시한다(이전에는 거리와 무관하게 가장 가까운 아이템을 요청했다). 내려놓기·줍기의 서버 결과를 사용 결과 자리에 문장으로 표시한다.
+- **HUD 소지품 목록**(`build_inventory_lines`): 종류별 합계 대신 묶음마다 한 줄이다. 첫 줄 "소지품 (N) | 선택 [Z/X] 내려놓기 [Q] 묶음째 [Ctrl+Q]", 이어서 "> 이름 x수량"(선택된 묶음) 또는 "  이름 x수량". 줄 수(`hud_inventory_line_count`, 6)를 넘으면 커서 주변만 보이고 "... 위 N개"·"... 아래 N개"가 붙는다. 마지막 줄은 줍기 후보 "줍기 [E]: 이름 x수량" 또는 "줍기 [E]: 가까이에 없음".
+- **바닥 아이템 표시**(`WorldItemMarkers`): 미러의 월드 아이템마다 임시 상자 하나와 그 위의 라벨(표시 이름 x수량, 카메라를 향한다)을 둔다. 미러가 바뀌면 만들고, 고치고, 없앤다. 거리 제한·가림 처리·겹침 정리는 없다.
+- **줍기 후보**(`InputIntentMath.nearest_world_item_id(origin, world_items, max_distance_m)`): 미러에서 본인 위치로부터 `pickup_candidate_range_m` 안의 가장 가까운 아이템. 제안일 뿐이고 서버가 자기 위치로 다시 판정한다.
+- **키 겹침 검사**: `ClientPresentationSettings.validate()`가 이 Resource의 키 열한 개가 서로 다른지 검사하고, `keys_shared_with(camera)`가 이동·줍기 키(`CameraSettings`)와 겹치는 설정 이름을 돌려준다(`ClientView`가 시작할 때 오류 로그로 남긴다).
+
+화면 설명은 docs/11 §2.13.
+
+테스트: `tests/unit/ground_transfer_test.gd`(일부 내려놓기의 새 인스턴스·ID·이벤트·보존, 묶음 전체 세 가지 표현, 거부 사유와 불변, 줍기 합치기·넘침·가득 참·`condition`/`quality`·끄기 설정, 고정 seed 300회, A가 한 개씩 내려놓고 B가 주워 한 묶음이 됨, 누가 무엇을 내려놓을 수 있는지, 건네기 규칙·설정이 없음, 저장 → 재생성 → 로드), `tests/unit/item_transfer_test.gd`(`transfer_item` 트랜잭션: P2-T14의 것을 옮겼다), `tests/integration/ground_transfer_net_test.gd`(서버 1 + 클라이언트 3, 실제 ENet: 한 개 내려놓기 → 세 미러의 월드 아이템과 소유자 한정 인벤토리 메시지, 줍기 합치기와 미러, 넘침, 제3자는 인벤토리 메시지 0개 / 조작된 수량 10종·거짓 요청 7종·인자를 더 붙인 호출·자는·죽은 요청자 / 건네기 RPC가 없고 보내도 아무 일도 없음, 먹여 주기와 내려놓기는 남의 인벤토리에 넣지 않음 / 서버 규칙의 `transfer_item` 복제 / 저장·서버 재시작·재접속 / RPC 목록과 요청 검증), `tests/integration/ground_transfer_view_test.gd`(실제 클라이언트 세션의 `ClientView`: 바닥 아이템 표시와 미러 추종, HUD 목록·커서·줍기 후보, 실제 입력 액션으로 선택·내려놓기(한 개/묶음 전체)·줍기), `tests/unit/ground_transfer_presentation_test.gd`(커서 순서·이동·유지, 내려놓을 수량, 키 설정·액션·검증·겹침, HUD 목록과 창, 줍기 후보와 문구, 결과 문장, 표시 노드). 고친 기존 테스트는 docs/15 §14.6에 적었다.
 
 ## 15. Phase 3 구현 현황
 

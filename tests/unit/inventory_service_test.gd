@@ -69,7 +69,9 @@ func test_rejections_change_nothing() -> void:
 
 func test_full_inventory_rejects_pickup() -> void:
 	var inventory_id: String = _service.create_inventory(1)
-	var a: String = _service.spawn_world_item("test_item", 1, CELL, Vector3.ZERO)
+	# A full stack (P2-T15: a picked-up item joins a carried stack that has
+	# room, so "full" means no free slot AND no room in a stack of its kind).
+	var a: String = _service.spawn_world_item("test_item", 5, CELL, Vector3.ZERO)
 	var b: String = _service.spawn_world_item("test_item", 1, CELL, Vector3.ZERO)
 	assert_true(_service.try_pickup(inventory_id, a, Vector3.ZERO).ok)
 	assert_eq(_service.try_pickup(inventory_id, b, Vector3.ZERO).reason, InventoryService.REASON_INVENTORY_FULL)

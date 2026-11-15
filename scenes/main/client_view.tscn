@@ -27,6 +27,9 @@ unique_name_in_owner = true
 [node name="Zombies" type="Node3D" parent="."]
 unique_name_in_owner = true
 
+[node name="WorldItems" type="Node3D" parent="."]
+unique_name_in_owner = true
+
 [node name="Camera" type="Camera3D" parent="."]
 unique_name_in_owner = true
 current = true
@@ -84,8 +87,8 @@ unique_name_in_owner = true
 visible = false
 offset_left = 8.0
 offset_top = 280.0
-offset_right = 420.0
-offset_bottom = 480.0
+offset_right = 520.0
+offset_bottom = 540.0
 text = "소지품"
 
 [node name="ConsumeResultLabel" type="Label" parent="Hud"]

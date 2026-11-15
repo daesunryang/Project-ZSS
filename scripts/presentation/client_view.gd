@@ -6,6 +6,7 @@ extends Node3D
 @onready var _camera: Camera3D = %Camera
 @onready var _players_root: Node3D = %Players
 @onready var _zombies_root: Node3D = %Zombies
+@onready var _world_items_root: Node3D = %WorldItems
 @onready var _survival_label: Label = %SurvivalLabel
 @onready var _event_log_label: Label = %EventLogLabel
 @onready var _attack_result_label: Label = %AttackResultLabel
@@ -60,6 +61,20 @@ var _posture_policy: AttackIntentPolicy = null
 ## The player a "use on another player" key would name now (P2-T12), as
 ## last shown in the HUD ("" = nobody).
 var _treat_target: String = ""
+## Markers of the items lying in the world (P2-T15) and the hash of the
+## mirror rows they were last built from.
+var _world_item_markers: WorldItemMarkers = null
+var _world_items_signature: int = 0
+## The carried stack the inventory cursor is on (P2-T15; "" = nothing) and
+## its position in the cursor order, kept so the cursor stays in place when
+## its stack leaves the inventory.
+var _selected_item_id: String = InventorySelectionPolicy.NO_SELECTION
+var _selected_index: int = 0
+## Flood guard of the drop key (same rule as the attack guard).
+var _drop_policy: AttackIntentPolicy = null
+## The world item the pickup key would name now (P2-T15), as last shown in
+## the HUD ("" = nothing in reach).
+var _pickup_candidate: String = ""
 ## Character names and appearance, and the creation request (P2-T9).
 var _character_module: CharacterNetModule = null
 var _character_state: ClientCharacterState = null
@@ -91,7 +106,12 @@ func _ready() -> void:
 	_consume_policy = AttackIntentPolicy.new(_presentation.consume_min_interval_sec)
 	_rest_policy = AttackIntentPolicy.new(_presentation.rest_min_interval_sec)
 	_posture_policy = AttackIntentPolicy.new(_presentation.rest_min_interval_sec)
+	_drop_policy = AttackIntentPolicy.new(_presentation.drop_min_interval_sec)
 	_item_catalog = ItemCatalog.load_directory()
+	_world_item_markers = WorldItemMarkers.new(_world_items_root, _item_catalog, _presentation)
+	var shared_keys: PackedStringArray = _presentation.keys_shared_with(_settings)
+	if not shared_keys.is_empty():
+		GameLogger.error("presentation", "client keys are also movement or pickup keys", {"settings": ", ".join(shared_keys), "operation": "client_view_ready"})
 	ClientInputActions.register(_settings, _presentation)
 	_prepare_player_resources()
 	_prepare_zombie_resources()
@@ -134,9 +154,18 @@ func _process(_delta: float) -> void:
 func _physics_process(_delta: float) -> void:
 	_update_camera()
 	_update_treat_target()
+	_update_pickup_candidate()
 	# No game input while the character creation screen is open (P2-T9).
 	if not is_game_input_enabled():
 		return
+	# P2-T15: the inventory cursor (local only) and putting the selected
+	# stack down.
+	if Input.is_action_just_pressed(ClientInputActions.SELECT_PREVIOUS):
+		move_selection(-1)
+	if Input.is_action_just_pressed(ClientInputActions.SELECT_NEXT):
+		move_selection(1)
+	if Input.is_action_just_pressed(ClientInputActions.DROP):
+		_request_drop_selected()
 	if Input.is_action_just_pressed(ClientInputActions.ATTACK):
 		_request_melee_attack()
 	for action: StringName in ClientInputActions.USE_ACTION_KINDS:
@@ -213,10 +242,10 @@ func _bind_network() -> void:
 		_inventory_module.use_on_result.connect(_on_use_on_result)
 	if _inventory_module != null and not _inventory_module.treatment_seen.is_connected(_on_treatment_seen):
 		_inventory_module.treatment_seen.connect(_on_treatment_seen)
-	if _inventory_module != null and not _inventory_module.hand_over_result.is_connected(_on_hand_over_result):
-		_inventory_module.hand_over_result.connect(_on_hand_over_result)
-	if _inventory_module != null and not _inventory_module.hand_over_seen.is_connected(_on_hand_over_seen):
-		_inventory_module.hand_over_seen.connect(_on_hand_over_seen)
+	if _inventory_module != null and not _inventory_module.drop_result.is_connected(_on_drop_result):
+		_inventory_module.drop_result.connect(_on_drop_result)
+	if not _network.pickup_result.is_connected(_on_pickup_result):
+		_network.pickup_result.connect(_on_pickup_result)
 	_character_module = _network.get_module(CharacterNetModule.MODULE_NAME) as CharacterNetModule
 	if _character_module != null:
 		_character_state = _character_module.client_state
@@ -230,6 +259,7 @@ func _bind_network() -> void:
 	_sync_creation_screen()
 	_sync_player_visuals()
 	_sync_zombie_visuals()
+	_sync_world_item_markers()
 	_refresh_survival_hud()
 	_refresh_inventory_hud()
 	_load_recent_events()
@@ -237,8 +267,22 @@ func _bind_network() -> void:
 
 func _on_world_state_changed() -> void:
 	_sync_player_visuals()
+	_sync_world_item_markers()
 	_update_camera()
 	_refresh_inventory_hud()
+
+
+## Items lying in the world (P2-T15). The mirror signals every change of
+## anything (positions arrive many times a second): the markers are touched
+## only when the world items themselves changed.
+func _sync_world_item_markers() -> void:
+	if _state == null:
+		return
+	var signature: int = _state.world_items.hash()
+	if signature == _world_items_signature:
+		return
+	_world_items_signature = signature
+	_world_item_markers.sync(_state.world_items)
 
 
 func _on_survival_state_changed() -> void:
@@ -459,20 +503,94 @@ func _refresh_survival_hud() -> void:
 	_survival_label.visible = true
 
 
-## Rebuilds the inventory summary when the local inventory mirror changed.
-## Hidden while not joined (the mirror says nothing then).
+## Rebuilds the inventory list (P2-T15: one line per carried stack, the
+## cursor, the pickup candidate) when the local inventory mirror, the cursor
+## or the candidate changed. Hidden while not joined (the mirror says
+## nothing then).
 func _refresh_inventory_hud() -> void:
 	if _state == null or _state.local_player_id.is_empty():
 		_inventory_label.visible = false
 		return
-	var signature: int = _state.inventory.hash()
+	# The cursor follows the mirror: it stays on its stack, or takes the
+	# stack that is now at its place when that one left the inventory.
+	_selected_item_id = InventorySelectionPolicy.resolve(_state.inventory, _selected_item_id, _selected_index)
+	_selected_index = maxi(InventorySelectionPolicy.index_of(_state.inventory, _selected_item_id), 0)
+	var candidate: Dictionary = _state.world_items.get(_pickup_candidate, {})
+	var signature: int = [_state.inventory.hash(), _selected_item_id, _pickup_candidate, candidate.hash()].hash()
 	if _inventory_label.visible and signature == _inventory_signature:
 		return
 	_inventory_signature = signature
-	_inventory_label.text = "\n".join(ClientPresentationFormatter.build_inventory_lines(_state.inventory, _item_catalog, _presentation.hud_inventory_line_count))
+	var lines: PackedStringArray = ClientPresentationFormatter.build_inventory_lines(_state.inventory, _item_catalog, _selected_item_id, _presentation)
+	lines.append_array(ClientPresentationFormatter.build_pickup_lines(candidate, _item_catalog, _settings.pickup_key))
+	_inventory_label.text = "\n".join(lines)
 	_inventory_label.visible = true
 	# The survival HUD counts the carried bandages.
 	_refresh_survival_hud()
+
+
+## The carried stack the inventory cursor is on ("" = nothing is carried).
+func selected_item_id() -> String:
+	return _selected_item_id
+
+
+## The world item the pickup key would name now ("" = nothing in reach).
+func pickup_candidate_id() -> String:
+	return _pickup_candidate
+
+
+## Moves the inventory cursor one stack forwards (`direction` > 0) or
+## backwards (< 0), wrapping at both ends. Local only: nothing is sent.
+func move_selection(direction: int) -> void:
+	if _state == null or _state.local_player_id.is_empty():
+		return
+	_selected_item_id = InventorySelectionPolicy.step(_state.inventory, _selected_item_id, direction)
+	_selected_index = maxi(InventorySelectionPolicy.index_of(_state.inventory, _selected_item_id), 0)
+	_refresh_inventory_hud()
+
+
+## Drop key (P2-T15): asks the server to put units of the selected stack
+## down where the player stands: one key press = the configured quantity, or
+## the whole stack with the stack modifier held. Only the item id and the
+## quantity are sent; the server decides.
+func _request_drop_selected() -> void:
+	var connected: bool = (
+		_inventory_module != null
+		and _network != null
+		and _network.is_client()
+		and _state != null
+		and not _state.local_player_id.is_empty()
+	)
+	if not _drop_policy.should_send(connected, _now_sec()):
+		return
+	var quantity: int = InventorySelectionPolicy.drop_quantity(_state.inventory, _selected_item_id, _presentation.drop_quantity, Input.is_action_pressed(ClientInputActions.DROP_STACK))
+	if quantity == InventorySelectionPolicy.NOTHING_TO_DROP:
+		_show_consume_text(ClientPresentationFormatter.nothing_selected_text())
+		return
+	_inventory_module.request_drop(_selected_item_id, quantity)
+
+
+## The answer to a drop request is shown where the use results are shown.
+func _on_drop_result(_request_id: int, ok: bool, reason: String) -> void:
+	_show_consume_text(ClientPresentationFormatter.format_drop_result(ok, reason))
+
+
+## The answer to a pickup request is shown where the use results are shown
+## (P2-T15: a full inventory must be noticed now that items travel over the
+## ground).
+func _on_pickup_result(_request_id: int, ok: bool, reason: String) -> void:
+	_show_consume_text(ClientPresentationFormatter.format_pickup_result(ok, reason))
+
+
+## Keeps the HUD's pickup line current: the candidate changes when the local
+## player moves or an item appears or goes, without any signal of its own.
+func _update_pickup_candidate() -> void:
+	var candidate: String = ""
+	if _state != null and not _state.local_player_id.is_empty():
+		candidate = InputIntentMath.nearest_world_item_id(_state.position_of(_state.local_player_id), _state.world_items, _presentation.pickup_candidate_range_m)
+	if candidate == _pickup_candidate:
+		return
+	_pickup_candidate = candidate
+	_refresh_inventory_hud()
 
 
 func _load_recent_events() -> void:
@@ -511,11 +629,14 @@ func _update_camera() -> void:
 	_camera.look_at(target, Vector3.UP)
 
 
+## Pickup key: asks the server for the candidate the HUD shows (the nearest
+## world item in reach, in the mirror). The server checks its own range.
 func _request_nearest_pickup() -> void:
-	var local_position: Vector3 = _state.position_of(_state.local_player_id)
-	var item_id: String = InputIntentMath.nearest_world_item_id(local_position, _state.world_items)
-	if not item_id.is_empty():
-		_network.request_pickup(item_id)
+	_update_pickup_candidate()
+	if _pickup_candidate.is_empty():
+		_show_consume_text(ClientPresentationFormatter.nothing_to_pick_up_text())
+		return
+	_network.request_pickup(_pickup_candidate)
 
 
 func _request_melee_attack() -> void:
@@ -532,9 +653,9 @@ func _request_melee_attack() -> void:
 
 
 ## A use key (food, drink, bandage, cure): asks the server to use the first item of
-## that kind in the mirrored inventory (or, with a modifier held, to use it
-## on another player or to hand it over). Only ids and a quantity are sent;
-## the server decides whether and how it works.
+## that kind in the mirrored inventory (or, with the modifier held, to use it
+## on another player). Only ids are sent; the server decides whether and how
+## it works.
 func _request_use(kind: ConsumeIntentPolicy.Kind) -> void:
 	var connected: bool = (
 		_inventory_module != null
@@ -550,24 +671,15 @@ func _request_use(kind: ConsumeIntentPolicy.Kind) -> void:
 		_show_consume_text(ClientPresentationFormatter.nothing_to_use_text(kind))
 		return
 	# P2-T12, P2-T13: with the treat-other modifier held, a use key
-	# (treatment, food or drink) means "on the player I am looking at".
-	# P2-T14: with the hand-over modifier held it means "hand this item to
-	# that player". Only the item, that player's id and (for a hand-over) how
-	# many are sent.
-	var mode: ConsumeIntentPolicy.UseMode = ConsumeIntentPolicy.use_mode(kind, Input.is_action_pressed(ClientInputActions.TREAT_OTHER), Input.is_action_pressed(ClientInputActions.HAND_OVER))
+	# (treatment, food or drink) means "on the player I am looking at". Only
+	# the item and that player's id are sent.
+	var mode: ConsumeIntentPolicy.UseMode = ConsumeIntentPolicy.use_mode(kind, Input.is_action_pressed(ClientInputActions.TREAT_OTHER))
 	if mode == ConsumeIntentPolicy.UseMode.ON_SELF:
 		_inventory_module.request_consume(item_id)
 		return
 	var target_id: String = _treat_target_id()
 	if target_id.is_empty():
 		_show_consume_text(ClientPresentationFormatter.no_treat_target_text())
-		return
-	if mode == ConsumeIntentPolicy.UseMode.HAND_OVER:
-		var quantity: int = ConsumeIntentPolicy.hand_over_quantity(_state.inventory, item_id, _presentation.hand_over_quantity)
-		if quantity < 1:
-			_show_consume_text(ClientPresentationFormatter.nothing_to_use_text(kind))
-			return
-		_inventory_module.request_hand_over(item_id, target_id, quantity)
 		return
 	_inventory_module.request_use_on(item_id, target_id)
 
@@ -616,22 +728,6 @@ func _on_treatment_seen(notice: Dictionary) -> void:
 		var player_id: String = str(notice.get(key, ""))
 		names[player_id] = _player_label(player_id)
 	_append_event_line(ClientPresentationFormatter.format_treatment_notice(notice, names, _item_catalog))
-
-
-## The answer to a hand-over request (P2-T14) is shown where the use results
-## are shown.
-func _on_hand_over_result(_request_id: int, ok: bool, reason: String) -> void:
-	_show_consume_text(ClientPresentationFormatter.format_hand_over_result(ok, reason))
-
-
-## Somebody handed the local player an item, or one player handed something
-## to another (P2-T14): a line in the event log.
-func _on_hand_over_seen(notice: Dictionary) -> void:
-	var names: Dictionary = {}
-	for key: String in ["giver_id", "receiver_id"]:
-		var player_id: String = str(notice.get(key, ""))
-		names[player_id] = _player_label(player_id)
-	_append_event_line(ClientPresentationFormatter.format_hand_over_notice(notice, names, _item_catalog))
 
 
 ## Rest key (P2-T8): asks the server to lie down, or to get up when the

@@ -25,6 +25,9 @@ func before_each() -> void:
 	_ids = EntityIdGenerator.new()
 	_registry = EntityRegistry.new()
 	_service = InventoryService.new(_catalog, _ids, _registry, PICKUP_RANGE, HALF_EXTENT)
+	# These tests place several stacks of one kind side by side with pickups
+	# (P2-T15: a pickup would merge them; that rule is ground_transfer_test.gd).
+	_service.merge_on_pickup = false
 	_events = []
 	# The listener captures the array, not this test object (no reference cycle).
 	var events: Array[Dictionary] = _events
@@ -76,6 +79,7 @@ func _ids_of(items: Array[ItemInstance]) -> Array:
 func _world(half_extent: float = HALF_EXTENT) -> ServerWorld:
 	var gameplay: GameplaySettings = GameplaySettings.new()
 	gameplay.world_half_extent_m = half_extent
+	gameplay.merge_stacks_on_pickup = false
 	return ServerWorld.new(WORLD, gameplay, _new_catalog())
 
 

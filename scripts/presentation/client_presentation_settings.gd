@@ -64,15 +64,36 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.1, 50.0) var treat_target_range_m: float = 2.5
 @export_range(1.0, 180.0) var treat_target_half_angle_deg: float = 60.0
 
-## Handing an item over (P2-T14, docs/15 P2-211): holding this key while
-## pressing a use key (food, drink, bandage, cure) asks the server to move
-## the first item of that kind into the inventory of the player the camera
-## looks at (the same candidate as for treat_other_modifier_key), instead of
-## using it. When both modifiers are held, handing over wins.
-@export var hand_over_modifier_key: Key = KEY_CTRL
-## Units one key press asks to hand over (never more than the mirrored stack
-## holds). The server decides whether that many can be handed over.
-@export_range(1, 10000) var hand_over_quantity: int = 1
+## Inventory cursor and putting items down (P2-T15, docs/00 ADR-021, docs/15
+## P2-218..P2-220). The cursor is on one carried stack of the mirrored
+## inventory; these keys move it to the previous / next stack (local only,
+## nothing is sent).
+@export var select_previous_key: Key = KEY_Z
+@export var select_next_key: Key = KEY_X
+## Asks the server to put `drop_quantity` units of the selected stack down
+## where the player stands (never more than the mirrored stack holds).
+@export var drop_key: Key = KEY_Q
+@export_range(1, 10000) var drop_quantity: int = 1
+## Held with the drop key: put the whole selected stack down instead.
+@export var drop_stack_modifier_key: Key = KEY_CTRL
+## Local flood guard between two drop requests (the server has its own).
+@export_range(0.01, 5.0) var drop_min_interval_sec: float = 0.25
+
+## Items lying in the world (P2-T15, docs/15 P2-221): a placeholder box with
+## a billboard label (display name and quantity) above it. Edge length and
+## colour of the box, distance of the label above it, world size of one font
+## pixel, font size and colour of the label.
+@export_range(0.01, 5.0) var world_item_marker_size_m: float = 0.25
+@export var world_item_marker_color: Color = Color(0.95, 0.80, 0.30, 1.0)
+@export_range(0.0, 5.0) var world_item_label_margin_m: float = 0.20
+@export_range(0.0001, 0.1) var world_item_label_pixel_size: float = 0.005
+@export_range(1, 256) var world_item_label_font_size: int = 32
+@export var world_item_label_color: Color = Color(1.0, 0.95, 0.70, 1.0)
+## The pickup candidate shown in the HUD and named by the pickup key: the
+## nearest world item within this distance of the local player, in the
+## mirror. Only a suggestion: the server checks its own positions and range
+## (GameplaySettings.pickup_range_m).
+@export_range(0.1, 50.0) var pickup_candidate_range_m: float = 2.5
 
 ## Name tag above a player's capsule (P2-T9, docs/15 P2-170): a billboard
 ## Label3D. Distance above the top of the capsule, world size of one font
@@ -132,19 +153,56 @@ func validate() -> PackedStringArray:
 		errors.append("treat_target_range_m must be > 0")
 	if treat_target_half_angle_deg <= 0.0 or treat_target_half_angle_deg > 180.0:
 		errors.append("treat_target_half_angle_deg must be within (0, 180]")
-	if hand_over_modifier_key == KEY_NONE:
-		errors.append("hand_over_modifier_key must not be KEY_NONE")
-	if hand_over_quantity < 1:
-		errors.append("hand_over_quantity must be >= 1")
-	if not _are_distinct([consume_key, drink_key, bandage_key, cure_key, rest_key, prone_key, treat_other_modifier_key, hand_over_modifier_key]):
-		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier and the hand-over modifier must be different keys")
+	var item_keys: Dictionary[String, Key] = {"select_previous_key": select_previous_key, "select_next_key": select_next_key, "drop_key": drop_key, "drop_stack_modifier_key": drop_stack_modifier_key}
+	for key_name: String in item_keys:
+		if item_keys[key_name] == KEY_NONE:
+			errors.append("%s must not be KEY_NONE" % key_name)
+	if drop_quantity < 1:
+		errors.append("drop_quantity must be >= 1")
+	if drop_min_interval_sec <= 0.0:
+		errors.append("drop_min_interval_sec must be > 0")
+	if world_item_marker_size_m <= 0.0 or world_item_label_margin_m < 0.0 or world_item_label_pixel_size <= 0.0 or world_item_label_font_size < 1:
+		errors.append("world item marker size and label pixel size must be > 0, label margin >= 0 and font size >= 1")
+	if not is_finite(pickup_candidate_range_m) or pickup_candidate_range_m <= 0.0:
+		errors.append("pickup_candidate_range_m must be > 0")
+	if not _are_distinct(assigned_keys().values()):
+		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key and the drop-stack modifier must be different keys")
 	return errors
 
 
+## Every key this resource assigns, by setting name.
+func assigned_keys() -> Dictionary[String, Key]:
+	return {
+		"consume_key": consume_key,
+		"drink_key": drink_key,
+		"bandage_key": bandage_key,
+		"cure_key": cure_key,
+		"rest_key": rest_key,
+		"prone_key": prone_key,
+		"treat_other_modifier_key": treat_other_modifier_key,
+		"select_previous_key": select_previous_key,
+		"select_next_key": select_next_key,
+		"drop_key": drop_key,
+		"drop_stack_modifier_key": drop_stack_modifier_key,
+	}
+
+
+## Names of the settings of this resource whose key is also a movement or
+## pickup key of `camera` (CameraSettings assigns those). Empty = no clash.
+func keys_shared_with(camera: CameraSettings) -> PackedStringArray:
+	var taken: Array[Key] = [camera.move_forward_key, camera.move_backward_key, camera.move_left_key, camera.move_right_key, camera.pickup_key]
+	var shared: PackedStringArray = []
+	var own: Dictionary[String, Key] = assigned_keys()
+	for key_name: String in own:
+		if own[key_name] != KEY_NONE and taken.has(own[key_name]):
+			shared.append(key_name)
+	return shared
+
+
 ## True when no key appears twice in `keys` (unset keys are not compared).
-static func _are_distinct(keys: Array[Key]) -> bool:
+static func _are_distinct(keys_to_check: Array) -> bool:
 	var seen: Dictionary[Key, bool] = {}
-	for key: Key in keys:
+	for key: Key in keys_to_check:
 		if key == KEY_NONE:
 			continue
 		if seen.has(key):

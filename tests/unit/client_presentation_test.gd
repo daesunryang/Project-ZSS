@@ -191,10 +191,14 @@ func test_each_use_key_picks_the_first_item_of_its_kind_in_the_mirror() -> void:
 	assert_true(policy.should_send(true, 0.25))
 
 
-func test_inventory_hud_lists_names_and_summed_quantities() -> void:
+## P2-T15: the HUD lists the carried stacks one by one (the inventory cursor
+## walks them) instead of summing the stacks of a kind. The cursor itself:
+## ground_transfer_presentation_test.gd.
+func test_inventory_hud_lists_names_and_quantities_of_the_stacks() -> void:
 	var catalog: ItemCatalog = _consume_catalog()
+	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
 	var empty: Array[Dictionary] = []
-	assert_eq(ClientPresentationFormatter.build_inventory_lines(empty, catalog, 6), PackedStringArray(["소지품: 없음"]))
+	assert_eq(ClientPresentationFormatter.build_inventory_lines(empty, catalog, "", settings), PackedStringArray(["소지품: 없음"]))
 	var inventory: Array[Dictionary] = [
 		_carried("item_000001", "hud_food", 2),
 		_carried("item_000002", "hud_pipe", 1),
@@ -203,20 +207,23 @@ func test_inventory_hud_lists_names_and_summed_quantities() -> void:
 		{"junk": true},
 		_carried("item_000005", "hud_unknown", 1),
 	]
-	assert_eq(ClientPresentationFormatter.build_inventory_lines(inventory, catalog, 6), PackedStringArray([
-		"소지품 (5)",
-		"Canned Beans x5",
-		"Pipe x1",
-		"hud_water x4",
-		"hud_unknown x1",
-	]), "first-seen order, same kinds summed, the id when there is no name")
-	assert_eq(ClientPresentationFormatter.build_inventory_lines(inventory, catalog, 2), PackedStringArray([
-		"소지품 (5)",
-		"Canned Beans x5",
-		"Pipe x1",
-		"... 외 2종",
-	]), "the configured number of kinds, the rest counted")
-	assert_eq(ClientPresentationFormatter.build_inventory_lines(inventory, null, 1)[1], "hud_food x5", "ids when no catalog is available")
+	assert_eq(ClientPresentationFormatter.build_inventory_lines(inventory, catalog, "", settings), PackedStringArray([
+		"소지품 (5) | 선택 [Z/X] 내려놓기 [Q] 묶음째 [Ctrl+Q]",
+		"  Canned Beans x2",
+		"  Pipe x1",
+		"  Canned Beans x3",
+		"  hud_water x4",
+		"  hud_unknown x1",
+	]), "one line per stack, the id when there is no name, malformed rows skipped")
+	settings.hud_inventory_line_count = 2
+	assert_eq(ClientPresentationFormatter.build_inventory_lines(inventory, catalog, "", settings), PackedStringArray([
+		"소지품 (5) | 선택 [Z/X] 내려놓기 [Q] 묶음째 [Ctrl+Q]",
+		"  Canned Beans x2",
+		"  Pipe x1",
+		"  ... 아래 3개",
+	]), "the configured number of stacks, the rest counted")
+	settings.hud_inventory_line_count = 1
+	assert_eq(ClientPresentationFormatter.build_inventory_lines(inventory, null, "", settings)[1], "  hud_food x2", "ids when no catalog is available")
 
 
 func test_consume_result_text_and_action_use_settings() -> void:

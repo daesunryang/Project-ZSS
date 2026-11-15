@@ -5,7 +5,8 @@ extends NetModule
 ## InventoryService / ServerWorld / ItemConsumption.
 ##
 ## RPC table (channel 0 = reliable ordered, the channel of the pickup RPCs):
-##   client -> server  _rpc_request_drop(request_id:int, item_instance_id:String)       reliable, ch0
+##   client -> server  _rpc_request_drop(request_id:int, item_instance_id:String,
+##                                        quantity:int)                                reliable, ch0
 ##   server -> owner   _rpc_drop_result(request_id:int, ok:bool, reason:String)          reliable, ch0
 ##   client -> server  _rpc_request_consume(request_id:int, item_instance_id:String)    reliable, ch0
 ##   server -> owner   _rpc_consume_result(request_id:int, ok:bool, reason:String)       reliable, ch0
@@ -13,10 +14,6 @@ extends NetModule
 ##                                          target_player_id:String)                     reliable, ch0
 ##   server -> owner   _rpc_use_on_result(request_id:int, ok:bool, reason:String)        reliable, ch0
 ##   server -> clients _rpc_treatment_notice(notice:Dictionary)                          reliable, ch0
-##   client -> server  _rpc_request_hand_over(request_id:int, item_instance_id:String,
-##                                             target_player_id:String, quantity:int)    reliable, ch0
-##   server -> owner   _rpc_hand_over_result(request_id:int, ok:bool, reason:String)     reliable, ch0
-##   server -> clients _rpc_hand_over_notice(notice:Dictionary)                          reliable, ch0
 ##   server -> clients _rpc_world_items_added(items:Array[Dictionary])                   reliable, ch0
 ##   server -> owner   _rpc_inventory_items_removed(item_instance_ids:Array[String])     reliable, ch0
 ##   server -> owner   _rpc_inventory_item_changed(item:Dictionary /* ItemInstance */)   reliable, ch0
@@ -60,40 +57,24 @@ extends NetModule
 ## No notice for requests refused before the attempt (wrong item, target
 ## away, dead or too far) and none for a use on oneself.
 ##
-## Hand-over (P2-T14, docs/00 ADR-020, docs/09 §14.28): the item itself moves
-## into another player's inventory (nobody is fed or treated). The client
-## names a carried item, a target player and a quantity, nothing else; the
-## rule is ServerWorld.try_hand_over_item. Checks, in order: joined, argument
-## types, request id >= 0, item id length, target id length (1..64:
-## `bad_target_id`; there is no "myself" here), quantity >= 1
-## (`bad_quantity`), request rate (the DROP bucket: like a drop, a hand-over
-## takes an item out of the inventory and is saved at once), then the rule
-## (`item_not_in_inventory`, `bad_quantity`, `target_is_self`,
-## `target_unavailable`, `target_dead`, `target_too_far`,
-## `target_inventory_full`, ...). Who is told what:
-##   - the giver: the result (ok / reason) and its own smaller stack (or
-##     that the stack is gone). Nothing about what the receiver holds, except
-##     that a refusal `target_inventory_full` says it has no room for this.
-##   - the receiver: its own stacks that grew or arrived (the owner-only
-##     inventory message) and a notice {scope: "target", giver_id,
-##     receiver_id, definition_id, quantity, world_time}: who handed it what
-##     and how many.
-##   - every other joined peer: a notice {scope: "public", giver_id,
-##     receiver_id, world_time}: that one player handed something to
-##     another. Not what, not how many.
-## Notices are sent for a committed hand-over only; a refused request is
-## told to nobody but the requester. A committed hand-over is saved before
-## its result is sent (like a pickup and a drop).
-##
-## Request: a client sends an intent only: its own request id and the id of
-## the item to put down. There is no position, owner or quantity argument;
-## the actor is the player of the sending peer and the item lands where the
-## server knows that player to be. Server checks, in order: joined
-## (`not_joined`), argument types (`bad_type`), request id >= 0
-## (`bad_sequence`), item id length (`bad_item_id`), request rate
+## Drop request: a client sends an intent only: its own request id, the id
+## of the item to put down and how many units of it (P2-T15:
+## InventoryService.WHOLE_STACK = the whole stack as the server knows it, or
+## 1..the stack; a part of a stack becomes a new item lying in the world).
+## There is no position or owner argument; the actor is the player of the
+## sending peer and the item lands where the server knows that player to be.
+## Server checks, in order: joined (`not_joined`), argument types
+## (`bad_type`), request id >= 0 (`bad_sequence`), item id length
+## (`bad_item_id`), quantity >= 0 (`bad_quantity`), request rate
 ## (`rate_limited`), the player is alive (`player_dead`), then the
-## transaction's own rules (`item_not_in_inventory`, ...). Every refusal is
-## counted (NetworkService.rejected_intent_count) and changes nothing.
+## transaction's own rules (`item_not_in_inventory`, `bad_quantity` for more
+## units than the stack holds, ...). Every refusal is counted
+## (NetworkService.rejected_intent_count) and changes nothing.
+##
+## Items travel between players over the ground (docs/00 ADR-021): one
+## player puts them down, another picks them up. No request of this module
+## puts an item into another player's inventory (the hand-over intent of
+## P2-T14 was withdrawn in P2-T15).
 ##
 ## Result: sent to the requester only, for every request of a joined peer
 ## whose request id is usable (int >= 0). `reason` is "" exactly when ok.
@@ -110,6 +91,10 @@ extends NetModule
 ## item that leaves an inventory or changes its quantity goes to the owner
 ## only. Nobody is sent another player's inventory. Late joiners get world
 ## items and their own inventory in the join snapshot (NetworkService).
+## A pickup is replicated by NetworkService itself (the picked-up item, the
+## result, the item leaving the world); this module adds the carried stacks
+## that grew because the picked-up units merged into them (P2-T15), sent to
+## the owner before NetworkService's own messages.
 ##
 ## Saving: a committed drop intent is saved before its result is sent (like a
 ## pickup); changes made by server rules are saved at the end of that server
@@ -129,12 +114,6 @@ signal use_on_result(request_id: int, ok: bool, reason: String)
 ## client's player was treated (scope "target") or it saw one player tend to
 ## another (scope "public").
 signal treatment_seen(notice: Dictionary)
-## Client: answer to one of this client's own hand-over requests (P2-T14).
-signal hand_over_result(request_id: int, ok: bool, reason: String)
-## Client: a validated hand-over notice arrived (see the header): this
-## client's player was handed something (scope "target") or it saw one player
-## hand something to another (scope "public").
-signal hand_over_seen(notice: Dictionary)
 ## Client: these items now lie in the world (already in the mirror).
 signal world_items_added(item_instance_ids: PackedStringArray)
 ## Client: these items left the local inventory (already out of the mirror).
@@ -147,12 +126,7 @@ const MODULE_NAME: String = "InventoryNet"
 const INTENT_DROP: String = "drop_item"
 const INTENT_CONSUME: String = "consume_item"
 const INTENT_USE_ON: String = "use_item_on"
-const INTENT_HAND_OVER: String = "hand_over_item"
-## Hand-over notice keys per scope (P2-T14; the scopes are the treatment
-## notice's NOTICE_SCOPE_*).
-const HAND_OVER_NOTICE_TARGET_KEYS: Array = ["scope", "giver_id", "receiver_id", "definition_id", "quantity", "world_time"]
-const HAND_OVER_NOTICE_PUBLIC_KEYS: Array = ["scope", "giver_id", "receiver_id", "world_time"]
-## The target argument of a use-on / hand-over request is not a usable player id.
+## The target argument of a use-on request is not a usable player id.
 const REASON_BAD_TARGET_ID: String = "bad_target_id"
 ## Treatment notice scopes and keys (P2-T12).
 const NOTICE_SCOPE_TARGET: String = "target"
@@ -173,7 +147,6 @@ const REASON_PLAYER_DEAD: String = SurvivalService.REASON_PLAYER_DEAD
 const SAVE_REASON_DROP: String = "item_dropped"
 const SAVE_REASON_CHANGE: String = "inventory_changed"
 const SAVE_REASON_CONSUME: String = "item_consumed"
-const SAVE_REASON_HAND_OVER: String = "item_handed_over"
 
 ## Client: payloads from the server that failed validation (whole messages
 ## and single entries).
@@ -197,7 +170,6 @@ var _leave_to_next_save: bool = false
 var _last_request_id: int = NO_REQUEST
 var _last_consume_request_id: int = NO_REQUEST
 var _last_use_on_request_id: int = NO_REQUEST
-var _last_hand_over_request_id: int = NO_REQUEST
 ## Client: the newest validated treatment notices, oldest first.
 var _recent_notices: Array[Dictionary] = []
 
@@ -215,9 +187,18 @@ func _exit_tree() -> void:
 # ------------------------------------------------------------ pure rules
 
 ## "" when the arguments of a drop request are usable, otherwise a reason
-## code. Same shape and rules as a pickup request (types first).
-static func validate_drop_request(request_id: Variant, item_instance_id: Variant) -> String:
-	return IntentValidator.validate_pickup(request_id, item_instance_id)
+## code. Types first; the item part follows the pickup request; the quantity
+## is InventoryService.WHOLE_STACK or at least 1 (how many the stack holds is
+## the transaction's check).
+static func validate_drop_request(request_id: Variant, item_instance_id: Variant, quantity: Variant = InventoryService.WHOLE_STACK) -> String:
+	if typeof(quantity) != TYPE_INT:
+		return IntentValidator.REASON_BAD_TYPE
+	var reason: String = IntentValidator.validate_pickup(request_id, item_instance_id)
+	if not reason.is_empty():
+		return reason
+	if int(quantity) < InventoryService.WHOLE_STACK:
+		return InventoryService.REASON_BAD_QUANTITY
+	return ""
 
 
 ## "" when the arguments of a consume request are usable, otherwise a reason
@@ -272,54 +253,6 @@ static func is_valid_treatment_notice(notice: Variant, local_player_id: String) 
 		return false
 	# "" exactly when the use did something.
 	return str(data["reason"]).length() <= REASON_MAX_LENGTH and bool(data["ok"]) == str(data["reason"]).is_empty()
-
-
-## "" when the arguments of a hand-over request are usable, otherwise a
-## reason code (P2-T14). Types first; the item part follows the drop request;
-## the target is a player id of 1..64 characters (nobody hands to "myself");
-## the quantity is at least 1 (how many the stack holds is the rule's check).
-static func validate_hand_over_request(request_id: Variant, item_instance_id: Variant, target_player_id: Variant, quantity: Variant) -> String:
-	if typeof(target_player_id) != TYPE_STRING or typeof(quantity) != TYPE_INT:
-		return IntentValidator.REASON_BAD_TYPE
-	var reason: String = IntentValidator.validate_pickup(request_id, item_instance_id)
-	if not reason.is_empty():
-		return reason
-	if not _is_valid_item_id(target_player_id):
-		return REASON_BAD_TARGET_ID
-	if int(quantity) < 1:
-		return InventoryService.REASON_BAD_QUANTITY
-	return ""
-
-
-## True when `notice` is a hand-over notice as the server sends it to the
-## player `local_player_id` (P2-T14): exact keys for its scope, bounded
-## strings, two different players, and the right addressee (the receiver
-## gets "target", a bystander "public"; the giver gets neither).
-static func is_valid_hand_over_notice(notice: Variant, local_player_id: String) -> bool:
-	if typeof(notice) != TYPE_DICTIONARY:
-		return false
-	var data: Dictionary = notice
-	var scope: Variant = data.get("scope", null)
-	if typeof(scope) != TYPE_STRING or (scope != NOTICE_SCOPE_TARGET and scope != NOTICE_SCOPE_PUBLIC):
-		return false
-	var expected: Array = HAND_OVER_NOTICE_TARGET_KEYS if scope == NOTICE_SCOPE_TARGET else HAND_OVER_NOTICE_PUBLIC_KEYS
-	if data.size() != expected.size():
-		return false
-	for key: Variant in data.keys():
-		if typeof(key) != TYPE_STRING or not expected.has(key):
-			return false
-	if not _is_valid_item_id(data["giver_id"]) or not _is_valid_item_id(data["receiver_id"]) or data["giver_id"] == data["receiver_id"]:
-		return false
-	var world_time: Variant = data["world_time"]
-	if not (typeof(world_time) == TYPE_FLOAT or typeof(world_time) == TYPE_INT) or not is_finite(float(world_time)) or float(world_time) < 0.0:
-		return false
-	if scope == NOTICE_SCOPE_PUBLIC:
-		return data["giver_id"] != local_player_id and data["receiver_id"] != local_player_id
-	if data["receiver_id"] != local_player_id:
-		return false
-	if typeof(data["definition_id"]) != TYPE_STRING or str(data["definition_id"]).length() > ClientWorldState.ITEM_ID_MAX_LENGTH or not ItemInstance.is_valid_definition_id(str(data["definition_id"])):
-		return false
-	return typeof(data["quantity"]) == TYPE_INT and int(data["quantity"]) >= 1
 
 
 ## The reason code a requester is told. An id that does not exist is reported
@@ -377,14 +310,13 @@ func apply_join_fragment(_fragment: Dictionary) -> void:
 	_last_request_id = NO_REQUEST
 	_last_consume_request_id = NO_REQUEST
 	_last_use_on_request_id = NO_REQUEST
-	_last_hand_over_request_id = NO_REQUEST
 	_recent_notices.clear()
 
 
 # ------------------------------------------------------------ server side
 
 @rpc("any_peer", "call_remote", "reliable", 0)
-func _rpc_request_drop(request_id: Variant, item_instance_id: Variant) -> void:
+func _rpc_request_drop(request_id: Variant, item_instance_id: Variant, quantity: Variant) -> void:
 	if network == null or not network.is_server():
 		return
 	var peer_id: int = multiplayer.get_remote_sender_id()
@@ -393,7 +325,7 @@ func _rpc_request_drop(request_id: Variant, item_instance_id: Variant) -> void:
 	if player_id.is_empty():
 		network.reject_intent(peer_id, INTENT_DROP, NetworkService.NOT_JOINED)
 		return
-	var reason: String = validate_drop_request(request_id, item_instance_id)
+	var reason: String = validate_drop_request(request_id, item_instance_id, quantity)
 	if not reason.is_empty():
 		network.reject_intent(peer_id, INTENT_DROP, reason, player_id)
 		if typeof(request_id) == TYPE_INT and int(request_id) >= 0:
@@ -413,14 +345,14 @@ func _rpc_request_drop(request_id: Variant, item_instance_id: Variant) -> void:
 	var item_id: String = str(item_instance_id)
 	# Replication happens inside this call (transaction_committed), before
 	# the result below.
-	var result: ActionResult = _world.try_drop_item(player_id, item_id)
+	var result: ActionResult = _world.try_drop_item(player_id, item_id, int(quantity))
 	if not result.ok:
 		network.count_rejection(result.reason)
 		_send_result(peer_id, int(request_id), false, public_reason(result.reason))
 		return
 	_flush_save(SAVE_REASON_DROP)
 	_send_result(peer_id, int(request_id), true, "")
-	GameLogger.info("net", "drop committed", {"peer_id": peer_id, "player_id": player_id, "entity_id": item_id, "request_id": int(request_id)})
+	GameLogger.info("net", "drop committed", {"peer_id": peer_id, "player_id": player_id, "entity_id": item_id, "quantity": int(quantity), "request_id": int(request_id)})
 
 
 @rpc("any_peer", "call_remote", "reliable", 0)
@@ -540,72 +472,6 @@ func _send_use_on_result(peer_id: int, request_id: int, ok: bool, reason: String
 		_rpc_use_on_result.rpc_id(peer_id, request_id, ok, reason)
 
 
-@rpc("any_peer", "call_remote", "reliable", 0)
-func _rpc_request_hand_over(request_id: Variant, item_instance_id: Variant, target_player_id: Variant, quantity: Variant) -> void:
-	if network == null or not network.is_server():
-		return
-	var peer_id: int = multiplayer.get_remote_sender_id()
-	# The giver is whoever owns the sending peer, never an argument. The
-	# target is only a name: everything about it is read from the server.
-	var player_id: String = network.sender_player_id()
-	if player_id.is_empty():
-		network.reject_intent(peer_id, INTENT_HAND_OVER, NetworkService.NOT_JOINED)
-		return
-	var reason: String = validate_hand_over_request(request_id, item_instance_id, target_player_id, quantity)
-	if not reason.is_empty():
-		network.reject_intent(peer_id, INTENT_HAND_OVER, reason, player_id)
-		if typeof(request_id) == TYPE_INT and int(request_id) >= 0:
-			_send_hand_over_result(peer_id, int(request_id), false, reason)
-		return
-	# Like a drop, a hand-over takes an item out of the inventory and is saved
-	# at once: both share the drop allowance (docs/15 P2-208).
-	if not _limiter.allow(peer_id, Time.get_ticks_msec()):
-		network.reject_intent(peer_id, INTENT_HAND_OVER, NetworkService.RATE_LIMITED, player_id)
-		_send_hand_over_result(peer_id, int(request_id), false, NetworkService.RATE_LIMITED)
-		return
-	var item_id: String = str(item_instance_id)
-	var target_id: String = str(target_player_id)
-	# Both inventory changes are replicated inside this call
-	# (transaction_committed), before the notices and the result below.
-	var result: ActionResult = _world.try_hand_over_item(player_id, item_id, target_id, int(quantity))
-	if not result.ok:
-		# Refusals by game state are normal play: counted, not logged as warnings.
-		network.count_rejection(result.reason)
-		_send_hand_over_result(peer_id, int(request_id), false, public_reason(result.reason))
-		return
-	_flush_save(SAVE_REASON_HAND_OVER)
-	_send_hand_over_notices(player_id, target_id, str(result.event.get("definition_id", "")), int(quantity))
-	_send_hand_over_result(peer_id, int(request_id), true, "")
-	GameLogger.info("net", "hand-over committed", {"peer_id": peer_id, "player_id": player_id, "target_id": target_id, "entity_id": item_id, "quantity": int(quantity), "request_id": int(request_id)})
-
-
-## Tells the receiver who handed it what and how many, and every other
-## joined peer except the giver that the one handed something to the other.
-## What was handed over leaves the server to the receiver only.
-func _send_hand_over_notices(giver_id: String, receiver_id: String, definition_id: String, quantity: int) -> void:
-	var world_time: float = _world.clock.world_time_sec
-	var target_notice: Dictionary = {"scope": NOTICE_SCOPE_TARGET, "giver_id": giver_id, "receiver_id": receiver_id, "definition_id": definition_id, "quantity": quantity, "world_time": world_time}
-	var public_notice: Dictionary = {"scope": NOTICE_SCOPE_PUBLIC, "giver_id": giver_id, "receiver_id": receiver_id, "world_time": world_time}
-	var giver_peer: int = network.peer_of_player(giver_id)
-	var receiver_peer: int = network.peer_of_player(receiver_id)
-	for peer_id: int in network.joined_peers():
-		if peer_id == giver_peer or not network.can_send_to(peer_id):
-			continue
-		if peer_id == receiver_peer:
-			# The server holds its own output to the rule its clients apply.
-			if is_valid_hand_over_notice(target_notice, receiver_id):
-				_rpc_hand_over_notice.rpc_id(peer_id, target_notice)
-			else:
-				GameLogger.error("net", "hand-over notice not sent", {"player_id": receiver_id, "module": MODULE_NAME, "operation": "send_hand_over_notices"})
-		else:
-			_rpc_hand_over_notice.rpc_id(peer_id, public_notice)
-
-
-func _send_hand_over_result(peer_id: int, request_id: int, ok: bool, reason: String) -> void:
-	if network.can_send_to(peer_id):
-		_rpc_hand_over_result.rpc_id(peer_id, request_id, ok, reason)
-
-
 ## Server: a transaction was committed in the InventoryService. Replicates it
 ## now, so the send order is the commit order.
 func _on_inventory_transaction(event: Dictionary) -> void:
@@ -614,12 +480,19 @@ func _on_inventory_transaction(event: Dictionary) -> void:
 	var event_type: String = str(event.get("event_type", ""))
 	if event_type == InventoryService.EVENT_ITEMS_DROPPED:
 		_replicate_dropped(event)
+	elif event_type == InventoryService.EVENT_ITEM_UNITS_DROPPED:
+		_replicate_units_dropped(event)
 	elif event_type == InventoryService.EVENT_ITEM_REMOVED:
 		_replicate_removed(event)
 	elif event_type == InventoryService.EVENT_ITEM_TRANSFERRED:
 		_replicate_transferred(event)
+	elif event_type == InventoryService.EVENT_ITEM_PICKED_UP:
+		# The pickup itself is replicated (and saved) by NetworkService; only
+		# the carried stacks that grew are sent from here.
+		_replicate_merged(event)
+		return
 	else:
-		return  # pickups are replicated (and saved) by NetworkService itself
+		return
 	if not _leave_to_next_save:
 		_save_pending = true
 
@@ -653,6 +526,45 @@ func _replicate_dropped(event: Dictionary) -> void:
 				_rpc_world_items_added.rpc_id(peer_id, message)
 
 
+## A part of a stack was put down (P2-T15): the owner is told its smaller
+## stack, every joined peer the new item that lies in the world.
+func _replicate_units_dropped(event: Dictionary) -> void:
+	var inventory_id: String = str(event.get("inventory_id", ""))
+	var owner_peer: int = _owner_peer(inventory_id)
+	var carried: ItemInstance = _world.inventory.get_item(str(event.get("item_instance_id", "")))
+	if owner_peer != 0 and carried != null and carried.location_type == ItemInstance.LOCATION_INVENTORY and carried.location_id == inventory_id:
+		_send_inventory_item(owner_peer, carried)
+	var lying_id: String = str(event.get("world_item_instance_id", ""))
+	var lying: ItemInstance = _world.inventory.get_item(lying_id)
+	if lying == null or lying.location_type != ItemInstance.LOCATION_WORLD:
+		return
+	var entry: Dictionary = _world.inventory.describe_world_item(lying_id)
+	# The server holds its own output to the rule its clients apply.
+	if not ClientWorldState.is_valid_world_item(entry):
+		GameLogger.error("net", "world item not replicated", {"entity_id": lying_id, "module": MODULE_NAME, "operation": "replicate_units_dropped"})
+		return
+	for peer_id: int in network.joined_peers():
+		if network.can_send_to(peer_id):
+			_rpc_world_items_added.rpc_id(peer_id, [entry])
+
+
+## Picked-up units merged into carried stacks (P2-T15): the owner is told
+## the stacks that grew. Nobody else is told anything about them.
+func _replicate_merged(event: Dictionary) -> void:
+	var inventory_id: String = str(event.get("inventory_id", ""))
+	var owner_peer: int = _owner_peer(inventory_id)
+	if owner_peer == 0:
+		return
+	var merged: Variant = event.get("merged", [])
+	for entry: Variant in (merged as Array if typeof(merged) == TYPE_ARRAY else []):
+		var grown: ItemInstance = _world.inventory.get_item(str((entry as Dictionary).get("item_instance_id", ""))) if typeof(entry) == TYPE_DICTIONARY else null
+		# Only what is in that inventory now is ever sent to its owner.
+		if grown == null or grown.location_type != ItemInstance.LOCATION_INVENTORY or grown.location_id != inventory_id:
+			GameLogger.error("net", "merged stack not replicated", {"entity_id": str(event.get("item_instance_id", "")), "module": MODULE_NAME, "operation": "replicate_merged"})
+			continue
+		_send_inventory_item(owner_peer, grown)
+
+
 ## A quantity left an inventory: only the owner is told (the smaller stack,
 ## or that the item is gone).
 func _replicate_removed(event: Dictionary) -> void:
@@ -671,11 +583,12 @@ func _replicate_removed(event: Dictionary) -> void:
 	_rpc_inventory_item_changed.rpc_id(owner_peer, entry)
 
 
-## Units moved from one inventory into another (P2-T14): the owner of the
-## giving inventory is told its own change (the smaller stack, or that the
-## stack left), the owner of the receiving one its stacks that grew or
-## arrived. Each owner is sent its own inventory only, and nobody else is
-## sent anything.
+## Units moved from one inventory into another (InventoryService.
+## transfer_item; a server rule, no player intent calls it since P2-T15):
+## the owner of the giving inventory is told its own change (the smaller
+## stack, or that the stack left), the owner of the receiving one its stacks
+## that grew or arrived. Each owner is sent its own inventory only, and
+## nobody else is sent anything.
 func _replicate_transferred(event: Dictionary) -> void:
 	var item_id: String = str(event.get("item_instance_id", ""))
 	var from_id: String = str(event.get("from_inventory_id", ""))
@@ -753,22 +666,24 @@ func _flush_save(reason: String) -> void:
 
 # ------------------------------------------------------------ client side
 
-## Asks the server to put a carried item down where the player stands.
-## Returns the request id the `drop_result` signal will carry, or NO_REQUEST
-## when nothing was sent (not a joined client). Nothing is decided here.
-func request_drop(item_instance_id: String) -> int:
+## Asks the server to put a carried item down where the player stands:
+## `quantity` units of it, or the whole stack (the default,
+## InventoryService.WHOLE_STACK). Returns the request id the `drop_result`
+## signal will carry, or NO_REQUEST when nothing was sent (not a joined
+## client). Nothing is decided here.
+func request_drop(item_instance_id: String, quantity: int = InventoryService.WHOLE_STACK) -> int:
 	if network == null or not network.is_client() or network.client_state.local_player_id.is_empty():
 		return NO_REQUEST
 	_last_request_id += 1
-	send_raw_drop_request(_last_request_id, item_instance_id)
+	send_raw_drop_request(_last_request_id, item_instance_id, quantity)
 	return _last_request_id
 
 
 ## Sends an arbitrary request without any client-side check (tests:
 ## malformed or premature input through the real RPC path).
-func send_raw_drop_request(request_id: Variant, item_instance_id: Variant) -> void:
+func send_raw_drop_request(request_id: Variant, item_instance_id: Variant, quantity: Variant = InventoryService.WHOLE_STACK) -> void:
 	if network != null and network.is_client():
-		_rpc_request_drop.rpc_id(NetworkService.SERVER_PEER_ID, request_id, item_instance_id)
+		_rpc_request_drop.rpc_id(NetworkService.SERVER_PEER_ID, request_id, item_instance_id, quantity)
 
 
 @rpc("authority", "call_remote", "reliable", 0)
@@ -874,50 +789,6 @@ func _rpc_treatment_notice(notice: Variant) -> void:
 	while _recent_notices.size() > MAX_RECENT_NOTICES:
 		_recent_notices.pop_front()
 	treatment_seen.emit(accepted.duplicate(true))
-
-
-## Asks the server to hand `quantity` units of a carried item over to
-## another player (P2-T14). Returns the request id the `hand_over_result`
-## signal will carry, or NO_REQUEST when nothing was sent (not a joined
-## client). Nothing is decided here: item, target and quantity are only named.
-func request_hand_over(item_instance_id: String, target_player_id: String, quantity: int) -> int:
-	if network == null or not network.is_client() or network.client_state.local_player_id.is_empty():
-		return NO_REQUEST
-	_last_hand_over_request_id += 1
-	send_raw_hand_over_request(_last_hand_over_request_id, item_instance_id, target_player_id, quantity)
-	return _last_hand_over_request_id
-
-
-## Sends an arbitrary request without any client-side check (tests:
-## malformed or premature input through the real RPC path).
-func send_raw_hand_over_request(request_id: Variant, item_instance_id: Variant, target_player_id: Variant, quantity: Variant) -> void:
-	if network != null and network.is_client():
-		_rpc_request_hand_over.rpc_id(NetworkService.SERVER_PEER_ID, request_id, item_instance_id, target_player_id, quantity)
-
-
-@rpc("authority", "call_remote", "reliable", 0)
-func _rpc_hand_over_result(request_id: Variant, ok: Variant, reason: Variant) -> void:
-	if network == null or not network.is_from_server():
-		return
-	if typeof(request_id) != TYPE_INT or typeof(ok) != TYPE_BOOL or typeof(reason) != TYPE_STRING:
-		_reject_payload("bad_result")
-		return
-	var reason_code: String = reason
-	# "" exactly when the request was accepted.
-	if int(request_id) < 0 or reason_code.length() > REASON_MAX_LENGTH or bool(ok) != reason_code.is_empty():
-		_reject_payload("bad_result")
-		return
-	hand_over_result.emit(int(request_id), bool(ok), reason_code)
-
-
-@rpc("authority", "call_remote", "reliable", 0)
-func _rpc_hand_over_notice(notice: Variant) -> void:
-	if network == null or not network.is_from_server():
-		return
-	if not is_valid_hand_over_notice(notice, network.client_state.local_player_id):
-		_reject_payload("bad_hand_over_notice")
-		return
-	hand_over_seen.emit((notice as Dictionary).duplicate(true))
 
 
 @rpc("authority", "call_remote", "reliable", 0)

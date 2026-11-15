@@ -58,7 +58,15 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    bystanders (_rpc_hand_over_notice). The receiver's new or grown stacks
 ##    arrive through the existing owner-only _rpc_inventory_item_changed. No
 ##    existing RPC or message format changed.
-const PROTOCOL_VERSION: int = 9
+## 10: P2-T15 (items travel over the ground, docs/00 ADR-021). The three
+##    hand-over RPCs of protocol 9 are gone. The drop intent carries a
+##    quantity: _rpc_request_drop(request_id, item_instance_id, quantity),
+##    0 = the whole stack; a part of a stack reaches the owner as
+##    _rpc_inventory_item_changed and everybody as _rpc_world_items_added. A
+##    pickup may merge into carried stacks: the owner then gets
+##    _rpc_inventory_item_changed for the stacks that grew and
+##    _rpc_inventory_item only if the picked-up item still exists.
+const PROTOCOL_VERSION: int = 10
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

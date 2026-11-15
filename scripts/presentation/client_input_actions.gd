@@ -20,8 +20,13 @@ const REST: StringName = &"rest"
 const PRONE: StringName = &"prone"
 ## Held with a treatment key: use the item on another player (P2-T12).
 const TREAT_OTHER: StringName = &"treat_other"
-## Held with a use key: hand the item over to another player (P2-T14).
-const HAND_OVER: StringName = &"hand_over"
+## Inventory cursor: the previous / next carried stack (P2-T15).
+const SELECT_PREVIOUS: StringName = &"select_previous_item"
+const SELECT_NEXT: StringName = &"select_next_item"
+## Put units of the selected stack down (P2-T15).
+const DROP: StringName = &"drop_item"
+## Held with the drop key: put the whole selected stack down (P2-T15).
+const DROP_STACK: StringName = &"drop_stack"
 ## Use action -> the kind of item its key asks the server to use.
 const USE_ACTION_KINDS: Dictionary[StringName, ConsumeIntentPolicy.Kind] = {
 	CONSUME: ConsumeIntentPolicy.Kind.FOOD,
@@ -46,7 +51,10 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 		_add_key_action(REST, presentation.rest_key, settings.input_deadzone)
 		_add_key_action(PRONE, presentation.prone_key, settings.input_deadzone)
 		_add_key_action(TREAT_OTHER, presentation.treat_other_modifier_key, settings.input_deadzone)
-		_add_key_action(HAND_OVER, presentation.hand_over_modifier_key, settings.input_deadzone)
+		_add_key_action(SELECT_PREVIOUS, presentation.select_previous_key, settings.input_deadzone)
+		_add_key_action(SELECT_NEXT, presentation.select_next_key, settings.input_deadzone)
+		_add_key_action(DROP, presentation.drop_key, settings.input_deadzone)
+		_add_key_action(DROP_STACK, presentation.drop_stack_modifier_key, settings.input_deadzone)
 
 
 static func _add_key_action(action: StringName, key: Key, deadzone: float) -> void:

@@ -358,7 +358,8 @@ func test_a_resting_player_cannot_attack_or_handle_items() -> void:
 	assert_true(combat.request_melee_attack(world, alice.player_id, AIM_MINUS_Z).ok)
 	assert_true(ItemConsumption.try_consume(world, alice.player_id, food_id).ok)
 	assert_true(world.try_pickup(alice.player_id, lying_id).ok)
-	assert_true(world.try_drop_item(alice.player_id, lying_id).ok)
+	# (P2-T15: the picked-up unit joined the stack she carries.)
+	assert_true(world.try_drop_item(alice.player_id, food_id).ok)
 
 
 # ------------------------------------------------------------ what ends a rest

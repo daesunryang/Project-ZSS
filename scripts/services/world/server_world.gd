@@ -47,20 +47,13 @@ const REASON_NOT_CONNECTED: String = "not_connected"
 ## Another player's character has this name and duplicates are not allowed.
 const REASON_NAME_TAKEN: String = "name_taken"
 ## Reasons about the other player of an action between two players (a use on
-## another player, ItemConsumption.try_use_on; a hand-over,
-## try_hand_over_item). The target is no player that can be reached: unknown,
-## not connected, or connected without a character. One reason for all
-## three, so a requester cannot probe which player ids exist.
+## another player, ItemConsumption.try_use_on). The target is no player that
+## can be reached: unknown, not connected, or connected without a character.
+## One reason for all three, so a requester cannot probe which player ids
+## exist.
 const REASON_TARGET_UNAVAILABLE: String = "target_unavailable"
 const REASON_TARGET_DEAD: String = "target_dead"
 const REASON_TARGET_TOO_FAR: String = "target_too_far"
-## A hand-over names the giver itself as the target (P2-T14).
-const REASON_TARGET_IS_SELF: String = "target_is_self"
-## The target's inventory cannot take everything that was handed over
-## (P2-T14). Not "inventory_full": that is the requester's own inventory.
-const REASON_TARGET_INVENTORY_FULL: String = "target_inventory_full"
-## An item was handed over to another player (try_hand_over_item).
-const EVENT_ITEM_HANDED_OVER: String = "item_handed_over"
 
 var world_id: String
 var gameplay: GameplaySettings
@@ -104,6 +97,7 @@ func _init(id: String, gameplay_settings: GameplaySettings, catalog: ItemCatalog
 	world_id = id
 	gameplay = gameplay_settings
 	inventory = InventoryService.new(catalog, ids, registry, gameplay.pickup_range_m, gameplay.world_half_extent_m, cell_index)
+	inventory.merge_on_pickup = gameplay.merge_stacks_on_pickup
 
 
 ## Populates a brand-new world from the development seed.
@@ -467,7 +461,8 @@ func _valid_factor(factor: float, system: ServerSystem, player_id: String, opera
 ## Pickup by an online player, using the server-known position (the client
 ## never supplies a position). Returns the InventoryService result, or the
 ## reason a system blocks the player from acting (a dead character cannot
-## pick anything up, P2-T4).
+## pick anything up, P2-T4). What is picked up joins the stacks of the same
+## kind the player carries (P2-T15, GameplaySettings.merge_stacks_on_pickup).
 func try_pickup(player_id: String, item_instance_id: String) -> ActionResult:
 	if not _online.has(player_id):
 		return ActionResult.failure(REASON_NOT_ONLINE)
@@ -480,9 +475,14 @@ func try_pickup(player_id: String, item_instance_id: String) -> ActionResult:
 
 ## Drop by an online player (P2-T2): the item goes to the world where the
 ## server knows the player to be. The client supplies neither a position nor
-## an owner. Returns the InventoryService result, or the reason a system
-## blocks the player from acting.
-func try_drop_item(player_id: String, item_instance_id: String) -> ActionResult:
+## an owner, only the item and how many units of it (P2-T15:
+## InventoryService.WHOLE_STACK, the default, or 1..the stack; a part of a
+## stack becomes a new item lying in the world). This and a pickup by
+## somebody else is how items travel between players (docs/00 ADR-021): no
+## rule puts an item into another player's inventory. Returns the
+## InventoryService result, or the reason a system blocks the player from
+## acting.
+func try_drop_item(player_id: String, item_instance_id: String, quantity: int = InventoryService.WHOLE_STACK) -> ActionResult:
 	if not _online.has(player_id):
 		return ActionResult.failure(REASON_NOT_ONLINE)
 	var blocked: String = player_action_block_reason(player_id)
@@ -490,7 +490,7 @@ func try_drop_item(player_id: String, item_instance_id: String) -> ActionResult:
 		return ActionResult.failure(blocked)
 	var state: PlayerState = _players[player_id]
 	var position: Vector3 = clamp_to_world(state.position)
-	return inventory.drop_item(state.inventory_id, item_instance_id, cell_id_at(position), position)
+	return inventory.drop_item(state.inventory_id, item_instance_id, cell_id_at(position), position, quantity)
 
 
 ## Server rule entry (P2-T2, e.g. death): everything a known player carries
@@ -510,85 +510,6 @@ func remove_player_item(player_id: String, item_instance_id: String, quantity: i
 	if state == null:
 		return ActionResult.failure(REASON_UNKNOWN_PLAYER)
 	return inventory.remove_item(state.inventory_id, item_instance_id, quantity)
-
-
-## Hand-over by an online player (P2-T14, docs/00 ADR-020, docs/09 §14.28):
-## `quantity` units of an item `player_id` carries move into the inventory
-## of `target_player_id`, who keeps them for later. Nobody is fed or treated
-## by it (that is ItemConsumption.try_use_on) and any item can be handed
-## over. The caller names the item, the target and the quantity; who is
-## where, who is alive and what fits is server state.
-##
-## Checks, in this order (the first that fails is the reason; a refused
-## request changes nothing):
-##   1. the giver is in the world            not_online
-##   2. the giver can act                    player_dead, player_resting (a
-##                                           prone giver can hand things over)
-##   3. the giver carries the item           unknown_item, item_not_in_inventory
-##   4. 1 <= quantity <= the stack           bad_quantity
-##   5. the target is another player         target_is_self
-##   6. the target is in the world           target_unavailable (unknown, away
-##      or without a character: one reason, so player ids cannot be probed)
-##   7. the target is alive                  target_dead
-##   8. the target is within
-##      GameplaySettings.hand_over_range_m   target_too_far
-##   9. the target's inventory takes it all  target_inventory_full
-## The order decides what a requester can learn: nothing about a target
-## before the giver holds the item and asks for a quantity it has, and
-## nothing about the target's inventory except right next to it (9 is last).
-## The target does not have to agree, may be asleep or prone and is not woken.
-##
-## All or nothing, in one InventoryService.transfer_item transaction (see
-## there for stacks, slots and item ids); InventoryNet replicates it.
-## Success event (JSON-safe):
-##   {event_type: "item_handed_over", player_id (the giver), target_id,
-##    item_instance_id (the giver's stack), definition_id, quantity,
-##    remaining_quantity (0 = that stack left the giver's inventory),
-##    received: Array of {item_instance_id, quantity} (the target's stacks
-##    that grew or arrived), world_time}
-func try_hand_over_item(player_id: String, item_instance_id: String, target_player_id: String, quantity: int) -> ActionResult:
-	if not _online.has(player_id):
-		return ActionResult.failure(REASON_NOT_ONLINE)
-	var blocked: String = player_action_block_reason(player_id)
-	if not blocked.is_empty():
-		return ActionResult.failure(blocked)
-	var giver: PlayerState = _players[player_id]
-	var item: ItemInstance = inventory.get_item(item_instance_id)
-	if item == null:
-		return ActionResult.failure(InventoryService.REASON_UNKNOWN_ITEM)
-	# Ownership before the quantity: a requester learns nothing about a stack
-	# it does not carry.
-	if item.location_type != ItemInstance.LOCATION_INVENTORY or item.location_id != giver.inventory_id:
-		return ActionResult.failure(InventoryService.REASON_NOT_IN_INVENTORY)
-	if quantity < 1 or quantity > item.quantity:
-		return ActionResult.failure(InventoryService.REASON_BAD_QUANTITY)
-	# The target: another player, in the world, alive, close. Server state only.
-	if target_player_id == player_id:
-		return ActionResult.failure(REASON_TARGET_IS_SELF)
-	var target: PlayerState = _players.get(target_player_id, null)
-	if target == null or not _online.has(target_player_id):
-		return ActionResult.failure(REASON_TARGET_UNAVAILABLE)
-	if is_player_dead(target_player_id):
-		return ActionResult.failure(REASON_TARGET_DEAD)
-	if giver.position.distance_to(target.position) > gameplay.hand_over_range_m:
-		return ActionResult.failure(REASON_TARGET_TOO_FAR)
-	# Commit: the transaction re-checks the item and decides whether it fits.
-	var moved: ActionResult = inventory.transfer_item(giver.inventory_id, item_instance_id, target.inventory_id, quantity)
-	if not moved.ok:
-		return ActionResult.failure(REASON_TARGET_INVENTORY_FULL if moved.reason == InventoryService.REASON_INVENTORY_FULL else moved.reason)
-	var event: Dictionary = {
-		"event_type": EVENT_ITEM_HANDED_OVER,
-		"player_id": player_id,
-		"target_id": target_player_id,
-		"item_instance_id": item_instance_id,
-		"definition_id": str(moved.event.get("definition_id", "")),
-		"quantity": quantity,
-		"remaining_quantity": int(moved.event.get("remaining_quantity", 0)),
-		"received": (moved.event.get("received", []) as Array).duplicate(true),
-		"world_time": clock.world_time_sec,
-	}
-	GameLogger.info("world", "item handed over", {"world_id": world_id, "player_id": player_id, "target_id": target_player_id, "entity_id": item_instance_id, "quantity": quantity})
-	return ActionResult.success(event)
 
 
 ## True when a system knows the player's current character to be dead

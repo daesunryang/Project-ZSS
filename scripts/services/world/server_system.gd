@@ -83,10 +83,11 @@ func player_attack_block_reason(_player_id: String) -> String:
 
 
 ## True when this system knows the player's current character to be dead
-## (P2-T14). Asked about a player that is acted UPON (the receiver of a
-## hand-over: ServerWorld.is_player_dead), where player_action_block_reason
-## would also refuse a player that merely sleeps. A system that knows nothing
-## of death answers false; SurvivalService answers for its dead characters.
+## (P2-T14). Asked through ServerWorld.is_player_dead about a player that is
+## acted UPON or acted WITH (the other side of a rule between two players),
+## where player_action_block_reason would also name a player that merely
+## sleeps. A system that knows nothing of death answers false;
+## SurvivalService answers for its dead characters.
 func player_is_dead(_player_id: String) -> bool:
 	return false
 

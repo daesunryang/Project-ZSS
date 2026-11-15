@@ -48,6 +48,12 @@ extends Node
 ## character module calls announce_player_entered(), which does the
 ## announcement the handshake skipped. Where every player has a character at
 ## join (ServerWorld.require_character_creation false) nothing changed.
+##
+## P2-T15 (docs/09 §14.29, the second change since the freeze, three lines in
+## _rpc_request_pickup): a picked-up item may merge into the stacks the
+## player carries and then no longer exists, so _rpc_inventory_item is sent
+## only for an item that is still there. The grown stacks are replicated by
+## InventoryNetModule; the pickup messages themselves are unchanged.
 
 signal server_started(port: int)
 signal join_accepted(player_id: String)
@@ -435,7 +441,11 @@ func _rpc_request_pickup(request_id: Variant, item_instance_id: Variant) -> void
 		_rpc_pickup_result.rpc_id(peer_id, int(request_id), false, result.reason)
 		return
 	persist("item_picked_up")
-	_rpc_inventory_item.rpc_id(peer_id, _world.inventory.get_item(item_id).to_dict())
+	# P2-T15: a picked-up item whose units all merged into carried stacks no
+	# longer exists. The stacks that grew reach the owner through InventoryNet.
+	var picked: ItemInstance = _world.inventory.get_item(item_id)
+	if picked != null:
+		_rpc_inventory_item.rpc_id(peer_id, picked.to_dict())
 	_rpc_pickup_result.rpc_id(peer_id, int(request_id), true, "")
 	for other: int in _peer_players:
 		if can_send_to(other):

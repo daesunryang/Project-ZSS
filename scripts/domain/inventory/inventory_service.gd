@@ -10,13 +10,16 @@ extends RefCounted
 ##
 ## Transactions (server only; each returns an ActionResult whose `event` is
 ## the committed fact, or a REASON_* code and no change):
-##   try_pickup      world -> inventory
-##   drop_item       inventory -> world, the whole stack (P2-T2)
+##   try_pickup      world -> inventory; the units join the carried stacks of
+##                   the same kind first (P2-T15)
+##   drop_item       inventory -> world: the whole stack (P2-T2) or a part of
+##                   it, which becomes a new item (P2-T15)
 ##   drop_all_items  every item of one inventory -> world (P2-T2)
 ##   remove_item     a quantity leaves the game; at 0 the instance is deleted
 ##                   and its id is retired for good (P2-T2)
 ##   transfer_item   a quantity moves from one inventory into another,
-##                   merging into the receiver's stacks (P2-T14)
+##                   merging into the receiver's stacks (P2-T14). No player
+##                   intent calls it since P2-T15 (docs/00 ADR-021).
 ## Every committed transaction is also announced through
 ## `transaction_committed`, synchronously and in commit order, once the state
 ## is final. InventoryNetModule replicates from it (docs/09 §14.17), so
@@ -39,6 +42,11 @@ signal transaction_committed(event: Dictionary)
 const ENTITY_KIND_ITEM: String = "item"
 const ENTITY_KIND_INVENTORY: String = "inventory"
 const SLOT_PREFIX: String = "slot_"
+## {item_instance_id (the item that lay in the world), inventory_id,
+##  slot_id (where that instance is carried now; "" = it merged away
+##  entirely and no longer exists), from_cell_id, definition_id,
+##  quantity (units picked up), merged: Array of {item_instance_id, quantity}
+##  (carried stacks that grew, and by how many units; see try_pickup)}.
 const EVENT_ITEM_PICKED_UP: String = "item_picked_up"
 ## {inventory_id, item_instance_ids: Array of String (slot order), cell_id,
 ##  position: [x, y, z]}. Used by drop_item and by drop_all_items.
@@ -67,6 +75,14 @@ const REASON_BAD_QUANTITY: String = "bad_quantity"
 ## Position not finite or outside the play area.
 const REASON_BAD_POSITION: String = "bad_position"
 const REASON_BAD_CELL: String = "bad_cell"
+## Quantity argument of drop_item that means "the whole stack, however many
+## units the server knows it to hold" (P2-T15).
+const WHOLE_STACK: int = 0
+## {inventory_id, item_instance_id (the carried stack, which stays),
+##  definition_id, quantity (units put down), remaining_quantity,
+##  world_item_instance_id (the new instance lying in the world), cell_id,
+##  position: [x, y, z]}. A part of a stack was put down (drop_item, P2-T15).
+const EVENT_ITEM_UNITS_DROPPED: String = "item_units_dropped"
 ## A transfer names the same inventory as giver and receiver.
 const REASON_SAME_INVENTORY: String = "same_inventory"
 ## No new item id could be registered (never expected; nothing changed).
@@ -88,6 +104,10 @@ var _world_positions: Dictionary[String, Vector3] = {}
 var _inventories: Dictionary[String, int] = {}
 ## Which cell every world item in memory is in (kind ENTITY_KIND_ITEM).
 var _cell_index: WorldCellIndex
+## true: a picked-up stack joins the carried stacks of the same kind
+## (try_pickup). ServerWorld sets it from
+## GameplaySettings.merge_stacks_on_pickup.
+var merge_on_pickup: bool = true
 
 
 ## `world_half_extent_m` bounds drop positions (ServerWorld passes
@@ -139,7 +159,19 @@ func spawn_world_item(definition_id: String, quantity: int, cell_id: String, pos
 
 
 ## Moves a world item into `inventory_id` if the actor (at the server-known
-## `actor_position`) is within range and there is a free slot.
+## `actor_position`) is within range and the inventory can take all of it.
+## All or nothing: never a part of the stack.
+##
+## Where the units go (P2-T15; the same rule as transfer_item):
+##   1. into the carried stacks of the same definition with the same
+##      condition and quality, lowest slot number first, each up to the
+##      definition's max_stack (only while `merge_on_pickup` is true);
+##   2. what is left over stays ONE stack: the picked-up instance itself takes
+##      the first free slot and keeps its id.
+## If something is left over and there is no free slot the pickup is refused
+## (`inventory_full`). If nothing is left over, the picked-up instance is
+## deleted and its id retired (docs/14 §1): the event's `slot_id` is "" then
+## and `merged` says which carried stacks took its units.
 func try_pickup(inventory_id: String, item_instance_id: String, actor_position: Vector3) -> ActionResult:
 	if not _inventories.has(inventory_id):
 		return _reject(REASON_UNKNOWN_INVENTORY, inventory_id, item_instance_id)
@@ -150,30 +182,54 @@ func try_pickup(inventory_id: String, item_instance_id: String, actor_position: 
 		return _reject(REASON_NOT_IN_WORLD, inventory_id, item_instance_id)
 	if actor_position.distance_to(_world_positions[item_instance_id]) > _pickup_range_m:
 		return _reject(REASON_TOO_FAR, inventory_id, item_instance_id)
-	var slot_id: String = _first_free_slot(inventory_id)
-	if slot_id.is_empty():
-		return _reject(REASON_INVENTORY_FULL, inventory_id, item_instance_id)
+	# Plan: which carried stacks take how many units, and what is left.
+	var quantity: int = item.quantity
+	var fills: Array[Array] = _plan_fills(inventory_id, item, quantity) if merge_on_pickup else ([] as Array[Array])
+	var left: int = quantity - _filled_units(fills)
+	var slot_id: String = ""
+	if left > 0:
+		slot_id = _first_free_slot(inventory_id)
+		if slot_id.is_empty():
+			return _reject(REASON_INVENTORY_FULL, inventory_id, item_instance_id)
 
 	# Commit: every check passed, apply all changes together.
 	var from_cell: String = item.location_id
-	item.location_type = ItemInstance.LOCATION_INVENTORY
-	item.location_id = inventory_id
-	item.slot_id = slot_id
+	var merged: Array = _apply_fills(fills)
 	_world_positions.erase(item_instance_id)
 	_cell_index.remove(item_instance_id)
-	GameLogger.info("inventory", "item picked up", {"entity_id": item_instance_id, "inventory_id": inventory_id, "slot_id": slot_id})
+	if left > 0:
+		item.quantity = left
+		item.location_type = ItemInstance.LOCATION_INVENTORY
+		item.location_id = inventory_id
+		item.slot_id = slot_id
+	else:
+		_items.erase(item_instance_id)
+		if _registry.remove(item_instance_id) != OK:
+			GameLogger.error("inventory", "picked-up item was not registered", {"entity_id": item_instance_id, "inventory_id": inventory_id, "operation": "try_pickup"})
+	GameLogger.info("inventory", "item picked up", {"entity_id": item_instance_id, "inventory_id": inventory_id, "slot_id": slot_id, "quantity": quantity, "merged_stacks": merged.size()})
 	return _commit({
 		"event_type": EVENT_ITEM_PICKED_UP,
 		"item_instance_id": item_instance_id,
 		"inventory_id": inventory_id,
 		"slot_id": slot_id,
 		"from_cell_id": from_cell,
+		"definition_id": item.definition_id,
+		"quantity": quantity,
+		"merged": merged,
 	})
 
 
-## Moves one carried item (the whole stack) from `inventory_id` to the world
-## at `position` in `cell_id`. The caller supplies a server-known position.
-func drop_item(inventory_id: String, item_instance_id: String, cell_id: String, position: Vector3) -> ActionResult:
+## Moves units of one carried item from `inventory_id` to the world at
+## `position` in `cell_id`. The caller supplies a server-known position.
+##   - `quantity` WHOLE_STACK (the default) or exactly what the stack holds:
+##     the instance itself goes to the world and keeps its id (event
+##     `items_dropped`, P2-T2).
+##   - 1 <= `quantity` < the stack (P2-T15): the carried stack only gets
+##     smaller and the units become a NEW instance with a new id lying in
+##     the world, with the stack's condition and quality (event
+##     `item_units_dropped`). Two stacks never share an id.
+## Anything else is `bad_quantity`. The units are conserved either way.
+func drop_item(inventory_id: String, item_instance_id: String, cell_id: String, position: Vector3, quantity: int = WHOLE_STACK) -> ActionResult:
 	const OPERATION: String = "drop_item"
 	if not _inventories.has(inventory_id):
 		return _reject(REASON_UNKNOWN_INVENTORY, inventory_id, item_instance_id, OPERATION)
@@ -182,14 +238,46 @@ func drop_item(inventory_id: String, item_instance_id: String, cell_id: String, 
 		return _reject(REASON_UNKNOWN_ITEM, inventory_id, item_instance_id, OPERATION)
 	if not _is_carried_in(item, inventory_id):
 		return _reject(REASON_NOT_IN_INVENTORY, inventory_id, item_instance_id, OPERATION)
+	if quantity != WHOLE_STACK and (quantity < 1 or quantity > item.quantity):
+		return _reject(REASON_BAD_QUANTITY, inventory_id, item_instance_id, OPERATION)
 	var place_error: String = _validate_world_place(cell_id, position)
 	if not place_error.is_empty():
 		return _reject(place_error, inventory_id, item_instance_id, OPERATION)
+	if quantity == WHOLE_STACK or quantity == item.quantity:
+		# Commit: every check passed.
+		_move_to_world(item, cell_id, position)
+		GameLogger.info("inventory", "item dropped", {"entity_id": item_instance_id, "inventory_id": inventory_id, "cell_id": cell_id})
+		return _commit(_dropped_event(inventory_id, [item_instance_id], cell_id, position))
+	# A part of the stack. The one thing that could still fail is the new id:
+	# taken before anything changes.
+	var new_id: String = _ids.next_id(ENTITY_KIND_ITEM)
+	if new_id.is_empty() or _registry.register(new_id, ENTITY_KIND_ITEM) != OK:
+		GameLogger.error("inventory", "no id for a dropped part of a stack", {"entity_id": item_instance_id, "inventory_id": inventory_id, "operation": OPERATION})
+		return _reject(REASON_ID_UNAVAILABLE, inventory_id, item_instance_id, OPERATION)
 
 	# Commit: every check passed.
-	_move_to_world(item, cell_id, position)
-	GameLogger.info("inventory", "item dropped", {"entity_id": item_instance_id, "inventory_id": inventory_id, "cell_id": cell_id})
-	return _commit(_dropped_event(inventory_id, [item_instance_id], cell_id, position))
+	var remaining: int = item.quantity - quantity
+	item.quantity = remaining
+	var lying: ItemInstance = ItemInstance.new()
+	lying.item_instance_id = new_id
+	lying.definition_id = item.definition_id
+	lying.quantity = quantity
+	lying.condition = item.condition
+	lying.quality = item.quality
+	_items[new_id] = lying
+	_move_to_world(lying, cell_id, position)
+	GameLogger.info("inventory", "item units dropped", {"entity_id": item_instance_id, "inventory_id": inventory_id, "cell_id": cell_id, "quantity": quantity, "remaining": remaining, "world_item_id": new_id})
+	return _commit({
+		"event_type": EVENT_ITEM_UNITS_DROPPED,
+		"inventory_id": inventory_id,
+		"item_instance_id": item_instance_id,
+		"definition_id": item.definition_id,
+		"quantity": quantity,
+		"remaining_quantity": remaining,
+		"world_item_instance_id": new_id,
+		"cell_id": cell_id,
+		"position": [position.x, position.y, position.z],
+	})
 
 
 ## Moves every item carried in `inventory_id` to the world at `position`
@@ -287,22 +375,8 @@ func transfer_item(from_inventory_id: String, item_instance_id: String, to_inven
 		return _reject(REASON_SAME_INVENTORY, from_inventory_id, item_instance_id, OPERATION)
 
 	# Plan: which stacks of the receiver take how many units, and what is left.
-	var definition: ItemDefinition = _catalog.get_definition(item.definition_id)
-	var max_stack: int = definition.max_stack if definition != null else 0
-	var left: int = quantity
-	var fills: Array[Array] = []  # [ItemInstance, units]
-	# By slot number (items_in_inventory sorts slot ids as text: "slot_10"
-	# before "slot_2").
-	var stacks: Array[ItemInstance] = items_in_inventory(to_inventory_id)
-	stacks.sort_custom(func(a: ItemInstance, b: ItemInstance) -> bool: return slot_index_of(a.slot_id) < slot_index_of(b.slot_id))
-	for other: ItemInstance in stacks:
-		if left == 0:
-			break
-		if not _stacks_with(other, item) or other.quantity >= max_stack:
-			continue
-		var units: int = mini(max_stack - other.quantity, left)
-		fills.append([other, units])
-		left -= units
+	var fills: Array[Array] = _plan_fills(to_inventory_id, item, quantity)
+	var left: int = quantity - _filled_units(fills)
 	var free_slot: String = ""
 	if left > 0:
 		free_slot = _first_free_slot(to_inventory_id)
@@ -319,11 +393,7 @@ func transfer_item(from_inventory_id: String, item_instance_id: String, to_inven
 			return _reject(REASON_ID_UNAVAILABLE, to_inventory_id, item_instance_id, OPERATION)
 
 	# Commit: every check passed, apply all changes together.
-	var received: Array = []
-	for fill: Array in fills:
-		var stack: ItemInstance = fill[0]
-		stack.quantity += int(fill[1])
-		received.append({"item_instance_id": stack.item_instance_id, "quantity": int(fill[1])})
+	var received: Array = _apply_fills(fills)
 	var remaining: int = item.quantity - quantity
 	if not empties_stack:
 		item.quantity = remaining
@@ -652,6 +722,50 @@ func _stacks_with(stack: ItemInstance, incoming: ItemInstance) -> bool:
 		and is_equal_approx(stack.condition, incoming.condition)
 		and is_equal_approx(stack.quality, incoming.quality)
 	)
+
+
+## Plans where `quantity` units of `incoming` go among the stacks carried in
+## `inventory_id`: the stacks of the same kind (_stacks_with) that have room,
+## lowest slot number first, each up to the definition's max_stack. Returns
+## rows [ItemInstance, units]; the units no stack takes are
+## `quantity - _filled_units(rows)`. Changes nothing.
+func _plan_fills(inventory_id: String, incoming: ItemInstance, quantity: int) -> Array[Array]:
+	var definition: ItemDefinition = _catalog.get_definition(incoming.definition_id)
+	var max_stack: int = definition.max_stack if definition != null else 0
+	var left: int = quantity
+	var fills: Array[Array] = []
+	# By slot number (items_in_inventory sorts slot ids as text: "slot_10"
+	# before "slot_2").
+	var stacks: Array[ItemInstance] = items_in_inventory(inventory_id)
+	stacks.sort_custom(func(a: ItemInstance, b: ItemInstance) -> bool: return slot_index_of(a.slot_id) < slot_index_of(b.slot_id))
+	for stack: ItemInstance in stacks:
+		if left == 0:
+			break
+		if stack == incoming or not _stacks_with(stack, incoming) or stack.quantity >= max_stack:
+			continue
+		var units: int = mini(max_stack - stack.quantity, left)
+		fills.append([stack, units])
+		left -= units
+	return fills
+
+
+## Units a plan of _plan_fills puts into existing stacks.
+func _filled_units(fills: Array[Array]) -> int:
+	var total: int = 0
+	for fill: Array in fills:
+		total += int(fill[1])
+	return total
+
+
+## Applies a plan of _plan_fills. Returns [{item_instance_id, quantity}] of
+## the stacks that grew, in plan order.
+func _apply_fills(fills: Array[Array]) -> Array:
+	var grown: Array = []
+	for fill: Array in fills:
+		var stack: ItemInstance = fill[0]
+		stack.quantity += int(fill[1])
+		grown.append({"item_instance_id": stack.item_instance_id, "quantity": int(fill[1])})
+	return grown
 
 
 ## "" when an item may be put down at `position` in `cell_id`, else a reason.
