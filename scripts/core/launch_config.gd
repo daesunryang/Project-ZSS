@@ -18,6 +18,15 @@ const ARG_CLIENT: String = "--client"
 const ARG_LOG_LEVEL: String = "--log-level="
 const ARG_WORLD_ID: String = "--world-id="
 const ARG_RUN_FRAMES: String = "--run-frames="
+const ARG_RUN_SECONDS: String = "--run-seconds="
+const ARG_PORT: String = "--port="
+const ARG_CONNECT: String = "--connect="
+const ARG_PLAYER_KEY: String = "--player-key="
+const ARG_SAVE_ROOT: String = "--save-root="
+## Saves may only be redirected inside the user data directory.
+const SAVE_ROOT_PREFIX: String = "user://"
+const MIN_PORT: int = 1
+const MAX_PORT: int = 65535
 const MAX_WORLD_ID_LENGTH: int = 64
 const WORLD_ID_PATTERN: String = "^[a-z0-9_]+$"
 ## 0 means "run until stopped".
@@ -32,6 +41,18 @@ var log_level_override: String = ""
 var world_id_override: String = ""
 ## Number of main-loop frames before a graceful shutdown (smoke tests). 0 = forever.
 var run_frames: int = RUN_FOREVER
+## Real seconds before a graceful shutdown (multi-process smoke tests). 0 = forever.
+var run_seconds: float = 0.0
+## 0 means "use NetworkSettings.port".
+var port_override: int = 0
+## Client: server address to connect to ("" = stay offline).
+var connect_address: String = ""
+## Client: optional port given as --connect=host:port (0 = use port settings).
+var connect_port: int = 0
+## Client: PROVISIONAL identity key (no authentication, docs/15 P1-1).
+var player_key: String = ""
+## Server: save root override ("" = SaveSettings default).
+var save_root_override: String = ""
 ## Parse problems. A non-empty list means the launch must be aborted.
 var errors: PackedStringArray = []
 
@@ -65,6 +86,30 @@ static func parse(user_args: PackedStringArray, is_dedicated_build: bool) -> Lau
 				config.run_frames = int(frames_text)
 			else:
 				config.errors.append("invalid frame count '%s'" % frames_text)
+		elif arg.begins_with(ARG_RUN_SECONDS):
+			var seconds_text: String = arg.substr(ARG_RUN_SECONDS.length())
+			if seconds_text.is_valid_float() and float(seconds_text) > 0.0:
+				config.run_seconds = float(seconds_text)
+			else:
+				config.errors.append("invalid run seconds '%s'" % seconds_text)
+		elif arg.begins_with(ARG_PORT):
+			var port_text: String = arg.substr(ARG_PORT.length())
+			if is_valid_port_text(port_text):
+				config.port_override = int(port_text)
+			else:
+				config.errors.append("invalid port '%s'" % port_text)
+		elif arg.begins_with(ARG_CONNECT):
+			_parse_connect(config, arg.substr(ARG_CONNECT.length()))
+		elif arg.begins_with(ARG_PLAYER_KEY):
+			config.player_key = arg.substr(ARG_PLAYER_KEY.length())
+			if config.player_key.is_empty():
+				config.errors.append("empty player key")
+		elif arg.begins_with(ARG_SAVE_ROOT):
+			var root: String = arg.substr(ARG_SAVE_ROOT.length())
+			if root.begins_with(SAVE_ROOT_PREFIX) and not root.contains(".."):
+				config.save_root_override = root
+			else:
+				config.errors.append("save root must be inside user:// ('%s')" % root)
 		else:
 			config.errors.append("unknown argument '%s'" % arg)
 
@@ -81,7 +126,31 @@ static func parse(user_args: PackedStringArray, is_dedicated_build: bool) -> Lau
 	elif is_dedicated_build:
 		config.role = Role.SERVER
 		config.role_source = "feature_tag"
+	if config.role == Role.SERVER and not config.connect_address.is_empty():
+		config.errors.append("--connect is only valid for clients")
+	if not config.connect_address.is_empty() and config.player_key.is_empty():
+		config.errors.append("--connect requires --player-key")
 	return config
+
+
+static func _parse_connect(config: LaunchConfig, value: String) -> void:
+	var host: String = value
+	var separator: int = value.rfind(":")
+	if separator >= 0:
+		host = value.substr(0, separator)
+		var port_text: String = value.substr(separator + 1)
+		if not is_valid_port_text(port_text):
+			config.errors.append("invalid connect port '%s'" % port_text)
+			return
+		config.connect_port = int(port_text)
+	if host.is_empty():
+		config.errors.append("empty connect host")
+		return
+	config.connect_address = host
+
+
+static func is_valid_port_text(text: String) -> bool:
+	return text.is_valid_int() and int(text) >= MIN_PORT and int(text) <= MAX_PORT
 
 
 ## World ids are lowercase ASCII letters, digits and underscores (safe as a

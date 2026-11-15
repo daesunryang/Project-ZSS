@@ -3,14 +3,19 @@ extends RefCounted
 ## Static build/version information for logs, UI and diagnostics.
 ##
 ## The game version is read from ProjectSettings `application/config/version`
-## so there is exactly one place to bump it. Protocol and save-schema versions
-## are intentionally NOT defined here yet (Phase 1+ concerns, see docs/15).
+## so there is exactly one place to bump it.
+## PROTOCOL_VERSION is the network protocol revision checked in the join
+## handshake. PROVISIONAL (docs/15 P1-3): clients must match it exactly; the
+## game version is only logged. Save schema versions live with each saved
+## document type (ItemInstance/PlayerState/ServerWorld SCHEMA_VERSION).
 
 ## Engine version this project is pinned to (docs/00 ADR-001).
 const REQUIRED_ENGINE_MAJOR: int = 4
 const REQUIRED_ENGINE_MINOR: int = 7
 const REQUIRED_ENGINE_PATCH: int = 2
 const REQUIRED_ENGINE_STATUS: String = "stable"
+## Network protocol revision. Bump on any RPC signature/semantics change.
+const PROTOCOL_VERSION: int = 1
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

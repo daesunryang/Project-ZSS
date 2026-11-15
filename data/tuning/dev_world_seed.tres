@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="DevWorldSeed" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/services/world/dev_world_seed.gd" id="1_seed"]
+
+[resource]
+script = ExtResource("1_seed")
+item_definition_ids = PackedStringArray("dev_test_item")
+item_positions = PackedVector3Array(6, 0, 0)

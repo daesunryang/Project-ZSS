@@ -55,3 +55,25 @@ func test_world_id_validation() -> void:
 	assert_false(LaunchConfig.is_valid_world_id("Upper"))
 	assert_false(LaunchConfig.is_valid_world_id("a/b"))
 	assert_false(LaunchConfig.is_valid_world_id("x".repeat(LaunchConfig.MAX_WORLD_ID_LENGTH + 1)))
+
+
+func test_parses_network_arguments() -> void:
+	var args: PackedStringArray = ["--client", "--connect=127.0.0.1:25001", "--player-key=alice", "--port=24000"]
+	var config: LaunchConfig = LaunchConfig.parse(args, false)
+	assert_true(config.errors.is_empty(), ", ".join(config.errors))
+	assert_eq(config.connect_address, "127.0.0.1")
+	assert_eq(config.connect_port, 25001)
+	assert_eq(config.player_key, "alice")
+	assert_eq(config.port_override, 24000)
+	var server: LaunchConfig = LaunchConfig.parse(PackedStringArray(["--server", "--save-root=user://smoke"]), false)
+	assert_eq(server.save_root_override, "user://smoke")
+
+
+func test_rejects_bad_network_arguments() -> void:
+	assert_eq(LaunchConfig.parse(PackedStringArray(["--port=0"]), false).errors.size(), 1)
+	assert_eq(LaunchConfig.parse(PackedStringArray(["--port=70000"]), false).errors.size(), 1)
+	assert_eq(LaunchConfig.parse(PackedStringArray(["--connect=host:x", "--player-key=a"]), false).errors.size(), 1)
+	assert_eq(LaunchConfig.parse(PackedStringArray(["--connect=host"]), false).errors.size(), 1, "needs player key")
+	assert_eq(LaunchConfig.parse(PackedStringArray(["--server", "--connect=h", "--player-key=a"]), false).errors.size(), 1)
+	assert_eq(LaunchConfig.parse(PackedStringArray(["--save-root=/etc"]), false).errors.size(), 1)
+	assert_eq(LaunchConfig.parse(PackedStringArray(["--save-root=user://../x"]), false).errors.size(), 1)

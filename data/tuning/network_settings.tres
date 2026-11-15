@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="NetworkSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/services/multiplayer/network_settings.gd" id="1_net"]
+
+[resource]
+script = ExtResource("1_net")
+port = 24680
+bind_address = "*"
+max_players = 4
+handshake_timeout_sec = 5.0
+reject_disconnect_delay_sec = 0.25
+player_key_max_length = 64
+snapshot_rate_hz = 20.0
+move_intent_rate_per_sec = 60.0
+move_intent_burst = 30
+pickup_intent_rate_per_sec = 4.0
+pickup_intent_burst = 4
+move_input_timeout_sec = 0.5
+autosave_interval_sec = 60.0

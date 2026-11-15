@@ -10,6 +10,7 @@ const EXIT_BAD_ARGUMENTS: int = 2
 var _config: LaunchConfig = null
 var _bootstrap: GameBootstrap = null
 var _frames_run: int = 0
+var _seconds_run: float = 0.0
 var _quitting: bool = false
 
 
@@ -44,12 +45,16 @@ func _ready() -> void:
 		_quit(EXIT_BOOTSTRAP_FAILED)
 
 
-func _process(_delta: float) -> void:
-	if _quitting or _config == null or _config.run_frames == LaunchConfig.RUN_FOREVER:
+func _process(delta: float) -> void:
+	if _quitting or _config == null:
 		return
 	_frames_run += 1
-	if _frames_run >= _config.run_frames:
+	_seconds_run += delta
+	if _config.run_frames != LaunchConfig.RUN_FOREVER and _frames_run >= _config.run_frames:
 		GameLogger.info("main", "run frame limit reached, shutting down", {"frames": _frames_run, "role": _config.role_name()})
+		_quit(EXIT_OK)
+	elif _config.run_seconds > 0.0 and _seconds_run >= _config.run_seconds:
+		GameLogger.info("main", "run time limit reached, shutting down", {"seconds": snappedf(_seconds_run, 0.01), "role": _config.role_name()})
 		_quit(EXIT_OK)
 
 

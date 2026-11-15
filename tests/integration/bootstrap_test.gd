@@ -3,10 +3,16 @@ extends TestCase
 ## presentation; client builds the world plus the client view.
 
 var _bootstrap: GameBootstrap = null
+var _save_root: String = ""
+
+
+func _server_args() -> PackedStringArray:
+	return PackedStringArray(["--server", "--port=%d" % (26000 + randi() % 9000), "--save-root=" + _save_root])
 
 
 func before_each() -> void:
 	GameLogger.set_capture(true)
+	_save_root = "user://test_saves/bootstrap_%d" % Time.get_ticks_usec()
 	_bootstrap = GameBootstrap.new()
 	tree.root.add_child(_bootstrap)
 
@@ -16,11 +22,12 @@ func after_each() -> void:
 		_bootstrap.queue_free()
 		await next_frame()
 	_bootstrap = null
+	SaveService.remove_tree(_save_root)
 	GameLogger.set_capture(false)
 
 
 func test_server_session_has_world_and_no_presentation() -> void:
-	var config: LaunchConfig = LaunchConfig.parse(PackedStringArray(["--server"]), false)
+	var config: LaunchConfig = LaunchConfig.parse(_server_args(), false)
 	var result: Error = _bootstrap.start(config, AppSettings.load_or_default())
 	await next_frame()
 	assert_eq(result, OK)
@@ -32,6 +39,9 @@ func test_server_session_has_world_and_no_presentation() -> void:
 	assert_null(_bootstrap.get_client_view())
 	assert_eq(_count_nodes_of_class(_bootstrap, "Camera3D"), 0, "server must not create cameras")
 	assert_eq(_count_nodes_of_class(_bootstrap, "CanvasLayer"), 0, "server must not create UI")
+	assert_not_null(_bootstrap.get_network())
+	assert_true(_bootstrap.get_network().is_server())
+	assert_true(SaveService.new(_save_root).has_save("dev_empty_world"), "new world is saved immediately")
 
 
 func test_client_session_has_world_and_presentation() -> void:
@@ -43,10 +53,11 @@ func test_client_session_has_world_and_presentation() -> void:
 	assert_eq(_bootstrap.get_world().get_world_id(), "client_test_world")
 	assert_not_null(_bootstrap.get_client_view())
 	assert_eq(_count_nodes_of_class(_bootstrap, "Camera3D"), 1)
+	assert_null(_bootstrap.get_network(), "client without --connect stays offline")
 
 
 func test_start_twice_is_rejected() -> void:
-	var config: LaunchConfig = LaunchConfig.parse(PackedStringArray(["--server"]), false)
+	var config: LaunchConfig = LaunchConfig.parse(PackedStringArray(["--client"]), false)
 	var settings: AppSettings = AppSettings.load_or_default()
 	assert_eq(_bootstrap.start(config, settings), OK)
 	assert_eq(_bootstrap.start(config, settings), ERR_ALREADY_IN_USE)
