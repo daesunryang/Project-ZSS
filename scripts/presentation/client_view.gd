@@ -387,7 +387,7 @@ func _request_melee_attack() -> void:
 	_combat_module.request_melee_attack(_yaw)
 
 
-## A use key (food, drink, bandage): asks the server to use the first item of
+## A use key (food, drink, bandage, cure): asks the server to use the first item of
 ## that kind in the mirrored inventory. Only the item id is sent; the server
 ## decides whether and how it works.
 func _request_use(kind: ConsumeIntentPolicy.Kind) -> void:

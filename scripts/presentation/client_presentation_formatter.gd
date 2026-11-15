@@ -57,9 +57,10 @@ static func bleeding_wound_count(vitals: Dictionary) -> int:
 	return count
 
 
-## HUD lines about what the owner can treat (P2-T6): how many wounds bleed,
-## how many bandages are carried (all stacks of the inventory mirror) and the
-## key that uses one. Empty input (no owner mirror) produces no line.
+## HUD lines about what the owner can treat, one per kind of treatment
+## (P2-T6, P2-T7): how many wounds bleed and the own infection stage, how
+## many bandages / cures are carried (all stacks of the inventory mirror) and
+## the key that uses one. Empty input (no owner mirror) produces no line.
 static func build_treatment_lines(vitals: Dictionary, inventory: Array[Dictionary], catalog: ItemCatalog, settings: ClientPresentationSettings) -> PackedStringArray:
 	if vitals.is_empty():
 		return PackedStringArray()
@@ -69,6 +70,15 @@ static func build_treatment_lines(vitals: Dictionary, inventory: Array[Dictionar
 		"출혈 중 (%d곳)" % bleeding if bleeding > 0 else "출혈 없음",
 		ConsumeIntentPolicy.count_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.BANDAGE),
 		key_label(settings.bandage_key),
+	])
+	# P2-T7. The stage is shown as the server told it; whether a cure still
+	# works at that stage is the server's rule, not judged here.
+	var stage: String = str(vitals.get("infection_stage", ""))
+	var infected: bool = not stage.is_empty() and stage != InfectionState.STAGE_NAMES[InfectionState.Stage.NONE]
+	lines.append("%s | 치료제 %d개 [%s]" % [
+		"감염: %s" % _infection_stage_text(stage) if infected else "감염 없음",
+		ConsumeIntentPolicy.count_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.CURE),
+		key_label(settings.cure_key),
 	])
 	return lines
 
@@ -97,6 +107,8 @@ static func nothing_to_use_text(kind: ConsumeIntentPolicy.Kind) -> String:
 			return "마실 것이 없습니다"
 		ConsumeIntentPolicy.Kind.BANDAGE:
 			return "붕대가 없습니다"
+		ConsumeIntentPolicy.Kind.CURE:
+			return "치료제가 없습니다"
 	return "쓸 수 있는 것이 없습니다"
 
 

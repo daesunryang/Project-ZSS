@@ -21,11 +21,16 @@ extends Resource
 ## effect; a value of at least SurvivalSettings.max_wounds_per_player treats
 ## every bleeding wound. PROVISIONAL (docs/15 P2-140).
 @export_range(0, 10000) var treat_bleeding_wound_count: int = 0
+## Cure effect (P2-T7): one unit clears the user's infection while it is
+## still treatable. Up to which stage that is, is a server rule
+## (SurvivalSettings.infection_treatment_max_stage), not item data.
+## PROVISIONAL (docs/15 P2-146).
+@export var cures_infection: bool = false
 
 
-## True when using one unit has any effect (food, drink, bandage, ...).
+## True when using one unit has any effect (food, drink, bandage, cure).
 func is_consumable() -> bool:
-	return lowers_needs() or stops_bleeding()
+	return lowers_needs() or stops_bleeding() or cures_infection
 
 
 ## True when eating / drinking one unit lowers at least one need.

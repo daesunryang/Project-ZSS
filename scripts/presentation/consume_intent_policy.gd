@@ -1,18 +1,19 @@
 class_name ConsumeIntentPolicy
 extends RefCounted
-## Pure client-side choice of what a use key asks for (P2-T3, P2-T6). It
-## only picks an item id from the mirrored inventory; whether that item may
-## be used, and what it does, is decided by the server.
+## Pure client-side choice of what a use key asks for (P2-T3, P2-T6, P2-T7).
+## It only picks an item id from the mirrored inventory; whether that item
+## may be used, and what it does, is decided by the server.
 ##
 ## There is one key per kind of item (docs/15 P2-144), because one "first
-## usable item" key cannot choose between food, water and a bandage.
+## usable item" key cannot choose between food, water, a bandage and a cure.
 
 ## What a use key asks for. An item with several effects is of several kinds.
-enum Kind { FOOD, DRINK, BANDAGE }
+enum Kind { FOOD, DRINK, BANDAGE, CURE }
 
 
 ## True when `definition` is an item of `kind`: food lowers hunger, a drink
-## lowers thirst, a bandage stops bleeding. False for null.
+## lowers thirst, a bandage stops bleeding, a cure clears an infection. False
+## for null.
 static func is_kind(definition: ItemDefinition, kind: Kind) -> bool:
 	if definition == null:
 		return false
@@ -23,6 +24,8 @@ static func is_kind(definition: ItemDefinition, kind: Kind) -> bool:
 			return definition.consume_thirst_reduction > 0.0
 		Kind.BANDAGE:
 			return definition.stops_bleeding()
+		Kind.CURE:
+			return definition.cures_infection
 	return false
 
 

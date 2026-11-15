@@ -15,6 +15,7 @@ extends ServerSystem
 ##   check_stop_worst_bleeding(player_id, wound_count) -> String  (preflight)
 ##   stop_worst_bleeding(player_id, wound_count, source_id) -> ActionResult
 ##   apply_infection_exposure(player_id, InfectionState.Exposure, source_id) -> ActionResult
+##   check_infection_treatment(player_id) -> String   (preflight)
 ##   apply_infection_treatment(player_id, source_id) -> ActionResult
 ##   infection_stage(player_id) -> InfectionState.Stage
 ##   check_reduce_needs(player_id, hunger, thirst) -> String   (preflight)
@@ -407,17 +408,30 @@ func apply_infection_exposure(player_id: String, exposure: InfectionState.Exposu
 	return ActionResult.success(event)
 
 
-## Clears infection through the configured maximum treatable stage. Item,
-## quality and medical-skill checks are intentionally left to a later ticket.
-func apply_infection_treatment(player_id: String, source_id: String) -> ActionResult:
+## "" when apply_infection_treatment() for this player would succeed now,
+## otherwise its failure reason (unknown_player, player_dead, not_infected,
+## too_late). Changes nothing: callers that must commit something else
+## together with the treatment (ItemConsumption) check first.
+func check_infection_treatment(player_id: String) -> String:
 	var reason: String = _check_living(player_id)
+	if not reason.is_empty():
+		return reason
+	var infection: InfectionState = _vitals[player_id].infection
+	if not infection.is_infected():
+		return REASON_NOT_INFECTED
+	if infection.stage > _settings.infection_treatment_max_stage:
+		return REASON_TOO_LATE
+	return ""
+
+
+## Clears infection through the configured maximum treatable stage. A cure
+## item reaches it through ItemConsumption (P2-T7); quality and medical-skill
+## checks are intentionally left to a later ticket.
+func apply_infection_treatment(player_id: String, source_id: String) -> ActionResult:
+	var reason: String = check_infection_treatment(player_id)
 	if not reason.is_empty():
 		return ActionResult.failure(reason)
 	var vitals: PlayerVitals = _vitals[player_id]
-	if not vitals.infection.is_infected():
-		return ActionResult.failure(REASON_NOT_INFECTED)
-	if vitals.infection.stage > _settings.infection_treatment_max_stage:
-		return ActionResult.failure(REASON_TOO_LATE)
 	var previous: InfectionState.Stage = vitals.infection.stage
 	vitals.infection = InfectionState.new()
 	var event: Dictionary = {

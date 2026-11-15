@@ -14,15 +14,16 @@ extends NetModule
 ##   server -> owner   _rpc_inventory_item_changed(item:Dictionary /* ItemInstance */)   reliable, ch0
 ##
 ## Consume = use up one unit of a carried item (eat / drink, P2-T3; bandage,
-## P2-T6): the same shape as a drop request: a request id and the id of a
-## carried item, nothing else. There is no target, wound or effect argument:
-## the effect comes from the item definition on the server and is applied to
-## the requester (ItemConsumption). Checks, in order: joined, argument types,
-## request id >= 0, item id length, request rate (its own bucket), then the
-## rule (`player_dead`, `item_not_in_inventory`, `not_consumable`,
-## `not_bleeding`, ...). The result goes to the requester only. The smaller
-## stack / the vanished item reaches the owner through the replication below
-## and the effect (lower needs, a wound that no longer bleeds) through the
+## P2-T6; cure, P2-T7): the same shape as a drop request: a request id and
+## the id of a carried item, nothing else. There is no target, wound or
+## effect argument: the effect comes from the item definition on the server
+## and is applied to the requester (ItemConsumption). Checks, in order:
+## joined, argument types, request id >= 0, item id length, request rate (its
+## own bucket), then the rule (`player_dead`, `item_not_in_inventory`,
+## `not_consumable`, `not_bleeding`, `not_infected`, `too_late`, ...). The
+## result goes to the requester only. The smaller stack / the vanished item
+## reaches the owner through the replication below and the effect (lower
+## needs, a wound that no longer bleeds, a cleared infection) through the
 ## owner's survival events and snapshot; other players are told nothing
 ## about it. An accepted use is not saved on its own
 ## (InventoryNetSettings.save_after_consume, docs/15 P2-123).

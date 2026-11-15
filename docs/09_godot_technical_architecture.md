@@ -245,7 +245,7 @@ B3에서 `Wound.is_bleeding`과 `PlayerVitals.died_at_world_time`을 저장 상�
 
 B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragment 스키마를 v3으로 올렸다(v1/v2는 경과 시간 0으로 읽음). 서버는 접속 중이고 생존한 플레이어의 활성 월드 시간만 누적해 `LATENT → EARLY → PROGRESSING → SEVERE → TERMINAL → ZOMBIFIED`를 진행한다. 각 단계 시간과 감염 경로별 시간 배율은 `SurvivalSettings`에서 읽으며 감염 단계 경계를 B3의 구간 적분 경계에 포함한다. `ZOMBIFIED` 진입 즉시 원인 `infection`으로 사망시키고 플레이어 좀비는 만들지 않으며, 기존 리스폰이 감염을 해제한다(P2-T5부터는 감염으로 죽은 자리에 좀비가 생긴다, §14.20. 새 캐릭터는 감염 없이 시작한다, §14.19). 단계 변화는 `player_infection_stage_changed` 로그(`player_id`, `from`, `to`, `world_time`)로 남긴다.
 
-단계별 스태미나 회복 배율은 기존 욕구 배율과 곱하고, 단계별 체력 감소율은 출혈·굶주림·탈수 피해와 합산한다. 양수인 감염 체력 감소가 적용되는 동안에는 자연 회복을 허용하지 않는다. 치료 seam `apply_infection_treatment(player_id, source_id)`는 설정된 최대 단계 이하에서 감염을 해제하고 `player_infection_cured`를 반환·기록하며, 아이템·품질·의료 능력 판정은 후속 티켓 소유다. 읽기 전용 `infection_stage(player_id)`는 현재 단계를 반환한다. 임시 수치는 docs/15 P2-7/P2-8/P2-18/P2-19에 기록한다. 감염 복제는 §14.14(P2-N1c), 섭취는 §14.18(P2-T3: `reduce_needs`, `check_reduce_needs`), 붕대는 §14.21(P2-T6: `bleeding_wound_ids`, `check_stop_worst_bleeding`, `stop_worst_bleeding`. 지혈 seam `stop_bleeding`이 아이템과 연결됐다)에서 추가됐다. 수면은 아직 없다.
+단계별 스태미나 회복 배율은 기존 욕구 배율과 곱하고, 단계별 체력 감소율은 출혈·굶주림·탈수 피해와 합산한다. 양수인 감염 체력 감소가 적용되는 동안에는 자연 회복을 허용하지 않는다. 치료 seam `apply_infection_treatment(player_id, source_id)`는 설정된 최대 단계 이하에서 감염을 해제하고 `player_infection_cured`를 반환·기록하며, 아이템·품질·의료 능력 판정은 후속 티켓 소유다. 읽기 전용 `infection_stage(player_id)`는 현재 단계를 반환한다. 임시 수치는 docs/15 P2-7/P2-8/P2-18/P2-19에 기록한다. 감염 복제는 §14.14(P2-N1c), 섭취는 §14.18(P2-T3: `reduce_needs`, `check_reduce_needs`), 붕대는 §14.21(P2-T6: `bleeding_wound_ids`, `check_stop_worst_bleeding`, `stop_worst_bleeding`. 지혈 seam `stop_bleeding`이 아이템과 연결됐다), 치료제는 §14.22(P2-T7: `check_infection_treatment`. 치료 seam `apply_infection_treatment`이 아이템과 연결됐다. 품질·의료 능력 판정은 여전히 없다)에서 추가됐다. 수면은 아직 없다.
 
 P2-T1부터 이 절의 "월드 시간"은 달력 시간이고, 스태미나 회복·리스폰 대기·피해 이벤트 묶는 간격만 행동 시간(실제 초)이다. 설정 이름은 `stamina_regen_per_sec`, `respawn_delay_sec`, `survival_damage_event_interval_sec`로 바뀌었고 생존 fragment 스키마 v4가 `died_at_action_time`을 추가했다. 구간 적분이 두 축을 함께 다루는 방식은 §14.16.
 
@@ -699,7 +699,7 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 
 플레이어가 들고 있는 음식·물 아이템 한 단위를 소비하면 서버가 그 플레이어의 허기·갈증을 낮춘다. 임시 가정은 docs/15 §11 P2-120~P2-125.
 
-P2-T6부터 `ItemConsumption`은 아이템 정의의 사용 효과 전부를 적용하는 일반 규칙이다(§14.21: 지혈 효과, 사유 `not_bleeding`, 이벤트 필드 `bleeding_stopped_wound_ids`). 이 절의 먹기·마시기 규칙·검증·저장은 그대로이고, 아래 "클라이언트 표시"의 소비 키 하나는 종류별 키(음식 F, 물 G, 붕대 B)로 바뀌었다(§14.21이 우선).
+P2-T6부터 `ItemConsumption`은 아이템 정의의 사용 효과 전부를 적용하는 일반 규칙이다(§14.21: 지혈 효과, 사유 `not_bleeding`, 이벤트 필드 `bleeding_stopped_wound_ids`. §14.22: 치료 효과, 사유 `not_infected`·`too_late`, 이벤트 필드 `infection_cured_from`). 이 절의 먹기·마시기 규칙·검증·저장은 그대로이고, 아래 "클라이언트 표시"의 소비 키 하나는 종류별 키(음식 F, 물 G, 붕대 B, 치료제 V)로 바뀌었다(§14.21·§14.22가 우선).
 
 구성: `ItemDefinition`(소비 효과 필드), `SurvivalService.reduce_needs`(욕구를 낮추는 서버 전용 API), `ItemConsumption`(아이템 제거와 욕구 감소를 하나로 묶는 서버 규칙, `scripts/domain/survival/item_consumption.gd`), `InventoryNetModule`(소비 의도 RPC와 결과 응답 추가, §14.17), `DevWorldSeed`(수량 필드), 개발용 아이템 정의 2개, 클라이언트 소비 키와 인벤토리 HUD. `network_service.gd`는 수정하지 않았다.
 
@@ -891,3 +891,34 @@ P2-T6부터 `ItemConsumption`은 아이템 정의의 사용 효과 전부를 적
 클라이언트 표시(`scripts/presentation/`): 사용 키가 종류별로 나뉘었다. `ConsumeIntentPolicy.Kind`(FOOD/DRINK/BANDAGE)와 `first_item_id_of_kind(inventory, catalog, kind)`가 인벤토리 미러에서 그 종류의 첫 아이템을 고르고(P2-T3의 `first_consumable_item_id`를 대체), `count_of_kind`가 보유 수를 센다. 키는 `ClientPresentationSettings.consume_key`(음식, 기본 F. 이름은 P2-T3 그대로), `drink_key`(물, 기본 G), `bandage_key`(붕대, 기본 B)이고 `ClientInputActions.USE_ACTION_KINDS`가 액션과 종류를 잇는다. 세 키는 서로 달라야 한다(설정 검증). 생존 HUD 끝에 `ClientPresentationFormatter.build_treatment_lines`의 줄 "출혈 중 (N곳) | 붕대 M개 [B]"(출혈이 없으면 "출혈 없음")이 붙는다. 결과 문구는 "아이템 사용 승인/거부: 사유"로 바뀌었다.
 
 테스트: `tests/unit/bandage_test.gd`(심한 순서와 동률 규칙, `stop_worst_bleeding`의 성공·이벤트·거부 사유, 붕대 사용 뒤 출혈 피해가 멈춤, 정의의 상처 수만큼 지혈, 출혈이 없으면 거부되고 묶음이 그대로임, 죽은 플레이어 거부, 음식+붕대 효과 아이템, 정의 데이터와 검증, 기본 개발용 월드의 붕대, 저장 → 재생성 → 로드), `tests/integration/bandage_net_test.gd`(서버 1 + 클라이언트 2, 실제 ENet: 붕대를 쓰면 서버와 본인 미러의 상처 출혈 상태·인벤토리가 일치하고 다른 클라이언트는 아무것도 받지 않음, 출혈이 없을 때의 거부, 조작된 요청 13종(남의 붕대, 상처 ID를 아이템 ID로 보냄, 형식 오류)과 인자를 더 붙인 호출, 죽은 플레이어, 저장 방침과 서버 재시작), `tests/unit/client_presentation_test.gd`(종류별 첫 아이템 선택과 보유 수, 키 등록·검증, 출혈·붕대 HUD 줄).
+
+### 14.22 치료제(P2-T7, 사용자 결정 2026-11-15)
+
+플레이어가 들고 있는 치료제 한 단위를 쓰면 서버가 그 플레이어의 감염을 해제한다. 치료 가능한 단계까지만이다. §14.6의 서버 seam `apply_infection_treatment`을 아이템과 연결한 것이며 치료 규칙 자체(설정된 최대 단계까지 성공, `not_infected`, `too_late`)는 바꾸지 않았다. 임시 가정은 docs/15 §12.2 P2-146~P2-149.
+
+구성: `ItemDefinition.cures_infection`, `SurvivalService.check_infection_treatment`(사전 검사), `ItemConsumption`의 치료 효과(§14.21의 일반 규칙에 효과 하나 추가), 개발용 아이템 정의 `dev_cure`, 개발용 월드 배치, 클라이언트 치료제 키와 HUD 줄. **새 RPC 없음, 메시지 형식 변경 없음**(§14.18의 소비 의도 그대로. 결과 사유 코드 `not_infected`, `too_late`가 소비 결과에도 나올 수 있게 됐다).
+
+#### 데이터
+
+- `ItemDefinition.cures_infection`(bool, 기본 false): 한 단위가 감염을 해제하는 아이템. **어느 단계까지 듣는지는 아이템 데이터가 아니라 서버 규칙**(`SurvivalSettings.infection_treatment_max_stage`, 기본 `EARLY`)이다. 치료제마다 다른 단계·품질은 없다(docs/15 P2-146).
+- `is_consumable()`에 포함된다. 개발용 정의 `dev_cure`: 최대 스택 3. 개발용 월드에 2개 묶음 하나를 (−4, 0, 0)에 놓는다.
+
+#### 서버 규칙
+
+- `SurvivalService.check_infection_treatment(player_id) -> String`: `apply_infection_treatment`이 지금 성공하면 `""`, 아니면 그 실패 사유(`unknown_player`, `player_dead`, `not_infected`, `too_late`). 상태를 바꾸지 않는다. `apply_infection_treatment`은 이 검사를 쓰도록 정리했고 동작·이벤트(`player_infection_cured`: `player_id`, `source_id`, `from`, `world_time`)는 그대로다. 아이템이 일으킨 치료의 `source_id`는 그 아이템 인스턴스 ID다.
+- `ItemConsumption.try_consume`: 치료 효과는 "감염돼 있고 치료 가능한 단계"일 때만 적용된다. §14.21의 일반 규칙(적용되는 효과가 하나라도 있으면 승인, 없으면 거부·보존) 그대로라서, 치료제만 있는 아이템은 **감염되지 않았으면 `not_infected`, 단계가 지났으면 `too_late`로 거부되고 소비되지 않는다**. 검사 순서의 끝에 `not_infected`/`too_late`가 추가됐다(지혈과 치료 효과가 모두 있고 둘 다 적용되지 않으면 지혈 쪽 사유 `not_bleeding`이 먼저다).
+- 원자성은 §14.18·§14.21과 같다: 모든 조건을 먼저 검사한 뒤 `remove_player_item`(한 단위) → 적용되는 효과 순서로 확정한다. 거부된 요청은 아이템도 감염 상태도 바꾸지 않는다(단위 테스트: 거부 경우마다 인벤토리 스냅샷과 생존 fragment가 그대로이고 트랜잭션·이벤트가 0개).
+- 해제는 기존 규칙대로 감염 상태를 통째로 초기화한다(단계·경과 시간·노출 경로·감염원 모두). 면역은 없다: 다시 노출되면 다시 감염될 수 있고 단계 시계는 처음부터다. 이미 받은 감염 체력 감소는 돌려주지 않는다.
+- 대상은 항상 아이템을 쓰는 플레이어 자신이다(요청에 대상 인자가 없다).
+- 성공 이벤트 `item_consumed`에 `infection_cured_from: String`(해제된 단계 이름, 치료가 없었으면 `""`)이 추가됐다. 복제되지 않는다.
+
+#### 복제·정보 공개·저장
+
+- 복제는 기존 경로 그대로다. 인벤토리 변화는 `InventoryNet`이 소유자에게만(§14.17), 치료는 §14.14의 본인 전용 이벤트 `player_infection_cured`와 본인 스냅샷(`infection_stage: "none"`)으로 간다. 결과는 요청자에게만 간다.
+- 정보 공개(ADR-009): 감염 여부와 단계는 본인만 안다. 다른 플레이어는 감염도, 치료제 사용도, 거부 사유도 받지 않는다(테스트: 감염 → 치료 → 거부가 일어나는 동안 다른 클라이언트의 생존 이벤트 0개·생존 미러 변경 알림 0회·결과 0개·인벤토리 메시지 0개, 이벤트 기록에 감염 관련 단어 없음).
+- 거부 사유와 정보: 요청자가 거부 사유로 알게 되는 것은 **자기 자신의** 감염 상태뿐이고, 그것은 이미 본인 HUD에 나오는 정보다(잠복기에도 본인은 감염 단계를 받는다, §14.14). 그래서 지금 설계에서는 "감염되지 않았으면 소비 없이 거부"가 새 정보를 주지 않는다. 다만 이후 "잠복기에는 본인도 감염 여부를 모른다"로 바뀐다면, 이 규칙은 치료제를 눌러 보는 것만으로 감염 여부를 알아내는 수단이 된다(거부 = 비감염). 그때는 "감염과 무관하게 소비된다"로 바꿔야 한다. 제품 결정이라 docs/15 P2-147에 [사용자 확인 필요]로 적었다.
+- 저장: 먹기·붕대와 같다(§14.18). 사용만으로는 저장하지 않고 다음 저장에 들어간다. 감염 상태는 기존 생존 fragment라 스키마 변경이 없다.
+
+클라이언트 표시: `ConsumeIntentPolicy.Kind.CURE`, 키 `ClientPresentationSettings.cure_key`(기본 V), 액션 `ClientInputActions.USE_CURE`. 사용 키 넷(음식·물·붕대·치료제)은 서로 달라야 한다. 생존 HUD의 치료 줄이 둘이 됐다: "출혈 … | 붕대 M개 [B]"와 "감염: 단계 | 치료제 M개 [V]"(감염이 없으면 "감염 없음"). HUD는 "지금 치료가 듣는 단계인가"를 판단하지 않는다(서버 규칙이고 거부 사유 `too_late`로 알린다).
+
+테스트: `tests/unit/cure_test.gd`(사전 검사와 치료 규칙의 일치, 잠복·초기 단계에서 해제와 이벤트·한 트랜잭션·이후 진행 없음, 진행·중증·말기에서 거부되고 묶음과 감염이 그대로임, 비감염·남의 것·월드의 것·오프라인·죽은 플레이어 거부, 치료 가능 단계가 설정에서 옴, 재감염과 재치료, 지혈+치료 효과 아이템의 네 경우, 정의 데이터, 기본 개발용 월드의 치료제, 저장 → 재생성 → 로드), `tests/integration/cure_net_test.gd`(서버 1 + 클라이언트 2, 실제 ENet: 감염 → 치료제 → 서버와 본인 미러의 감염 단계가 none이고 다른 클라이언트는 아무것도 받지 않음, 비감염 거부, 남을 치료할 수 없음(남의 치료제, 플레이어 ID를 아이템 ID로 보냄, 인자를 더 붙인 호출), 너무 늦은 단계의 거부와 초기 단계의 승인, 저장 방침과 서버 재시작), `tests/unit/client_presentation_test.gd`(치료제 선택·키·검증, 감염·치료제 HUD 줄).

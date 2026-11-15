@@ -11,6 +11,7 @@ const ACTIONS: Array[StringName] = [
 	ClientInputActions.CONSUME,
 	ClientInputActions.DRINK,
 	ClientInputActions.USE_BANDAGE,
+	ClientInputActions.USE_CURE,
 ]
 
 
@@ -131,6 +132,12 @@ func _consume_catalog() -> ItemCatalog:
 	bandage.max_stack = 5
 	bandage.treat_bleeding_wound_count = 1
 	catalog.add(bandage)
+	var cure: ItemDefinition = ItemDefinition.new()
+	cure.definition_id = "hud_cure"
+	cure.display_name = "Cure"
+	cure.max_stack = 3
+	cure.cures_infection = true
+	catalog.add(cure)
 	return catalog
 
 
@@ -294,6 +301,65 @@ func test_treatment_hud_shows_bleeding_and_the_bandages_carried() -> void:
 	assert_true(ClientPresentationFormatter.build_treatment_lines({}, carried, catalog, settings).is_empty(), "no owner mirror, no line")
 	# The result text names the server's reason code (e.g. nothing bleeds).
 	assert_contains(ClientPresentationFormatter.format_consume_result(false, SurvivalService.REASON_NOT_BLEEDING), SurvivalService.REASON_NOT_BLEEDING)
+
+
+# ------------------------------------------------------------ P2-T7: cure key and infection HUD
+
+func test_cure_key_picks_a_cure_and_is_its_own_action() -> void:
+	var catalog: ItemCatalog = _consume_catalog()
+	var inventory: Array[Dictionary] = [
+		_carried("item_000001", "hud_bandage", 2),
+		_carried("item_000002", "hud_food", 1),
+		_carried("item_000003", "hud_cure", 1),
+		_carried("item_000004", "hud_cure", 2),
+	]
+	assert_eq(ConsumeIntentPolicy.first_item_id_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.CURE), "item_000003", "mirror order, skipping what is not a cure")
+	assert_eq(ConsumeIntentPolicy.count_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.CURE), 3)
+	assert_eq(ConsumeIntentPolicy.first_item_id_of_kind(inventory, catalog, ConsumeIntentPolicy.Kind.BANDAGE), "item_000001", "a cure is not a bandage")
+	assert_false(ConsumeIntentPolicy.is_kind(catalog.get_definition("hud_cure"), ConsumeIntentPolicy.Kind.FOOD))
+	assert_false(ConsumeIntentPolicy.is_kind(catalog.get_definition("hud_bandage"), ConsumeIntentPolicy.Kind.CURE))
+	var none: Array[Dictionary] = [_carried("item_000001", "hud_bandage", 2)]
+	assert_eq(ConsumeIntentPolicy.first_item_id_of_kind(none, catalog, ConsumeIntentPolicy.Kind.CURE), "")
+	assert_false(ClientPresentationFormatter.nothing_to_use_text(ConsumeIntentPolicy.Kind.CURE).is_empty())
+	var shipped: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
+	assert_eq(shipped.validate().size(), 0, "; ".join(shipped.validate()))
+	assert_eq(shipped.cure_key, KEY_V, "shipped cure key")
+	var camera: CameraSettings = CameraSettings.new()
+	var presentation: ClientPresentationSettings = ClientPresentationSettings.new()
+	presentation.cure_key = KEY_C
+	ClientInputActions.register(camera, presentation)
+	var events: Array[InputEvent] = InputMap.action_get_events(ClientInputActions.USE_CURE)
+	assert_eq(events.size(), 1)
+	assert_eq((events[0] as InputEventKey).physical_keycode, KEY_C)
+	assert_eq(ClientInputActions.USE_ACTION_KINDS[ClientInputActions.USE_CURE], ConsumeIntentPolicy.Kind.CURE)
+	var missing: ClientPresentationSettings = ClientPresentationSettings.new()
+	missing.cure_key = KEY_NONE
+	assert_eq(missing.validate().size(), 1, "; ".join(missing.validate()))
+	var shared: ClientPresentationSettings = ClientPresentationSettings.new()
+	shared.cure_key = shared.bandage_key
+	assert_eq(shared.validate().size(), 1, "; ".join(shared.validate()))
+
+
+func test_treatment_hud_shows_the_infection_and_the_cures_carried() -> void:
+	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
+	var catalog: ItemCatalog = _consume_catalog()
+	var carried: Array[Dictionary] = [
+		_carried("item_000001", "hud_cure", 2),
+		_carried("item_000002", "hud_bandage", 1),
+	]
+	var vitals: Dictionary = {"alive": true, "wounds": [], "infection_stage": "early"}
+	var lines: PackedStringArray = ClientPresentationFormatter.build_treatment_lines(vitals, carried, catalog, settings)
+	assert_eq(lines.size(), 2, "one line per kind of treatment")
+	assert_eq(lines[0], "출혈 없음 | 붕대 1개 [B]")
+	assert_eq(lines[1], "감염: 초기 | 치료제 2개 [V]", "the owner's stage, how many cures, which key")
+	vitals["infection_stage"] = "none"
+	var none: Array[Dictionary] = []
+	assert_eq(ClientPresentationFormatter.build_treatment_lines(vitals, none, catalog, settings)[1], "감염 없음 | 치료제 0개 [V]")
+	settings.cure_key = KEY_C
+	vitals["infection_stage"] = "severe"
+	assert_eq(ClientPresentationFormatter.build_treatment_lines(vitals, carried, catalog, settings)[1], "감염: 중증 | 치료제 2개 [C]", "the HUD does not judge whether it is too late: the server does")
+	for reason: String in [SurvivalService.REASON_NOT_INFECTED, SurvivalService.REASON_TOO_LATE]:
+		assert_contains(ClientPresentationFormatter.format_consume_result(false, reason), reason)
 
 
 # ------------------------------------------------------------ P2-T4: permanent death

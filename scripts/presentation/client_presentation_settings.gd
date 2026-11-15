@@ -24,12 +24,13 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(1, 20) var hud_event_line_count: int = 5
 @export var death_message: String = "사망했습니다. 이 캐릭터는 끝났습니다. 소지품은 죽은 자리에 남고, 잠시 뒤 새 캐릭터로 시작합니다."
 
-## Use keys (P2-T3, P2-T6; docs/15 P2-125, P2-144): each asks the server to
+## Use keys (P2-T3, P2-T6, P2-T7; docs/15 P2-125, P2-144): each asks the server to
 ## use the first item of its kind in the mirrored inventory. `consume_key` is
 ## the food key (it was the only use key before P2-T6).
 @export var consume_key: Key = KEY_F
 @export var drink_key: Key = KEY_G
 @export var bandage_key: Key = KEY_B
+@export var cure_key: Key = KEY_V
 ## Local flood guard between two use requests of any kind (the server has
 ## its own).
 @export_range(0.01, 5.0) var consume_min_interval_sec: float = 0.25
@@ -62,12 +63,12 @@ func validate() -> PackedStringArray:
 		errors.append("consume_result_duration_sec must be > 0")
 	if hud_inventory_line_count <= 0:
 		errors.append("hud_inventory_line_count must be > 0")
-	var other_use_keys: Dictionary[String, Key] = {"drink_key": drink_key, "bandage_key": bandage_key}
+	var other_use_keys: Dictionary[String, Key] = {"drink_key": drink_key, "bandage_key": bandage_key, "cure_key": cure_key}
 	for key_name: String in other_use_keys:
 		if other_use_keys[key_name] == KEY_NONE:
 			errors.append("%s must not be KEY_NONE" % key_name)
-	if not _are_distinct([consume_key, drink_key, bandage_key]):
-		errors.append("use keys (consume, drink, bandage) must be different keys")
+	if not _are_distinct([consume_key, drink_key, bandage_key, cure_key]):
+		errors.append("use keys (consume, drink, bandage, cure) must be different keys")
 	return errors
 
 
