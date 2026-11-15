@@ -432,3 +432,43 @@ B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragmen
 프로토콜: RPC 2개와 join 조각이 추가됐지만 `BuildInfo.PROTOCOL_VERSION`은 이 티켓에서 올리지 않았다. 같은 묶음의 다른 N1 티켓과 함께 조정자가 한 번에 올린다.
 
 테스트: `tests/integration/zombie_net_test.gd`(서버 1 + 클라이언트 1~2, 실제 localhost ENet: 추격·공격 중 미러 수렴과 이벤트 순서, 늦은 접속, 개발용 좀비 12마리 join, 비공개 필드, 사망·제거, 오래된/위조/잘못된 페이로드, RPC 채널 설정), `tests/integration/zombie_net_state_test.gd`(네트워크 없이 미러·wire 형식: join 조각, tick 폐기, 이벤트 적용, 순번, 잘못된 페이로드, 한도, 메시지 크기).
+
+### 14.14 생존 상태 네트워크 복제(P2-N1c)
+
+`SurvivalNetModule`(노드 이름 `SurvivalNet`)은 `ServerComposition.install_net_modules`에서 서버와 모든 클라이언트에 같은 이름으로 설치한다. `NetworkService`는 수정하지 않으며 공개 seam만 쓴다. 방향은 서버→클라이언트뿐이고 세 RPC 모두 채널 0 reliable ordered다. 클라이언트 핸들러는 먼저 `network.is_from_server()`를 확인하며, 발신·타입·범위·공개 범위가 잘못된 DTO는 상태를 바꾸지 않고 경고 로그만 남긴다.
+
+| RPC | 수신자 | 페이로드 |
+|---|---|---|
+| `_rpc_survival_owner_snapshot(snapshot)` | 해당 플레이어 본인 | 아래 owner snapshot. 설정 주기마다 비교하고 변경된 경우에만 전송 |
+| `_rpc_survival_status(status)` | 접속 중 클라이언트 | `{player_id: String, alive: bool}`. 새 플레이어 접속 시 기존 미러 보강 |
+| `_rpc_survival_events(events)` | 이벤트 공개 범위에 따른 본인/타인 | 검증된 이벤트 Dictionary 배열. 한 서버 틱에 peer별로 묶어 전송 |
+
+접속 조각(`snapshot.modules.SurvivalNet`) 스키마 버전은 1이다.
+
+```text
+{
+  schema_version: 1,
+  self: <owner snapshot>,
+  players: [{player_id: String, alive: bool}, ...]  # 접속 중인 전 플레이어
+}
+
+owner snapshot = {
+  schema_version: 1, player_id: String, alive: bool,
+  health: float, stamina: float,
+  needs: {hunger: "good|caution|danger", thirst: ..., fatigue: ...},
+  wounds: [Wound.to_dict(), ...],
+  infection_stage: "none|latent|early|progressing|severe|terminal|zombified"
+}
+```
+
+공개 범위는 docs/15 P2-9를 따른다. `scope: "owner"` 이벤트는 대상 본인에게만 가며 체력 변화, 상처 상세, 지혈, 생존 피해, 욕구 범주, 감염/저항/단계 변화/치료를 포함할 수 있다. `scope: "public"`은 타인에게만 가며 아래 세 종류뿐이다.
+
+| 공개 이벤트 | 필드(`scope`, `event_type`, `player_id` 공통) |
+|---|---|
+| `player_wounded` | `body_part`, `wound_type`, `died`, `world_time` |
+| `player_died` | `world_time`(원인 제외: 감염 사망 노출 방지) |
+| `player_respawned` | `position: [x,y,z]`, `world_time` |
+
+타인용 DTO에는 체력·피해 수치, wound 상세/심각도, 욕구, 감염 여부·단계·노출·원인을 넣지 않는다. `SurvivalService.drain_events()`는 JSON-safe 이벤트를 발생 순서로 반환하고 비우며, 설정 상한을 넘으면 좀비/전투 큐와 같이 가장 오래된 것부터 버리고 `dropped_event_count`를 올린다. `apply_damage`의 기존 `player_wounded` ActionResult 계약은 유지한다.
+
+`ClientSurvivalState`는 권한 없는 순수 미러다. 공개 API는 `health()`, `stamina()`, `need_category(kind)`, `wounds()`, `infection_stage()`, `has_player(id)`, `is_alive(id)`, `last_respawn_position(id)`, `recent_events()`이며 변경 알림은 `changed`, `own_vitals_changed`, `player_alive_changed`, `event_received`, `player_respawned` 시그널이다. 최근 이벤트 목록은 설정된 개수만 보관한다. 수치는 `data/tuning/survival_net_settings.tres`와 `survival_settings.tres`에 있고 임시 결정은 docs/15 P2-70~P2-74다.

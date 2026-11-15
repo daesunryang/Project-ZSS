@@ -19,6 +19,7 @@ danger_movement_multiplier = 0.6
 stamina_regen_per_world_sec = 5.0
 wound_severity_reference_damage = 50.0
 max_wounds_per_player = 64
+max_pending_events = 256
 handling_penalty_per_severity = 0.5
 min_handling_multiplier = 0.25
 movement_penalty_per_severity = 0.5

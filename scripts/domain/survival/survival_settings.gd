@@ -30,6 +30,8 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(0.1, 10000.0) var wound_severity_reference_damage: float = 50.0
 ## Wounds kept per player; further wounds still deal damage but are not listed.
 @export_range(1, 1000) var max_wounds_per_player: int = 64
+## Undrained survival events kept for the network layer; oldest are dropped.
+@export_range(1, 1000000) var max_pending_events: int = 256
 ## Handling multiplier = 1 - penalty * sum(arm/hand severity), clamped to min.
 @export_range(0.0, 10.0) var handling_penalty_per_severity: float = 0.5
 @export_range(0.0, 1.0) var min_handling_multiplier: float = 0.25
@@ -109,6 +111,8 @@ func validate() -> PackedStringArray:
 		errors.append("wound_severity_reference_damage must be > 0")
 	if max_wounds_per_player < 1:
 		errors.append("max_wounds_per_player must be >= 1")
+	if max_pending_events < 1:
+		errors.append("survival max_pending_events must be >= 1")
 	for chance: float in [infection_chance_bite, infection_chance_scratch, infection_chance_blood]:
 		if chance < 0.0 or chance > 1.0:
 			errors.append("infection chances must be within [0, 1]")

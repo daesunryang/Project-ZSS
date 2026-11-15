@@ -14,6 +14,7 @@ extends ServerSystem
 ##   apply_infection_exposure(player_id, InfectionState.Exposure, source_id) -> ActionResult
 ##   apply_infection_treatment(player_id, source_id) -> ActionResult
 ##   infection_stage(player_id) -> InfectionState.Stage
+##   drain_events() -> Array[Dictionary]             (network read surface)
 ##
 ##   need_category(player_id, NeedKind.Kind) -> NeedKind.Category
 ##   worst_need_category(player_id) -> NeedKind.Category
@@ -34,6 +35,7 @@ const EVENT_PLAYER_INFECTED: String = "player_infected"
 const EVENT_INFECTION_RESISTED: String = "infection_exposure_resisted"
 const EVENT_PLAYER_INFECTION_STAGE_CHANGED: String = "player_infection_stage_changed"
 const EVENT_PLAYER_INFECTION_CURED: String = "player_infection_cured"
+const EVENT_NEED_CATEGORY_CHANGED: String = "need_category_changed"
 
 const REASON_UNKNOWN_PLAYER: String = "unknown_player"
 const REASON_PLAYER_DEAD: String = "player_dead"
@@ -60,6 +62,9 @@ var _ids: EntityIdGenerator
 var _clock: WorldClock
 var _vitals: Dictionary[String, PlayerVitals] = {}
 var _online: Dictionary[String, bool] = {}
+var _events: Array[Dictionary] = []
+## Events discarded because the configured pending queue was full.
+var dropped_event_count: int = 0
 
 
 func _init(settings: SurvivalSettings, ids: EntityIdGenerator, clock: WorldClock) -> void:
@@ -81,6 +86,13 @@ func has_player(player_id: String) -> bool:
 ## Read-only view of a player's vitals (null if unknown). Do not mutate.
 func get_vitals(player_id: String) -> PlayerVitals:
 	return _vitals.get(player_id, null)
+
+
+## Returns and clears queued JSON-safe events in occurrence order.
+func drain_events() -> Array[Dictionary]:
+	var drained: Array[Dictionary] = _events
+	_events = []
+	return drained
 
 
 func is_alive(player_id: String) -> bool:
@@ -162,14 +174,7 @@ func apply_damage(player_id: String, damage: DamageInput) -> ActionResult:
 		vitals.injuries.append(wound)
 	vitals.health = maxf(vitals.health - damage.amount, 0.0)
 	var died: bool = not vitals.is_alive()
-	if died:
-		_mark_dead(player_id, vitals, _clock.world_time_sec, CAUSE_COMBAT)
-	GameLogger.info("survival", "player wounded", {
-		"player_id": player_id, "entity_id": wound.wound_id, "source_id": damage.source_id,
-		"body_part": BodyPart.to_name(wound.body_part), "wound_type": Wound.type_name(wound.wound_type),
-		"damage": damage.amount, "health": vitals.health, "died": died,
-	})
-	return ActionResult.success({
+	var event: Dictionary = {
 		"event_type": EVENT_PLAYER_WOUNDED,
 		"player_id": player_id,
 		"source_id": damage.source_id,
@@ -178,7 +183,16 @@ func apply_damage(player_id: String, damage: DamageInput) -> ActionResult:
 		"died": died,
 		"world_time": _clock.world_time_sec,
 		"wound": wound.to_dict(),
+	}
+	_push_event(event)
+	if died:
+		_mark_dead(player_id, vitals, _clock.world_time_sec, CAUSE_COMBAT)
+	GameLogger.info("survival", "player wounded", {
+		"player_id": player_id, "entity_id": wound.wound_id, "source_id": damage.source_id,
+		"body_part": BodyPart.to_name(wound.body_part), "wound_type": Wound.type_name(wound.wound_type),
+		"damage": damage.amount, "health": vitals.health, "died": died,
 	})
+	return ActionResult.success(event)
 
 
 ## Stops one recorded wound from bleeding. Medical-item consumption is owned
@@ -203,6 +217,7 @@ func stop_bleeding(player_id: String, wound_id: String) -> ActionResult:
 		"wound_id": wound_id,
 		"world_time": _clock.world_time_sec,
 	}
+	_push_event(event)
 	GameLogger.info("survival", "player bleeding stopped", event)
 	return ActionResult.success(event)
 
@@ -239,6 +254,7 @@ func apply_infection_exposure(player_id: String, exposure: InfectionState.Exposu
 		vitals.infection.stage_entered_at_world_time = _clock.world_time_sec
 		vitals.infection.stage_elapsed_world_sec = 0.0
 		GameLogger.info("survival", "player infected", {"player_id": player_id, "source_id": source_id, "exposure": event["exposure"]})
+	_push_event(event)
 	return ActionResult.success(event)
 
 
@@ -262,6 +278,7 @@ func apply_infection_treatment(player_id: String, source_id: String) -> ActionRe
 		"from": InfectionState.stage_name(previous),
 		"world_time": _clock.world_time_sec,
 	}
+	_push_event(event)
 	GameLogger.info("survival", "player infection cured", event)
 	return ActionResult.success(event)
 
@@ -382,14 +399,16 @@ func _advance_living(player_id: String, vitals: PlayerVitals, elapsed: float, st
 		_heal_wounds(vitals, recovery_duration)
 	if total_damage > 0.0:
 		vitals.health = maxf(vitals.health - total_damage, 0.0)
-		GameLogger.info("survival", "player survival damage", {
+		var event: Dictionary = {
 			"event_type": EVENT_PLAYER_SURVIVAL_DAMAGE,
 			"player_id": player_id,
 			"cause": _survival_damage_cause(vitals, elapsed, bleeding_damage, starvation_damage, dehydration_damage, infection_damage),
 			"damage": total_damage,
 			"health_after": vitals.health,
 			"world_time": start_time + elapsed,
-		})
+		}
+		_push_event(event)
+		GameLogger.info("survival", "player survival damage", event)
 	var stamina_recovery: float = _stamina_recovery(vitals, elapsed)
 	if stamina_recovery > 0.0:
 		vitals.stamina = minf(vitals.stamina + stamina_recovery, _settings.max_stamina)
@@ -556,18 +575,21 @@ func _advance_infection_stage(player_id: String, vitals: PlayerVitals, world_tim
 		"to": InfectionState.stage_name(vitals.infection.stage),
 		"world_time": world_time,
 	}
+	_push_event(event)
 	GameLogger.info("survival", "player infection stage changed", event)
 
 
 func _mark_dead(player_id: String, vitals: PlayerVitals, world_time: float, cause: String) -> void:
 	vitals.health = 0.0
 	vitals.died_at_world_time = world_time
-	GameLogger.info("survival", "player died", {
+	var event: Dictionary = {
 		"event_type": EVENT_PLAYER_DIED,
 		"player_id": player_id,
 		"cause": cause,
 		"world_time": world_time,
-	})
+	}
+	_push_event(event)
+	GameLogger.info("survival", "player died", event)
 
 
 func _respawn(world: ServerWorld, player_id: String, vitals: PlayerVitals, world_time: float) -> bool:
@@ -582,11 +604,15 @@ func _respawn(world: ServerWorld, player_id: String, vitals: PlayerVitals, world
 	vitals.injuries.clear()
 	vitals.infection = InfectionState.new()
 	vitals.died_at_world_time = PlayerVitals.NOT_DEAD_TIME
-	GameLogger.info("survival", "player respawned", {
+	var state: PlayerState = world.get_player(player_id)
+	var event: Dictionary = {
 		"event_type": EVENT_PLAYER_RESPAWNED,
 		"player_id": player_id,
+		"position": [state.position.x, state.position.y, state.position.z],
 		"world_time": world_time,
-	})
+	}
+	_push_event(event)
+	GameLogger.info("survival", "player respawned", event)
 	return true
 
 ## Raises each need by rate * world_delta (clamped to need_max) and logs
@@ -599,10 +625,14 @@ func _advance_needs(player_id: String, vitals: PlayerVitals, world_delta: float)
 		vitals.set(NeedKind.kind_name(kind), raised)
 		var after: NeedKind.Category = need_category(player_id, kind)
 		if after != before:
-			GameLogger.info("survival", "need category changed", {
+			var event: Dictionary = {
+				"event_type": EVENT_NEED_CATEGORY_CHANGED,
 				"player_id": player_id, "need": NeedKind.kind_name(kind),
 				"category": NeedKind.category_name(after), "value": raised,
-			})
+				"world_time": _clock.world_time_sec,
+			}
+			_push_event(event)
+			GameLogger.info("survival", "need category changed", event)
 
 
 func _need_value(vitals: PlayerVitals, kind: NeedKind.Kind) -> float:
@@ -634,3 +664,10 @@ func _wound_multiplier(player_id: String, handling: bool, penalty: float, minimu
 
 func _seed_for(player_id: String) -> int:
 	return ("%d:%s" % [_settings.rng_seed, player_id]).hash()
+
+
+func _push_event(event: Dictionary) -> void:
+	_events.append(event.duplicate(true))
+	while _events.size() > _settings.max_pending_events:
+		_events.pop_front()
+		dropped_event_count += 1

@@ -12,6 +12,8 @@ var clock: WorldClockSettings
 var dev_seed: DevWorldSeed
 ## Phase 2-B (survival).
 var survival: SurvivalSettings
+## Phase 2-N1c (server -> client survival replication).
+var survival_net: SurvivalNetSettings
 ## Phase 2-A (noise, player movement noise, zombies).
 var noise: NoiseSettings
 var player_noise: PlayerNoiseSettings
@@ -31,6 +33,7 @@ static func from_defaults() -> CompositionConfig:
 	config.clock = WorldClockSettings.load_or_default()
 	config.dev_seed = DevWorldSeed.load_or_default()
 	config.survival = SurvivalSettings.load_or_default()
+	config.survival_net = SurvivalNetSettings.load_or_default()
 	config.noise = NoiseSettings.load_or_default()
 	config.player_noise = PlayerNoiseSettings.load_or_default()
 	config.zombie = ZombieSettings.load_or_default()
@@ -43,7 +46,7 @@ static func from_defaults() -> CompositionConfig:
 ## Collects validation errors of all contained settings.
 func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
-	if gameplay == null or catalog == null or clock == null or dev_seed == null or survival == null or noise == null or zombie == null or zombie_net == null:
+	if gameplay == null or catalog == null or clock == null or dev_seed == null or survival == null or survival_net == null or noise == null or zombie == null or zombie_net == null:
 		errors.append("composition config is incomplete")
 		return errors
 	if combat == null or melee_weapons == null:
@@ -56,6 +59,7 @@ func validate() -> PackedStringArray:
 	errors.append_array(clock.validate())
 	errors.append_array(dev_seed.validate())
 	errors.append_array(survival.validate())
+	errors.append_array(survival_net.validate())
 	errors.append_array(noise.validate())
 	errors.append_array(player_noise.validate())
 	errors.append_array(player_noise.validate_against(noise))

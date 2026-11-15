@@ -45,4 +45,10 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	if error != OK:
 		zombie_net.free()
 		return error
+	# Phase 2-N1c: survival owner detail + public observable facts.
+	var survival_net: SurvivalNetModule = SurvivalNetModule.new(config.survival_net, config.survival)
+	error = service.register_module(survival_net)
+	if error != OK:
+		survival_net.free()
+		return error
 	return OK

@@ -177,6 +177,22 @@ func test_corrupt_vitals_fragment_fails_restore() -> void:
 	assert_eq(errors.size(), 2, ", ".join(errors))
 
 
+func test_event_queue_preserves_order_drops_oldest_and_counts_overflow() -> void:
+	_settings.max_pending_events = 2
+	_settings.max_health = 1000.0
+	var world: ServerWorld = _world()
+	var survival: SurvivalService = _survival(world)
+	var alice: PlayerState = world.join("alice")
+	for source: String in ["first", "second", "third"]:
+		assert_true(survival.apply_damage(alice.player_id, DamageInput.create(source, BodyPart.Part.TORSO, Wound.Type.BRUISE, 1.0)).ok)
+	var events: Array[Dictionary] = survival.drain_events()
+	assert_eq(events.size(), 2)
+	assert_eq(events[0]["source_id"], "second", "oldest overflow entry was discarded")
+	assert_eq(events[1]["source_id"], "third", "remaining entries preserve occurrence order")
+	assert_eq(survival.dropped_event_count, 1)
+	assert_true(survival.drain_events().is_empty(), "drain clears the queue")
+
+
 func _config() -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
 	config.survival = _settings

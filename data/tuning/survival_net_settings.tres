@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="SurvivalNetSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/services/multiplayer/survival_net_settings.gd" id="1_survival_net"]
+
+[resource]
+script = ExtResource("1_survival_net")
+owner_snapshot_rate_hz = 2.0
+max_recent_events = 128
+max_player_id_length = 128
