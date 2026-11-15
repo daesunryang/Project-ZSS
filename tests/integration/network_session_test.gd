@@ -46,6 +46,7 @@ func test_two_clients_join_and_see_each_other() -> void:
 	var a_sees_b: bool = await _cluster.wait_until(func() -> bool: return a.client_state.players.has(b.client_state.local_player_id))
 	assert_true(a_sees_b, "alice is told about bob")
 	assert_eq(_cluster.server.joined_peer_count(), 2)
+	assert_false((_cluster.server.multiplayer as SceneMultiplayer).server_relay, "client-to-client relay is disabled")
 
 
 func test_wrong_protocol_and_bad_types_are_rejected() -> void:

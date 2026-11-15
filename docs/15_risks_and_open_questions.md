@@ -81,3 +81,32 @@ Phase 0 구현 중 문서에 근거가 없어 개발을 막지 않는 범위에�
 - export template를 사용한 실제 실행 파일 export(템플릿 미설치). `--export-pack`으로 만든 `.pck`를 에디터 바이너리로 실행하는 것까지만 확인.
 - dedicated server export 시 `dedicated_server` feature tag에 의한 자동 서버 역할 선택(단위 테스트로 파서 로직만 검증).
 - Windows 환경에서의 실행.
+
+## 5. Phase 1 네트워크/플레이어 임시 가정 (PROVISIONAL)
+
+Phase 1 구현에서 문서에 근거가 없어 **조정 가능한 설정값/인터페이스로만** 둔 사항이다. 모두 확정이 아니다.
+
+| # | 항목 | 임시 가정(현재 구현) | 결정 필요 사항 |
+|---|---|---|---|
+| P1-1 | 플레이어 식별/인증 | 인증·계정 없음. 클라이언트가 `--player-key=<영숫자_- 1~64자>`를 보내고 서버가 `player_key → player_id`로 같은 플레이어를 찾는다. 키를 알면 누구나 그 플레이어로 접속할 수 있다(보안 없음). 키는 저장 데이터(world_state.json, players/*.json)에 평문으로 남는다. | 인증 방식(서버 암호, 토큰, 플랫폼 계정 등)과 신원 저장 방식. docs/00 §8 "서버 목록/초대/암호/관리 도구"와 연동. |
+| P1-2 | 엔티티 ID 형식 | `<kind>_<6자리 이상 순번>`(예: `item_000042`), 다음 순번과 삭제 ID tombstone을 world_state에 저장. | UUID 전환 여부(docs/14 §1은 "UUID 또는 안정적인 문자열 ID"). 여러 서버/월드 병합 계획이 있으면 UUID 권장. |
+| P1-3 | 프로토콜/게임/저장 버전 관계 | `BuildInfo.PROTOCOL_VERSION`(=1)이 정확히 일치해야 접속 허용. 게임 버전(`0.0.1`)은 로그만 남긴다. 저장 문서는 종류별 `schema_version`(item/player/world=1, manifest=1). | 버전 호환 정책(하위 호환 허용 범위, 업데이트 강제 방식). |
+| P1-4 | 포트/인원/바인드 | `data/tuning/network_settings.tres`: port 24680, max_players 4(docs/00 초기 1~4 검증 목표), bind `*`, ENet 연결 여유분 +2(가득 찬 서버가 `server_full`을 응답하기 위함). `--port=`로 덮어쓰기 가능. | 기본 포트, 최대 인원, 서버 권장 사양. |
+| P1-5 | 핸드셰이크/거절 | 접속 후 5초 안에 join 요청이 없으면 `handshake_timeout`, 거절 사유 전송 후 0.25초 뒤 연결 종료. 거절 코드: `protocol_mismatch`, `bad_type`, `bad_player_key`, `server_full`, `player_key_in_use`. | 거절 사유 표시(UI)와 재시도 정책. |
+| P1-6 | 개발용 월드 내용 | 새 월드에는 `data/tuning/dev_world_seed.tres`의 `dev_test_item` 1개를 (6, 0, 0), 셀 `cell_0_0`에 배치. 셀 스트리밍 전까지 모든 월드 아이템의 location_id는 `cell_0_0`. | Phase 3 월드/루팅 생성 규칙으로 교체. |
+| P1-7 | 월드 아이템 위치 저장 | `schemas/item_instance.schema.json`에 좌표 필드가 없어, 월드에 놓인 아이템의 좌표는 world_state의 `inventory.world_item_positions`(item_id → [x,y,z])에 따로 저장. | 스키마에 위치(transform) 필드를 추가할지, 셀 파일로 옮길지(docs/10 §3 cells/). |
+| P1-8 | 이동 규칙/튜닝 | 충돌·물리 없음. 서버가 `move_speed_mps`=4.0, 월드 경계 ±250m(docs/00 500m×500m 테스트 맵)로 적분. 클라이언트는 방향(길이 ≤ 1)과 yaw(|yaw| ≤ 2π)만 전송. 입력 0.5초 무수신 시 정지(패킷 손실 대비), 정상 정지는 클라이언트가 ZERO 방향 전송. | 이동 속도/달리기/스태미나(Phase 2), 충돌·지형(Phase 3), 클라이언트 예측/보간(P1-4 이후). |
+| P1-9 | 메시지 채널/신뢰성 | ch0 reliable ordered: join/거절/입퇴장/줍기/인벤토리. ch1 unreliable ordered: 이동 의도, 위치 스냅샷(20Hz, tick 번호로 오래된 것 폐기). docs/08 §7 "측정 후 선택"에 따라 측정 전 임시값. | 네트워크 프로파일링 후 채널/전송 모드/스냅샷 주기 확정. |
+| P1-10 | 요청 빈도 제한 | 토큰 버킷: 이동 60/s(버스트 30), 줍기 4/s(버스트 4). | 측정 후 조정. 반복 위반 peer 처리(경고/추방) 정책. |
+| P1-11 | 줍기 규칙 | 서버 위치 기준 거리 ≤ `pickup_range_m`(2.5m), 인벤토리 슬롯 20개(스택 단위), 먼저 승인된 요청만 성공. 무게/부피 없음. | 인벤토리 용량 모델(무게/부피/장비 슬롯), 상호작용 시간. |
+| P1-12 | 저장 시점/보존 | 새 월드 생성 시, 줍기 성공 직후, 플레이어 퇴장 시, 서버 종료 시, 60초 주기 autosave에 전체 월드를 저장. 이전 세대 백업 3개 보존. 저장 루트 `user://saves`(`--save-root=user://...`로 변경 가능). | 저장 주기와 데이터 손실 허용 범위(docs/10 §5: 테스트로 결정), 증분 저장 필요 여부. |
+| P1-13 | 저장 원자성 범위 | 파일별 임시 파일 → 검증 → 백업 → rename. 여러 파일 rename 도중 프로세스가 죽으면 파일 간 세대가 섞일 수 있고, 이 경우 직전 세대가 backups/에 남는다(자동 세대 일치 복구는 아직 없음). | manifest 기준 세대 일관성 검사/자동 롤백 도입 여부. |
+| P1-14 | 플레이어 상태 범위 | PlayerState는 player_id, player_key, position, yaw, inventory_id, last_saved_at_utc만 저장(docs/14의 health/needs/infection 등은 Phase 2). 월드 시간(WorldClock)이 없어 저장 시각은 UTC로 별도 필드. | WorldClock 도입 후 `last_saved_at`(월드 시간) 추가. |
+| P1-15 | 동시 접속 시 월드 시간 | 월드 시간 자체가 아직 없음(docs/00 "마지막 플레이어 퇴장 시 일시정지" 제안은 미구현). | WorldClock 티켓에서 결정. |
+
+### 5.1 Phase 1에서 검증하지 못한 항목
+
+- 실제 네트워크(다른 머신, 지연/손실/NAT) 환경. 모든 테스트는 localhost ENet.
+- 클라이언트 렌더링 창에서의 이동 표시와 입력(카메라/입력은 P1-4로 별도).
+- 장시간(soak) 서버 실행, 메모리/대역폭 측정, 4명 초과 부하.
+- 저장 도중 프로세스 강제 종료(kill -9) 시 복구 — 단위 테스트는 손상 파일 복구까지만 검증.

@@ -11,6 +11,8 @@ const REASON_BAD_PLAYER_KEY: String = "bad_player_key"
 const REASON_BAD_DIRECTION: String = "bad_direction"
 const REASON_BAD_YAW: String = "bad_yaw"
 const REASON_BAD_SEQUENCE: String = "bad_sequence"
+const REASON_BAD_ITEM_ID: String = "bad_item_id"
+const ENTITY_ID_MAX_LENGTH: int = 64
 ## Upper bound on |yaw| accepted from clients (radians; any facing is
 ## representable within one turn, larger values are treated as garbage).
 const MAX_ABS_YAW: float = TAU
@@ -42,4 +44,15 @@ static func validate_move(sequence: Variant, direction: Variant, yaw: Variant) -
 		return REASON_BAD_DIRECTION
 	if not is_finite(float(yaw)) or absf(float(yaw)) > MAX_ABS_YAW:
 		return REASON_BAD_YAW
+	return ""
+
+
+static func validate_pickup(request_id: Variant, item_instance_id: Variant) -> String:
+	if typeof(request_id) != TYPE_INT or typeof(item_instance_id) != TYPE_STRING:
+		return REASON_BAD_TYPE
+	if int(request_id) < 0:
+		return REASON_BAD_SEQUENCE
+	var id: String = str(item_instance_id)
+	if id.is_empty() or id.length() > ENTITY_ID_MAX_LENGTH:
+		return REASON_BAD_ITEM_ID
 	return ""

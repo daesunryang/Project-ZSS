@@ -113,6 +113,15 @@ func step_movement(delta: float, now_msec: int, input_timeout_msec: int) -> void
 		state.position = MovementRules.step(state.position, input["direction"], gameplay.move_speed_mps, delta, gameplay.world_half_extent_m)
 
 
+## Pickup by an online player, using the server-known position (the client
+## never supplies a position). Returns the InventoryService result.
+func try_pickup(player_id: String, item_instance_id: String) -> ActionResult:
+	if not _online.has(player_id):
+		return ActionResult.failure(REASON_NOT_ONLINE)
+	var state: PlayerState = _players[player_id]
+	return inventory.try_pickup(state.inventory_id, item_instance_id, state.position)
+
+
 ## Clamps a position into the playable square.
 func clamp_to_world(position: Vector3) -> Vector3:
 	var limit: float = gameplay.world_half_extent_m

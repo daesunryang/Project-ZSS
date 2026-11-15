@@ -17,6 +17,12 @@ extends Node
 ##   server -> client  _rpc_player_left(player_id:String)                                         reliable, ch0
 ##   client -> server  _rpc_move_intent(sequence:int, direction:Vector2, yaw:float)               unreliable_ordered, ch1
 ##   server -> client  _rpc_position_snapshot(tick:int, rows:Array[[player_id, Vector3, yaw]])    unreliable_ordered, ch1
+##   client -> server  _rpc_request_pickup(request_id:int, item_instance_id:String)              reliable, ch0
+##   server -> client  _rpc_pickup_result(request_id:int, ok:bool, reason:String)                 reliable, ch0
+##   server -> clients _rpc_world_item_removed(item_instance_id:String)                           reliable, ch0
+##   server -> owner   _rpc_inventory_item(item:Dictionary /* ItemInstance.to_dict() */)          reliable, ch0
+## Pickup: the server decides with its own player position; on success the
+## world is saved immediately (docs/10 §5 major transaction).
 ## Movement: clients send only an input direction (|d| <= 1) and facing; the
 ## server applies its own speed on the physics tick, clamps to the world and
 ## broadcasts positions. Clients never send positions. Input contract for the
@@ -34,6 +40,8 @@ signal server_disconnected
 ## Server and client: a player became visible / went away.
 signal player_joined(player_id: String)
 signal player_left(player_id: String)
+## Client: answer to one of this client's pickup requests.
+signal pickup_result(request_id: int, ok: bool, reason: String)
 
 enum Mode { NONE, SERVER, CLIENT }
 
@@ -59,6 +67,7 @@ var _peer_players: Dictionary[int, String] = {}
 var _kick_at_msec: Dictionary[int, int] = {}
 var _autosave_elapsed: float = 0.0
 var _move_limiter: RateLimiter = null
+var _pickup_limiter: RateLimiter = null
 var _snapshot_elapsed: float = 0.0
 var _snapshot_tick: int = 0
 ## Rejected intents per reason code (diagnostics and tests).
@@ -67,6 +76,7 @@ var _rejections: Dictionary[String, int] = {}
 var _player_key: String = ""
 var _auto_join: bool = true
 var _move_sequence: int = 0
+var _pickup_request_id: int = 0
 
 
 # ============================================================ lifecycle
@@ -79,6 +89,7 @@ func start_server(world: ServerWorld, persistence: WorldPersistence, settings: N
 	_world = world
 	_persistence = persistence
 	_move_limiter = RateLimiter.new(settings.move_intent_rate_per_sec, settings.move_intent_burst)
+	_pickup_limiter = RateLimiter.new(settings.pickup_intent_rate_per_sec, settings.pickup_intent_burst)
 	_peer = ENetMultiplayerPeer.new()
 	if settings.bind_address != "*":
 		_peer.set_bind_ip(settings.bind_address)
@@ -87,6 +98,13 @@ func start_server(world: ServerWorld, persistence: WorldPersistence, settings: N
 		GameLogger.error("net", "failed to start server", {"port": port, "error": error_string(error), "operation": "start_server"})
 		_peer = null
 		return error
+	# Clients must never reach each other directly: disable SceneMultiplayer
+	# relay so every message goes through server validation (CLAUDE.md §5).
+	# This also stops the engine from notifying peers that are already
+	# disconnecting.
+	var scene_multiplayer: SceneMultiplayer = multiplayer as SceneMultiplayer
+	if scene_multiplayer != null:
+		scene_multiplayer.server_relay = false
 	multiplayer.multiplayer_peer = _peer
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -202,6 +220,7 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	var player_id: String = _peer_players[peer_id]
 	_peer_players.erase(peer_id)
 	_move_limiter.forget(peer_id)
+	_pickup_limiter.forget(peer_id)
 	_world.leave(player_id)
 	_persist("player_left")
 	for other: int in _peer_players:
@@ -279,6 +298,40 @@ func _rpc_move_intent(sequence: Variant, direction: Variant, yaw: Variant) -> vo
 	reason = _world.set_move_input(player_id, int(sequence), direction as Vector2, float(yaw), now)
 	if not reason.is_empty():
 		_count_rejection(reason)  # stale sequences are normal on unreliable channels
+
+
+@rpc("any_peer", "call_remote", "reliable", 0)
+func _rpc_request_pickup(request_id: Variant, item_instance_id: Variant) -> void:
+	if _mode != Mode.SERVER:
+		return
+	var peer_id: int = multiplayer.get_remote_sender_id()
+	var player_id: String = _peer_players.get(peer_id, "")
+	if player_id.is_empty():
+		_reject_intent(peer_id, "pickup", NOT_JOINED)
+		return
+	var reason: String = IntentValidator.validate_pickup(request_id, item_instance_id)
+	if not reason.is_empty():
+		_reject_intent(peer_id, "pickup", reason, player_id)
+		if typeof(request_id) == TYPE_INT:
+			_rpc_pickup_result.rpc_id(peer_id, int(request_id), false, reason)
+		return
+	if not _pickup_limiter.allow(peer_id, Time.get_ticks_msec()):
+		_reject_intent(peer_id, "pickup", RATE_LIMITED, player_id)
+		_rpc_pickup_result.rpc_id(peer_id, int(request_id), false, RATE_LIMITED)
+		return
+	var item_id: String = str(item_instance_id)
+	var result: ActionResult = _world.try_pickup(player_id, item_id)
+	if not result.ok:
+		_count_rejection(result.reason)
+		_rpc_pickup_result.rpc_id(peer_id, int(request_id), false, result.reason)
+		return
+	_persist("item_picked_up")
+	_rpc_inventory_item.rpc_id(peer_id, _world.inventory.get_item(item_id).to_dict())
+	_rpc_pickup_result.rpc_id(peer_id, int(request_id), true, "")
+	for other: int in _peer_players:
+		if _can_send_to(other):
+			_rpc_world_item_removed.rpc_id(other, item_id)
+	GameLogger.info("net", "pickup committed", {"peer_id": peer_id, "player_id": player_id, "entity_id": item_id, "request_id": int(request_id)})
 
 
 func _broadcast_positions() -> void:
@@ -379,6 +432,20 @@ func send_raw_move_intent(sequence: Variant, direction: Variant, yaw: Variant) -
 		_rpc_move_intent.rpc_id(SERVER_PEER_ID, sequence, direction, yaw)
 
 
+## Asks the server to pick up a world item. Returns the request id that the
+## `pickup_result` signal will carry.
+func request_pickup(item_instance_id: String) -> int:
+	_pickup_request_id += 1
+	send_raw_pickup_request(_pickup_request_id, item_instance_id)
+	return _pickup_request_id
+
+
+## Sends an arbitrary pickup request (tests: malformed input via real RPC).
+func send_raw_pickup_request(request_id: Variant, item_instance_id: Variant) -> void:
+	if _mode == Mode.CLIENT and not client_state.local_player_id.is_empty():
+		_rpc_request_pickup.rpc_id(SERVER_PEER_ID, request_id, item_instance_id)
+
+
 func _is_from_server() -> bool:
 	return _mode == Mode.CLIENT and multiplayer.get_remote_sender_id() == SERVER_PEER_ID
 
@@ -421,3 +488,24 @@ func _rpc_position_snapshot(tick: Variant, rows: Variant) -> void:
 	if not _is_from_server() or typeof(tick) != TYPE_INT or typeof(rows) != TYPE_ARRAY:
 		return
 	client_state.apply_position_snapshot(int(tick), rows as Array)
+
+
+@rpc("authority", "call_remote", "reliable", 0)
+func _rpc_pickup_result(request_id: Variant, ok: Variant, reason: Variant) -> void:
+	if not _is_from_server() or typeof(request_id) != TYPE_INT or typeof(ok) != TYPE_BOOL or typeof(reason) != TYPE_STRING:
+		return
+	pickup_result.emit(int(request_id), bool(ok), str(reason))
+
+
+@rpc("authority", "call_remote", "reliable", 0)
+func _rpc_world_item_removed(item_instance_id: Variant) -> void:
+	if not _is_from_server() or typeof(item_instance_id) != TYPE_STRING:
+		return
+	client_state.apply_world_item_removed(str(item_instance_id))
+
+
+@rpc("authority", "call_remote", "reliable", 0)
+func _rpc_inventory_item(item: Variant) -> void:
+	if not _is_from_server() or typeof(item) != TYPE_DICTIONARY:
+		return
+	client_state.apply_inventory_item(item as Dictionary)

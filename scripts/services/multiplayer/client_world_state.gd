@@ -64,3 +64,29 @@ func apply_position_snapshot(tick: int, entries: Array) -> bool:
 		players[str(row[0])] = {"position": row[1], "yaw": row[2]}
 	changed.emit()
 	return true
+
+
+func apply_world_item_removed(item_instance_id: String) -> void:
+	world_items.erase(item_instance_id)
+	changed.emit()
+
+
+## Adds/replaces an item in the local inventory mirror (validated dict).
+func apply_inventory_item(item: Dictionary) -> bool:
+	if not ItemInstance.validate_dict(item).is_empty():
+		return false
+	for index: int in range(inventory.size()):
+		if inventory[index]["item_instance_id"] == item["item_instance_id"]:
+			inventory[index] = item
+			changed.emit()
+			return true
+	inventory.append(item)
+	changed.emit()
+	return true
+
+
+func has_inventory_item(item_instance_id: String) -> bool:
+	for entry: Dictionary in inventory:
+		if str(entry["item_instance_id"]) == item_instance_id:
+			return true
+	return false
