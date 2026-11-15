@@ -544,8 +544,9 @@ func _request_use(kind: ConsumeIntentPolicy.Kind) -> void:
 	if item_id.is_empty():
 		_show_consume_text(ClientPresentationFormatter.nothing_to_use_text(kind))
 		return
-	# P2-T12: with the modifier held, a treatment key means "on the player I
-	# am looking at". Only the item and that player's id are sent.
+	# P2-T12, P2-T13: with the modifier held, a use key (treatment, food or
+	# drink) means "on the player I am looking at". Only the item and that
+	# player's id are sent.
 	if ConsumeIntentPolicy.is_usable_on_others(kind) and Input.is_action_pressed(ClientInputActions.TREAT_OTHER):
 		var target_id: String = _treat_target_id()
 		if target_id.is_empty():

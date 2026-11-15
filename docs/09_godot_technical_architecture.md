@@ -1442,9 +1442,11 @@ row = {
 | 설정 | 기본값 | 뜻 |
 |---|---|---|
 | `GameplaySettings.treat_range_m` | 2.5 | 치료하는 플레이어와 대상 사이의 최대 거리(m). 서버가 가진 두 위치 사이의 거리이고 줍기 사거리와 같은 방식(3차원 거리, 경계 포함)이다 |
-| `GameplaySettings.allow_feeding_others` | false | 켜면 음식·물도 남에게 줄 수 있다(대상의 허기·갈증이 준다). 끄면 치료 효과(붕대·치료제)만 남에게 쓸 수 있다 |
+| `GameplaySettings.allow_feeding_others` | true (P2-T13, ADR-019. P2-T12에서는 false) | 켜면 음식·물도 남에게 줄 수 있다(대상의 허기·갈증이 준다). 끄면 치료 효과(붕대·치료제)만 남에게 쓸 수 있다 |
 
-`ItemDefinition.is_treatment()`: 지혈 효과나 치료 효과가 있는 아이템(붕대, 치료제). 남에게 쓸 수 있는 종류의 기준이다. 아이템 정의 데이터는 바뀌지 않았다.
+`ItemDefinition.is_treatment()`: 지혈 효과나 치료 효과가 있는 아이템(붕대, 치료제). `allow_feeding_others`가 꺼져 있을 때 남에게 쓸 수 있는 종류의 기준이다. 아이템 정의 데이터는 바뀌지 않았다.
+
+**음식·물을 남에게 주기(P2-T13, docs/00 ADR-019).** 사용자 결정(2026-11-15): "음식 물은 아이템 형식이라 남에게 줄 수 있게". 기본값을 켰을 뿐 서버 규칙·RPC·알림 형식은 P2-T12 그대로다(`PROTOCOL_VERSION` 8 유지). 주는 쪽의 한 단위가 줄고(`remove_player_item`) 받는 쪽의 허기·갈증이 `reduce_needs(target)`로 내려간다: 아이템이 받는 쪽 인벤토리로 옮겨 가지는 않는다. 검사 순서는 아래 표와 같고, 음식·물에는 대상 상태에 따른 거부(표의 12)가 없다: 자기가 먹을 때처럼 받는 쪽의 허기·갈증이 0이어도 수락되고 소비된다(§14.18, ADR-013). 그래서 음식·물로는 대상에 대해 알아낼 수 있는 것이 없다. 알림은 치료와 같다: 받는 쪽은 `{scope: "target", user_id, definition_id, ok: true, ...}`, 다른 접속자는 `{scope: "public", user_id, target_id, world_time}`(무엇을 줬는지 없음). 받는 쪽의 욕구 변화는 본인의 기존 생존 스냅샷으로만 간다. 테스트: `treat_other_test.gd::test_by_default_food_is_given_to_another_player_close_by`, `treat_other_net_test.gd::test_a_client_gives_food_and_water_to_another_player`.
 
 #### 서버 규칙(`ItemConsumption.try_use_on(world, user_id, item_instance_id, target_id) -> ActionResult`)
 
@@ -1458,7 +1460,7 @@ row = {
 | 4 | `player_resting` 등 | 사용자가 행동할 수 없음(`player_action_block_reason`: 자는 플레이어는 먼저 일어나야 한다). 엎드린 사용자는 쓸 수 있다 |
 | 5 | `unknown_item` / `item_not_in_inventory` | 그 아이템이 없음 / 사용자가 들고 있지 않음(남의 것, 월드의 것). 네트워크 계층은 둘을 `item_not_in_inventory` 하나로 알린다 |
 | 6 | `not_consumable` | 사용 효과가 없는 아이템 |
-| 7 | `not_usable_on_others` | 남에게 줄 수 있는 효과가 없음(음식·물, `allow_feeding_others`가 꺼져 있을 때) |
+| 7 | `not_usable_on_others` | 남에게 줄 수 있는 효과가 없음(`allow_feeding_others`를 끈 서버의 음식·물. 기본 설정에서는 사용 효과가 있는 아이템이면 모두 통과한다) |
 | 8 | `target_unavailable` | 대상이 월드에 없음: 모르는 ID, 오프라인, 캐릭터 없는 접속자. **셋을 한 사유로 합쳤다**(플레이어 ID가 존재하는지 떠볼 수 없게) |
 | 9 | `target_dead` | 대상이 죽음 |
 | 10 | `target_too_far` | 서버 위치 기준 거리 > `treat_range_m` |
@@ -1468,7 +1470,7 @@ row = {
 순서의 뜻: 사용자가 쓸 수 있는 아이템을 들고 있기 전에는 대상에 대해 아무것도 보지 않는다(5~7이 8보다 앞). 대상의 상태(12)는 가장 마지막, 곧 대상 바로 옆에서 치료를 시도한 경우에만 본다(10이 12보다 앞): 멀리 있는 플레이어에게 치료제를 "써 봐서" 감염 여부를 알아낼 수 없다. 죽음(9)과 거리(10)는 이미 공개된 사실이다.
 
 - **원자성**: 모든 조건을 먼저 검사한 뒤 사용자의 인벤토리에서 한 단위를 빼고(`remove_player_item`, 트랜잭션 하나) 대상에게 효과를 적용한다. 거부되면 아이템은 그대로 남는다(치료품은 낭비되지 않는다, §14.21과 같다).
-- **효과는 대상의 것, 아이템은 사용자의 것**: 붕대는 대상의 가장 심한 출혈 상처부터 지혈하고(`stop_worst_bleeding(target)`), 치료제는 대상의 감염을 해제한다(`apply_infection_treatment(target)`, 치료 가능 단계는 §14.22 그대로). 사용자 자신의 상처·감염은 건드리지 않는다. 남에게 쓸 때 먹기·마시기 효과는 `allow_feeding_others`가 켜져 있을 때만 적용된다.
+- **효과는 대상의 것, 아이템은 사용자의 것**: 붕대는 대상의 가장 심한 출혈 상처부터 지혈하고(`stop_worst_bleeding(target)`), 치료제는 대상의 감염을 해제한다(`apply_infection_treatment(target)`, 치료 가능 단계는 §14.22 그대로). 사용자 자신의 상처·감염은 건드리지 않는다. 남에게 쓸 때 먹기·마시기 효과는 `allow_feeding_others`가 켜져 있을 때만(기본 켬, P2-T13) 적용되고, 그때는 대상의 허기·갈증이 내려간다.
 - **대상의 동의는 없다**: 대상은 거부할 수 없다. 남에게 줄 수 있는 효과가 모두 이로운 것(지혈, 감염 해제, 설정 시 식사)뿐이라는 전제다(PvP 비활성, docs/00). 대상에게서 빼앗는 것은 없다(docs/15 P2-197).
 - **자는·엎드린 대상**: 치료할 수 있고, 치료받아도 깨지 않는다(자는 동료에게 붕대를 감아 줄 수 있다). 자세도 바뀌지 않는다.
 - **죽은 대상, 오프라인 대상, 캐릭터 없는 접속자**: 대상이 될 수 없다(`target_dead`, `target_unavailable`). 캐릭터 없는 접속자는 사용자도 될 수 없다(`not_online`).
@@ -1522,6 +1524,6 @@ row = {
 
 클라이언트 표면(`InventoryNetModule`): `request_use_on(item_instance_id, target_player_id) -> int`(요청 번호, join 전이면 `NO_REQUEST`), `signal use_on_result(request_id, ok, reason)`, `signal treatment_seen(notice)`, `recent_treatment_notices()`(최근 16개), `send_raw_use_on_request(...)`(테스트 전용).
 
-클라이언트 표시(`scripts/presentation/`): `TreatTargetPolicy.pick_target(local_player_id, players, excluded_ids, facing_yaw, range_m, half_angle_rad)`가 미러의 위치에서 "카메라가 바라보는 방향의 가장 가까운 다른 플레이어"를 고른다(XZ 평면, 사거리 `treat_target_range_m` 2.5m, 반각 `treat_target_half_angle_deg` 60도, 죽은 플레이어 제외, 거리가 같으면 ID가 작은 쪽). 순수 함수이고 고른 ID를 보낼 뿐이다: 실제로 치료할 수 있는지는 서버가 정한다. 남에게 쓰기는 **보조 키(`treat_other_modifier_key`, 기본 Shift)를 누른 채 붕대 키(B)나 치료제 키(V)**다. 보조 키 없이 누르면 지금까지처럼 자기에게 쓴다. 음식·물 키에는 남에게 쓰는 형태가 없다. 생존 HUD 끝에 "치료 대상: 이름 | 붕대 [Shift+B] 치료제 [Shift+V]" 또는 "치료 대상: 없음 (가까이서 바라보기)"가 붙는다(매 물리 프레임 후보를 다시 고르고 바뀌면 HUD를 갱신한다). 결과는 사용 결과 자리에 문장으로 표시하고("치료 거부: 상대에게 출혈이 없습니다" 등), 대상·제3자가 받는 알림은 이벤트 로그에 한 줄로 남긴다("영희이(가) 나에게 붕대 사용", "영희 → 민수 치료"). 화면 설명은 docs/11 §2.11.
+클라이언트 표시(`scripts/presentation/`): `TreatTargetPolicy.pick_target(local_player_id, players, excluded_ids, facing_yaw, range_m, half_angle_rad)`가 미러의 위치에서 "카메라가 바라보는 방향의 가장 가까운 다른 플레이어"를 고른다(XZ 평면, 사거리 `treat_target_range_m` 2.5m, 반각 `treat_target_half_angle_deg` 60도, 죽은 플레이어 제외, 거리가 같으면 ID가 작은 쪽). 순수 함수이고 고른 ID를 보낼 뿐이다: 실제로 치료할 수 있는지는 서버가 정한다. 남에게 쓰기는 **보조 키(`treat_other_modifier_key`, 기본 Shift)를 누른 채 붕대 키(B)나 치료제 키(V)**다. 보조 키 없이 누르면 지금까지처럼 자기에게 쓴다. P2-T13부터 음식 키(F)·물 키(G)도 보조 키와 함께 누르면 남에게 준다(`ConsumeIntentPolicy.is_usable_on_others`가 네 종류 모두 true). 생존 HUD 끝에 "줄 대상: 이름 | 음식 [Shift+F] 물 [Shift+G] 붕대 [Shift+B] 치료제 [Shift+V]" 또는 "줄 대상: 없음 (가까이서 바라보기)"가 붙는다(매 물리 프레임 후보를 다시 고르고 바뀌면 HUD를 갱신한다). 결과는 사용 결과 자리에 문장으로 표시하고("남에게 사용 승인", "남에게 사용 거부: 상대에게 출혈이 없습니다" 등), 대상·제3자가 받는 알림은 이벤트 로그에 한 줄로 남긴다("영희이(가) 나에게 붕대 사용", "영희 → 민수 돌봄"). 화면 설명은 docs/11 §2.11.
 
 테스트: `tests/unit/treat_other_test.gd`(설정·아이템 종류·대상 상태 사유 분류, 붕대로 남의 가장 심한 출혈을 지혈하고 자기 상처는 그대로임·이벤트·한 트랜잭션, 치료제의 성공·`not_infected`·`too_late`, 지혈+치료 아이템, 대상 검증(없는 ID, 좀비 ID, 오프라인, 사망), 캐릭터 없는 접속자는 대상도 사용자도 아님, 사거리 경계(정확히 사거리는 승인, 0.01m 밖은 거부)와 설정, 자는·엎드린 대상과 깨우지 않음·엎드린 사용자·자는 사용자, 사용자와 아이템 검증(남의 것, 월드의 것, 없는 ID, 플레이어 ID, 효과 없는 아이템, 오프라인·사망 사용자), 음식 불가와 설정 시 허용, 자기 사용과의 호환, 검사 순서, 거부마다 인벤토리 스냅샷·두 사람의 생존 fragment 불변과 트랜잭션·이벤트 0개), `tests/integration/treat_other_net_test.gd`(서버 1 + 클라이언트 3, 실제 ENet: A가 B에게 붕대 → 서버와 B 미러의 출혈 상태 일치, A 인벤토리 감소, A는 결과만(알림·생존 이벤트 0개), B는 대상 알림과 본인 지혈 이벤트, C는 공개 알림만(키 목록 고정, 사적 단어 없음, 생존 이벤트 0개) / 출혈이 없을 때의 거부와 보존, 그때도 B·C가 같은 알림을 받음 / 비감염 B에게 치료제 → `not_infected`·보존, 감염된 B → 완치, 너무 늦은 단계 → `too_late`, C의 미러 불변 / 자기 사용 / 남의 아이템·없는 아이템·음식·없는 대상·먼 대상·죽은 대상·오프라인 대상·죽은 사용자 / 조작된 요청 11종과 인자를 더 붙인 호출·클라이언트가 보낸 서버 메시지 / join 전 요청·빈도 초과(소비 의도와 버킷 공유) / RPC 구성·요청 검증·알림 검증 규칙), `tests/unit/treat_target_test.gd`(대상 후보 선택: 가장 가까운 플레이어, 사거리, 바라보는 방향과 원뿔 경계, 제외 목록, 동률, 잘못된 미러 행과 인자 / 키 등록·설정 검증 / HUD 줄, 결과 문장, 알림 문구). 고친 기존 테스트: `tests/integration/inventory_net_test.gd`의 RPC 목록에 새 RPC 셋 추가.

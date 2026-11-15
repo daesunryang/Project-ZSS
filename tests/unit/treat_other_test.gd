@@ -146,7 +146,8 @@ func test_shipped_settings_and_item_kinds() -> void:
 	var shipped: GameplaySettings = GameplaySettings.load_or_default()
 	assert_eq(shipped.validate().size(), 0, "; ".join(shipped.validate()))
 	assert_true(shipped.treat_range_m > 0.0, "a treatment needs the other player close by")
-	assert_false(shipped.allow_feeding_others, "food and drink are not given to others by default")
+	assert_true(shipped.allow_feeding_others, "food and drink can be given to others by default (P2-T13, ADR-019)")
+	assert_true(GameplaySettings.new().allow_feeding_others, "the script default agrees with the shipped resource")
 	for bad: float in [0.0, -1.0, NAN, INF]:
 		var broken: GameplaySettings = GameplaySettings.new()
 		broken.treat_range_m = bad
@@ -399,7 +400,8 @@ func test_who_can_treat_and_with_what() -> void:
 	assert_eq(_bleeding_count(world, bob), 1, "bob was never treated")
 
 
-func test_food_is_not_given_to_others_unless_the_setting_allows_it() -> void:
+func test_food_is_not_given_to_others_when_the_setting_forbids_it() -> void:
+	_gameplay.allow_feeding_others = false
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
 	var alice: PlayerState = world.join("alice")
@@ -421,6 +423,59 @@ func test_food_is_not_given_to_others_unless_the_setting_allows_it() -> void:
 	assert_eq(survival.get_vitals(alice.player_id).hunger, 50.0, "alice was not")
 	assert_true(absf(float(fed.event.get("hunger_reduced", 0.0)) - 30.0) < EPSILON)
 	assert_eq(_quantity(world, food), 2)
+
+
+## P2-T13 (user decision 2026-11-15, docs/00 ADR-019): with the default
+## settings food can be given to another player close by. The unit is the
+## giver's, the lower hunger is the receiver's.
+func test_by_default_food_is_given_to_another_player_close_by() -> void:
+	var world: ServerWorld = _world()
+	var survival: SurvivalService = _survival(world)
+	var alice: PlayerState = world.join("alice")
+	var bob: PlayerState = world.join("bob")
+	var carol: PlayerState = world.join("carol")
+	var food: String = _give(world, alice, FOOD, 4)
+	survival.get_vitals(alice.player_id).hunger = 80.0
+	survival.get_vitals(bob.player_id).hunger = 50.0
+	survival.drain_events()
+	var transactions: Array[Dictionary] = _transactions_of(world)
+
+	var fed: ActionResult = ItemConsumption.try_use_on(world, alice.player_id, food, bob.player_id)
+	assert_true(fed.ok, fed.reason)
+	assert_eq(fed.event.get("event_type", ""), ItemConsumption.EVENT_ITEM_USED_ON_PLAYER)
+	assert_eq(fed.event.get("player_id", ""), alice.player_id, "the giver")
+	assert_eq(fed.event.get("target_id", ""), bob.player_id, "the receiver")
+	assert_true(absf(float(fed.event.get("hunger_reduced", 0.0)) - 30.0) < EPSILON)
+	assert_eq(fed.event.get("bleeding_stopped_wound_ids", []), [], "food treats nothing")
+	assert_true(absf(survival.get_vitals(bob.player_id).hunger - 20.0) < EPSILON, "bob was fed: %f" % survival.get_vitals(bob.player_id).hunger)
+	assert_eq(survival.get_vitals(alice.player_id).hunger, 80.0, "the giver stays hungry")
+	assert_eq(_quantity(world, food), 3, "one unit left the giver's stack")
+	assert_eq(transactions.size(), 1, "one inventory transaction")
+	assert_eq(world.inventory.items_in_inventory(bob.inventory_id).size(), 0, "nothing entered bob's inventory: he was fed")
+
+	# Like eating oneself (ADR-013): a receiver who is not hungry still uses
+	# the unit up. Food says nothing about the receiver.
+	survival.get_vitals(bob.player_id).hunger = 0.0
+	var wasted: ActionResult = ItemConsumption.try_use_on(world, alice.player_id, food, bob.player_id)
+	assert_true(wasted.ok, wasted.reason)
+	assert_eq(survival.get_vitals(bob.player_id).hunger, 0.0)
+	assert_eq(_quantity(world, food), 2)
+
+	# The receiver must be in reach, alive and in the world; the food is kept.
+	bob.position = alice.position + Vector3(_gameplay.treat_range_m + 0.5, 0.0, 0.0)
+	_assert_refused(world, [alice, bob], alice, food, bob.player_id, ItemConsumption.REASON_TARGET_TOO_FAR, "food for a player out of reach")
+	bob.position = alice.position
+	_assert_refused(world, [alice, bob], alice, food, MISSING_PLAYER_ID, ItemConsumption.REASON_TARGET_UNAVAILABLE, "food for nobody")
+	assert_true(survival.apply_damage(carol.player_id, DamageInput.create(ZOMBIE, BodyPart.Part.TORSO, Wound.Type.BRUISE, LETHAL_DAMAGE)).ok)
+	_assert_refused(world, [alice, bob, carol], alice, food, carol.player_id, ItemConsumption.REASON_TARGET_DEAD, "food for the dead")
+	# A sleeping receiver is fed and sleeps on.
+	survival.get_vitals(bob.player_id).fatigue = 60.0
+	survival.get_vitals(bob.player_id).hunger = 40.0
+	assert_true(survival.start_rest(bob.player_id).ok, "bob lies down")
+	assert_true(ItemConsumption.try_use_on(world, alice.player_id, food, bob.player_id).ok)
+	assert_true(survival.is_resting(bob.player_id), "bob was not woken")
+	assert_true(absf(survival.get_vitals(bob.player_id).hunger - 10.0) < EPSILON)
+	assert_eq(_quantity(world, food), 1)
 
 
 func test_using_an_item_on_oneself_is_the_usual_use() -> void:

@@ -11,6 +11,10 @@ const NEVER: float = 1.0e9
 const BANDAGE: String = "t12n_bandage"
 const CURE: String = "t12n_cure"
 const FOOD: String = "t12n_food"
+const WATER: String = "t13n_water"
+const FOOD_HUNGER: float = 30.0
+const WATER_THIRST: float = 50.0
+const NEED_TOLERANCE: float = 0.01
 const STACK_MAX: int = 5
 const CELL: String = DevWorldSeed.DEV_CELL_ID
 ## Players spawn at the origin; these positions are within pickup range.
@@ -106,8 +110,13 @@ func _new_catalog() -> ItemCatalog:
 	var food: ItemDefinition = ItemDefinition.new()
 	food.definition_id = FOOD
 	food.max_stack = STACK_MAX
-	food.consume_hunger_reduction = 30.0
+	food.consume_hunger_reduction = FOOD_HUNGER
 	catalog.add(food)
+	var water: ItemDefinition = ItemDefinition.new()
+	water.definition_id = WATER
+	water.max_stack = STACK_MAX
+	water.consume_thirst_reduction = WATER_THIRST
+	catalog.add(water)
 	return catalog
 
 
@@ -439,6 +448,9 @@ func test_a_client_cures_another_player_and_learns_only_the_result() -> void:
 # ------------------------------------------------------------ 3. who can be treated
 
 func test_targets_that_cannot_be_treated_are_refused_and_the_item_is_kept() -> void:
+	# This server does not let players feed each other (the default does:
+	# P2-T13, see the feeding test below).
+	_config.gameplay.allow_feeding_others = false
 	assert_true(_start_server(), "server started")
 	var bandages: String = _spawn(BANDAGE, 3)
 	var food: String = _spawn(FOOD, 2, OTHER_ITEM_AT)
@@ -466,7 +478,7 @@ func test_targets_that_cannot_be_treated_are_refused_and_the_item_is_kept() -> v
 	# Not hers to use, nothing for others, nobody there.
 	assert_eq(await _use_on(a, bobs, bob_id), [false, InventoryService.REASON_NOT_IN_INVENTORY], "bob's own bandage")
 	assert_eq(await _use_on(a, "item_999999", bob_id), [false, InventoryService.REASON_NOT_IN_INVENTORY], "an id that does not exist looks the same")
-	assert_eq(await _use_on(a, food, bob_id), [false, ItemConsumption.REASON_NOT_USABLE_ON_OTHERS], "food is not given to others")
+	assert_eq(await _use_on(a, food, bob_id), [false, ItemConsumption.REASON_NOT_USABLE_ON_OTHERS], "food is not given to others when the setting is off")
 	assert_eq(await _use_on(a, bandages, MISSING_PLAYER_ID), [false, ItemConsumption.REASON_TARGET_UNAVAILABLE], "no such player")
 	# Too far: the server's positions decide, whatever the client believes.
 	_world.get_player(bob_id).position = FAR_AWAY
@@ -488,6 +500,101 @@ func test_targets_that_cannot_be_treated_are_refused_and_the_item_is_kept() -> v
 	_wound(a.client_state.local_player_id)
 	assert_true(_survival().apply_damage(bob_id, DamageInput.create("test", BodyPart.Part.TORSO, Wound.Type.BRUISE, LETHAL_DAMAGE)).ok)
 	assert_eq(await _use_on(b, bobs, a.client_state.local_player_id), [false, SurvivalService.REASON_PLAYER_DEAD], "a dead player treats nobody")
+
+
+# ------------------------------------------------------------ 3b. food and drink (P2-T13)
+
+## P2-T13 (user decision 2026-11-15, docs/00 ADR-019): with the default
+## settings a client gives food and water to another player. The unit leaves
+## the giver's inventory, the receiver's hunger / thirst drops, the receiver
+## is told who gave what and a bystander only that one tended to the other.
+func test_a_client_gives_food_and_water_to_another_player() -> void:
+	assert_true(_config.gameplay.allow_feeding_others, "the default lets players feed each other")
+	assert_true(_start_server(), "server started")
+	var food: String = _spawn(FOOD, 3)
+	var water: String = _spawn(WATER, 1, OTHER_ITEM_AT)
+	var clients: Array[NetworkService] = await _join_three()
+	if clients.is_empty():
+		return
+	var a: NetworkService = clients[0]
+	var b: NetworkService = clients[1]
+	var c: NetworkService = clients[2]
+	var alice_id: String = a.client_state.local_player_id
+	var bob_id: String = b.client_state.local_player_id
+	if not await _pick_up(a, [food, water]):
+		return
+	# Bob is hungry (caution) and very thirsty (danger); alice is hungry too.
+	_survival().get_vitals(bob_id).hunger = 60.0
+	_survival().get_vitals(bob_id).thirst = 80.0
+	_survival().get_vitals(alice_id).hunger = 60.0
+	assert_true(await _wait(func() -> bool: return _mirror(b).need_category("hunger") == "caution" and _mirror(b).need_category("thirst") == "danger"), "bob's mirror shows his needs")
+	assert_true(await _wait(func() -> bool: return _mirror(a).need_category("hunger") == "caution"), "alice's mirror shows hers")
+	await _settle()
+	var a_notices: Array[Dictionary] = _notices_of(a)
+	var b_notices: Array[Dictionary] = _notices_of(b)
+	var c_notices: Array[Dictionary] = _notices_of(c)
+	var a_events: Array[Dictionary] = _survival_events_of(a)
+	var c_events: Array[Dictionary] = _survival_events_of(c)
+	var b_inventory: Array[Array] = _inventory_signals_of(b)
+	var c_inventory: Array[Array] = _inventory_signals_of(c)
+	var b_results: Array[Array] = _use_on_results_of(b)
+	var c_results: Array[Array] = _use_on_results_of(c)
+
+	# Alice gives bob food: the item id and the receiver, nothing else.
+	assert_eq(await _use_on(a, food, bob_id), [true, ""])
+	assert_true(absf(_survival().get_vitals(bob_id).hunger - (60.0 - FOOD_HUNGER)) <= NEED_TOLERANCE, "server: bob was fed (%f)" % _survival().get_vitals(bob_id).hunger)
+	assert_true(absf(_survival().get_vitals(alice_id).hunger - 60.0) <= NEED_TOLERANCE, "server: alice is as hungry as before")
+	assert_eq(_server_quantity(food), 2, "server: one unit left alice's stack")
+	assert_eq(_world.inventory.items_in_inventory(_world.get_player(bob_id).inventory_id).size(), 0, "server: nothing entered bob's inventory")
+	assert_true(await _wait(func() -> bool: return _mirror(b).need_category("hunger") == "good"), "bob's mirror: no longer hungry")
+	assert_true(await _wait(func() -> bool: return _mirror_quantity(a, food) == 2), "alice's mirror: two units left")
+	assert_eq(_mirror(a).need_category("hunger"), "caution", "alice's mirror is about herself")
+
+	# And her only bottle of water: the item is gone.
+	assert_eq(await _use_on(a, water, bob_id), [true, ""])
+	assert_true(absf(_survival().get_vitals(bob_id).thirst - (80.0 - WATER_THIRST)) <= NEED_TOLERANCE, "server: bob drank (%f)" % _survival().get_vitals(bob_id).thirst)
+	assert_eq(_server_quantity(water), 0, "server: the bottle is used up")
+	assert_true(await _wait(func() -> bool: return _mirror(b).need_category("thirst") == "good"), "bob's mirror: no longer thirsty")
+	assert_true(await _wait(func() -> bool: return _mirror_quantity(a, water) == 0), "alice's mirror: the bottle is gone")
+	await _settle()
+
+	# Alice: the two results. No notice and nothing about bob's needs.
+	assert_eq(a_notices.size(), 0, "the giver gets the result, not a notice: %s" % str(a_notices))
+	assert_eq(a_events.size(), 0, "alice was told nothing about bob: %s" % str(a_events))
+	# Bob: who gave him what.
+	assert_eq(b_notices.size(), 2, str(b_notices))
+	for notice: Dictionary in b_notices:
+		assert_eq(notice.get("scope", ""), InventoryNetModule.NOTICE_SCOPE_TARGET)
+		assert_eq(notice.get("user_id", ""), alice_id, "bob knows who fed him")
+		assert_eq(notice.get("target_id", ""), bob_id)
+		assert_eq(notice.get("ok", false), true)
+	assert_eq(b_notices[0].get("definition_id", ""), FOOD)
+	assert_eq(b_notices[1].get("definition_id", ""), WATER)
+	assert_eq(b_inventory.size(), 0, "bob's inventory did not change")
+	# Carol: that alice tended to bob, twice. Not what was given, nothing
+	# about bob's needs.
+	assert_eq(c_notices.size(), 2, str(c_notices))
+	for notice: Dictionary in c_notices:
+		_assert_public_notice(notice, alice_id, bob_id, "carol")
+		assert_not_contains(JSON.stringify(notice).to_lower(), "food", "carol is not told what was given")
+		assert_not_contains(JSON.stringify(notice).to_lower(), "water", "carol is not told what was given")
+	assert_eq(c_events.size(), 0, "carol got no survival event: %s" % str(c_events))
+	assert_eq(c_inventory.size(), 0)
+	assert_eq(_mirror(c).need_category("hunger"), "good", "carol's mirror is about herself")
+	assert_eq(b_results.size() + c_results.size(), 0, "the result goes to the requester only")
+	assert_eq(_cluster.server.rejected_intent_count(), 0, "nothing was refused so far")
+
+	# Out of reach: the server's positions decide; the food is kept and
+	# nobody sees an attempt.
+	b_notices.clear()
+	c_notices.clear()
+	_world.get_player(bob_id).position = FAR_AWAY
+	assert_eq(await _use_on(a, food, bob_id), [false, ItemConsumption.REASON_TARGET_TOO_FAR])
+	_world.get_player(bob_id).position = Vector3.ZERO
+	assert_eq(_server_quantity(food), 2, "server: the food is kept")
+	await _settle()
+	assert_eq(b_notices.size() + c_notices.size(), 0, "a refused request is told to nobody")
+	assert_eq(_module(a).rejected_payload_count + _module(b).rejected_payload_count + _module(c).rejected_payload_count, 0, "the server's own messages pass the client validation")
 
 
 # ------------------------------------------------------------ 4. manipulated requests

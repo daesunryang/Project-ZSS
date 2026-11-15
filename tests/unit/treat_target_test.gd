@@ -106,20 +106,22 @@ func test_keys_settings_and_which_kinds_can_be_used_on_others() -> void:
 	var shared: ClientPresentationSettings = ClientPresentationSettings.new()
 	shared.treat_other_modifier_key = shared.bandage_key
 	assert_eq(shared.validate().size(), 1, "the modifier must differ from the other keys: %s" % "; ".join(shared.validate()))
-	# Only the treatment keys have an "on another player" form.
+	# Every use key has an "on another player" form: the treatments (P2-T12)
+	# and food and drink (P2-T13).
 	assert_true(ConsumeIntentPolicy.is_usable_on_others(ConsumeIntentPolicy.Kind.BANDAGE))
 	assert_true(ConsumeIntentPolicy.is_usable_on_others(ConsumeIntentPolicy.Kind.CURE))
-	assert_false(ConsumeIntentPolicy.is_usable_on_others(ConsumeIntentPolicy.Kind.FOOD))
-	assert_false(ConsumeIntentPolicy.is_usable_on_others(ConsumeIntentPolicy.Kind.DRINK))
+	assert_true(ConsumeIntentPolicy.is_usable_on_others(ConsumeIntentPolicy.Kind.FOOD))
+	assert_true(ConsumeIntentPolicy.is_usable_on_others(ConsumeIntentPolicy.Kind.DRINK))
 
 
 func test_hud_target_line_result_texts_and_notices() -> void:
 	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
-	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "민수", settings), PackedStringArray(["치료 대상: 민수 | 붕대 [Shift+B] 치료제 [Shift+V]"]))
-	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "", settings), PackedStringArray(["치료 대상: 없음 (가까이서 바라보기)"]))
+	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "민수", settings), PackedStringArray(["줄 대상: 민수 | 음식 [Shift+F] 물 [Shift+G] 붕대 [Shift+B] 치료제 [Shift+V]"]))
+	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "", settings), PackedStringArray(["줄 대상: 없음 (가까이서 바라보기)"]))
 	settings.bandage_key = KEY_N
+	settings.consume_key = KEY_T
 	settings.treat_other_modifier_key = KEY_CTRL
-	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "player_000002", settings)[0], "치료 대상: player_000002 | 붕대 [Ctrl+N] 치료제 [Ctrl+V]", "the keys come from the settings")
+	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "player_000002", settings)[0], "줄 대상: player_000002 | 음식 [Ctrl+T] 물 [Ctrl+G] 붕대 [Ctrl+N] 치료제 [Ctrl+V]", "the keys come from the settings")
 	assert_true(ClientPresentationFormatter.build_treat_target_lines({"alive": false}, "민수", settings).is_empty(), "a dead character treats nobody")
 	assert_true(ClientPresentationFormatter.build_treat_target_lines({}, "민수", settings).is_empty(), "no owner mirror, no line")
 	# The server's answer. What it tells about the other player is told as a
@@ -139,7 +141,7 @@ func test_hud_target_line_result_texts_and_notices() -> void:
 		assert_contains(text, sentences[reason], reason)
 		assert_not_contains(text, reason, "a sentence, not the code: " + reason)
 	assert_contains(ClientPresentationFormatter.format_use_on_result(false, NetworkService.RATE_LIMITED), NetworkService.RATE_LIMITED)
-	assert_eq(ClientPresentationFormatter.no_treat_target_text(), "치료할 대상이 없습니다")
+	assert_eq(ClientPresentationFormatter.no_treat_target_text(), "가까이에 줄 대상이 없습니다")
 	# Notices: the target is told who, what and whether; a bystander only who.
 	var names: Dictionary = {"player_000001": "영희", "player_000002": "민수"}
 	var catalog: ItemCatalog = ItemCatalog.load_directory()
@@ -153,6 +155,6 @@ func test_hud_target_line_result_texts_and_notices() -> void:
 	nothing["reason"] = SurvivalService.REASON_NOT_BLEEDING
 	assert_contains(ClientPresentationFormatter.format_treatment_notice(nothing, names, catalog), "효과 없음")
 	var seen: Dictionary = {"scope": "public", "user_id": "player_000001", "target_id": "player_000002", "world_time": 1.0}
-	assert_eq(ClientPresentationFormatter.format_treatment_notice(seen, names, catalog), "영희 → 민수 치료")
-	assert_eq(ClientPresentationFormatter.format_treatment_notice(seen, {}, catalog), "player_000001 → player_000002 치료", "without names the ids are shown")
+	assert_eq(ClientPresentationFormatter.format_treatment_notice(seen, names, catalog), "영희 → 민수 돌봄")
+	assert_eq(ClientPresentationFormatter.format_treatment_notice(seen, {}, catalog), "player_000001 → player_000002 돌봄", "without names the ids are shown")
 	assert_eq(ClientPresentationFormatter.format_treatment_notice({"scope": "owner"}, names, catalog), "")

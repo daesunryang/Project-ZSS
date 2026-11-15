@@ -17,10 +17,11 @@ const DEFAULT_PATH: String = "res://data/tuning/gameplay_settings.tres"
 ## the other, metres (P2-T12, docs/09 §14.27; PROVISIONAL, docs/15 P2-195).
 ## Measured between server positions, like the pickup range.
 @export_range(0.1, 50.0) var treat_range_m: float = 2.5
-## true: food and drink can also be given to another player (their hunger /
-## thirst drops). false (default): only treatments (bandage, cure) can be
-## used on others (P2-T12, docs/15 P2-196).
-@export var allow_feeding_others: bool = false
+## true (default, user decision 2026-11-15, docs/00 ADR-019, P2-T13): food
+## and drink can also be given to another player (their hunger / thirst
+## drops). false: only treatments (bandage, cure) can be used on others
+## (P2-T12, docs/15 P2-196).
+@export var allow_feeding_others: bool = true
 ## Number of item stacks a player inventory can hold.
 @export_range(1, 1000) var inventory_slot_capacity: int = 20
 ## Where new players appear.

@@ -50,8 +50,10 @@ extends RefCounted
 ## item_instance_id, target_id). An empty target or the user's own id is a
 ## use on oneself (try_consume, with its event and reasons). Otherwise only
 ## what may be given to others is applied to the target: the treatments
-## (bandage, cure), and food / drink only when
-## GameplaySettings.allow_feeding_others is on. The target does not have to
+## (bandage, cure), and food / drink when
+## GameplaySettings.allow_feeding_others is on (the default since P2-T13,
+## docs/00 ADR-019: the target's hunger / thirst drops, also when it is
+## already 0, exactly like eating oneself). The target does not have to
 ## agree, may be asleep or prone and is not woken; it must be in the world
 ## (online, with a character), alive and within GameplaySettings.treat_range_m
 ## of the user (server positions). The unit is the user's; the effect is the

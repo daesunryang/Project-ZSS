@@ -62,7 +62,12 @@ static func count_of_kind(inventory: Array[Dictionary], catalog: ItemCatalog, ki
 	return total
 
 
-## True when the key of `kind` also has an "on another player" form (P2-T12):
-## the treatments. Whether the server allows it is the server's rule.
+## True when the key of `kind` also has an "on another player" form: the
+## treatments (P2-T12) and food and drink (P2-T13, docs/00 ADR-019), so every
+## kind there is now. Whether the server allows it is the server's rule
+## (GameplaySettings.allow_feeding_others for food and drink).
 static func is_usable_on_others(kind: Kind) -> bool:
-	return kind == Kind.BANDAGE or kind == Kind.CURE
+	match kind:
+		Kind.FOOD, Kind.DRINK, Kind.BANDAGE, Kind.CURE:
+			return true
+	return false
