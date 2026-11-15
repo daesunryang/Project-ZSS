@@ -57,7 +57,7 @@ func seed_new_world(seed: DevWorldSeed) -> Error:
 		GameLogger.error("world", "invalid world seed", {"world_id": world_id, "errors": "; ".join(errors), "operation": "seed_world"})
 		return ERR_INVALID_DATA
 	for index: int in range(seed.item_definition_ids.size()):
-		var item_id: String = inventory.spawn_world_item(seed.item_definition_ids[index], 1, DevWorldSeed.DEV_CELL_ID, seed.item_positions[index])
+		var item_id: String = inventory.spawn_world_item(seed.item_definition_ids[index], seed.quantity_at(index), DevWorldSeed.DEV_CELL_ID, seed.item_positions[index])
 		if item_id.is_empty():
 			return ERR_INVALID_DATA
 	for system: ServerSystem in _system_order:

@@ -19,6 +19,12 @@ func after_each() -> void:
 func _config() -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
 	config.gameplay = GameplaySettings.new()
+	# These tests count on a new world with exactly one item (the production
+	# development seed places more than one since P2-T3).
+	var one_item: DevWorldSeed = DevWorldSeed.new()
+	one_item.item_definition_ids = PackedStringArray(["dev_test_item"])
+	one_item.item_positions = PackedVector3Array([Vector3(6.0, 0.0, 0.0)])
+	config.dev_seed = one_item
 	return config
 
 

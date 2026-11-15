@@ -1,14 +1,28 @@
 class_name InventoryNetModule
 extends NetModule
-## Drop intent and replication of inventory changes (P2-T2, docs/09 §14.17).
-## Network only: every rule is in InventoryService / ServerWorld.
+## Drop and consume intents and replication of inventory changes (P2-T2,
+## P2-T3; docs/09 §14.17, §14.18). Network only: every rule is in
+## InventoryService / ServerWorld / ItemConsumption.
 ##
 ## RPC table (channel 0 = reliable ordered, the channel of the pickup RPCs):
 ##   client -> server  _rpc_request_drop(request_id:int, item_instance_id:String)       reliable, ch0
 ##   server -> owner   _rpc_drop_result(request_id:int, ok:bool, reason:String)          reliable, ch0
+##   client -> server  _rpc_request_consume(request_id:int, item_instance_id:String)    reliable, ch0
+##   server -> owner   _rpc_consume_result(request_id:int, ok:bool, reason:String)       reliable, ch0
 ##   server -> clients _rpc_world_items_added(items:Array[Dictionary])                   reliable, ch0
 ##   server -> owner   _rpc_inventory_items_removed(item_instance_ids:Array[String])     reliable, ch0
 ##   server -> owner   _rpc_inventory_item_changed(item:Dictionary /* ItemInstance */)   reliable, ch0
+##
+## Consume (eat / drink, P2-T3): the same shape as a drop request: a request
+## id and the id of a carried item, nothing else. The effect comes from the
+## item definition on the server (ItemConsumption). Checks, in order: joined,
+## argument types, request id >= 0, item id length, request rate (its own
+## bucket), then the rule (`player_dead`, `item_not_in_inventory`,
+## `not_consumable`, ...). The result goes to the requester only. The smaller
+## stack / the vanished item reaches the owner through the replication below
+## and the lower needs through the owner's survival snapshot; other players
+## are told nothing about it. An accepted consumption is not saved on its own
+## (InventoryNetSettings.save_after_consume, docs/15 P2-123).
 ##
 ## Request: a client sends an intent only: its own request id and the id of
 ## the item to put down. There is no position, owner or quantity argument;
@@ -40,11 +54,14 @@ extends NetModule
 ## pickup); changes made by server rules are saved at the end of that server
 ## tick.
 ##
-## Client surface (presentation): request_drop(), the signals below and the
-## mirror NetworkService.client_state. The mirror has no authority.
+## Client surface (presentation): request_drop(), request_consume(), the
+## signals below and the mirror NetworkService.client_state. The mirror has
+## no authority.
 
 ## Client: answer to one of this client's own drop requests.
 signal drop_result(request_id: int, ok: bool, reason: String)
+## Client: answer to one of this client's own consume requests.
+signal consume_result(request_id: int, ok: bool, reason: String)
 ## Client: these items now lie in the world (already in the mirror).
 signal world_items_added(item_instance_ids: PackedStringArray)
 ## Client: these items left the local inventory (already out of the mirror).
@@ -55,7 +72,8 @@ signal inventory_item_changed(item_instance_id: String)
 const MODULE_NAME: String = "InventoryNet"
 ## Intent name in rejection logs.
 const INTENT_DROP: String = "drop_item"
-## Returned by request_drop() when nothing was sent.
+const INTENT_CONSUME: String = "consume_item"
+## Returned by request_drop() / request_consume() when nothing was sent.
 const NO_REQUEST: int = 0
 ## Protocol limit: a client drops a message with more entries. The server's
 ## InventoryNetSettings.max_items_per_message may not exceed it.
@@ -66,6 +84,7 @@ const REASON_PLAYER_DEAD: String = SurvivalService.REASON_PLAYER_DEAD
 ## Save reasons (logs only).
 const SAVE_REASON_DROP: String = "item_dropped"
 const SAVE_REASON_CHANGE: String = "inventory_changed"
+const SAVE_REASON_CONSUME: String = "item_consumed"
 
 ## Client: payloads from the server that failed validation (whole messages
 ## and single entries).
@@ -79,10 +98,15 @@ var _settings: InventoryNetSettings
 var _world: ServerWorld = null
 var _survival: SurvivalService = null
 var _limiter: RateLimiter = null
+var _consume_limiter: RateLimiter = null
 ## A replicated change has not been saved yet.
 var _save_pending: bool = false
+## True while a transaction is being committed whose change is left to the
+## next regular save (a consumption, docs/15 P2-123). It is still replicated.
+var _leave_to_next_save: bool = false
 # --- client state ---
 var _last_request_id: int = NO_REQUEST
+var _last_consume_request_id: int = NO_REQUEST
 
 
 func _init(settings: InventoryNetSettings) -> void:
@@ -100,6 +124,12 @@ func _exit_tree() -> void:
 ## "" when the arguments of a drop request are usable, otherwise a reason
 ## code. Same shape and rules as a pickup request (types first).
 static func validate_drop_request(request_id: Variant, item_instance_id: Variant) -> String:
+	return IntentValidator.validate_pickup(request_id, item_instance_id)
+
+
+## "" when the arguments of a consume request are usable, otherwise a reason
+## code. Same shape and rules as a drop request.
+static func validate_consume_request(request_id: Variant, item_instance_id: Variant) -> String:
 	return IntentValidator.validate_pickup(request_id, item_instance_id)
 
 
@@ -135,7 +165,9 @@ func on_server_started(world: ServerWorld) -> void:
 	_world = world
 	_survival = world.get_system(SurvivalService.SYSTEM_ID) as SurvivalService
 	_limiter = RateLimiter.new(_settings.drop_intent_rate_per_sec, _settings.drop_intent_burst)
+	_consume_limiter = RateLimiter.new(_settings.consume_intent_rate_per_sec, _settings.consume_intent_burst)
 	_save_pending = false
+	_leave_to_next_save = false
 	if not world.inventory.transaction_committed.is_connected(_on_inventory_transaction):
 		world.inventory.transaction_committed.connect(_on_inventory_transaction)
 
@@ -143,6 +175,8 @@ func on_server_started(world: ServerWorld) -> void:
 func on_player_left(peer_id: int, _player_id: String) -> void:
 	if _limiter != null:
 		_limiter.forget(peer_id)
+	if _consume_limiter != null:
+		_consume_limiter.forget(peer_id)
 
 
 ## Server: saves changes made by server rules during this tick.
@@ -152,6 +186,7 @@ func server_physics(_delta: float) -> void:
 
 func apply_join_fragment(_fragment: Dictionary) -> void:
 	_last_request_id = NO_REQUEST
+	_last_consume_request_id = NO_REQUEST
 
 
 # ------------------------------------------------------------ server side
@@ -194,6 +229,46 @@ func _rpc_request_drop(request_id: Variant, item_instance_id: Variant) -> void:
 	GameLogger.info("net", "drop committed", {"peer_id": peer_id, "player_id": player_id, "entity_id": item_id, "request_id": int(request_id)})
 
 
+@rpc("any_peer", "call_remote", "reliable", 0)
+func _rpc_request_consume(request_id: Variant, item_instance_id: Variant) -> void:
+	if network == null or not network.is_server():
+		return
+	var peer_id: int = multiplayer.get_remote_sender_id()
+	# The actor is whoever owns the sending peer, never an argument.
+	var player_id: String = network.sender_player_id()
+	if player_id.is_empty():
+		network.reject_intent(peer_id, INTENT_CONSUME, NetworkService.NOT_JOINED)
+		return
+	var reason: String = validate_consume_request(request_id, item_instance_id)
+	if not reason.is_empty():
+		network.reject_intent(peer_id, INTENT_CONSUME, reason, player_id)
+		if typeof(request_id) == TYPE_INT and int(request_id) >= 0:
+			_send_consume_result(peer_id, int(request_id), false, reason)
+		return
+	if not _consume_limiter.allow(peer_id, Time.get_ticks_msec()):
+		network.reject_intent(peer_id, INTENT_CONSUME, NetworkService.RATE_LIMITED, player_id)
+		_send_consume_result(peer_id, int(request_id), false, NetworkService.RATE_LIMITED)
+		return
+	var item_id: String = str(item_instance_id)
+	# The inventory change is replicated inside this call
+	# (transaction_committed), before the result below. Unless configured
+	# otherwise it is not marked for a save of its own.
+	_leave_to_next_save = not _settings.save_after_consume
+	var result: ActionResult = ItemConsumption.try_consume(_world, player_id, item_id)
+	_leave_to_next_save = false
+	if not result.ok:
+		if result.reason == ItemConsumption.REASON_UNAVAILABLE:
+			network.reject_intent(peer_id, INTENT_CONSUME, result.reason, player_id)
+		else:
+			# Refusals by game state are normal play: counted, not logged as warnings.
+			network.count_rejection(result.reason)
+		_send_consume_result(peer_id, int(request_id), false, public_reason(result.reason))
+		return
+	_flush_save(SAVE_REASON_CONSUME)
+	_send_consume_result(peer_id, int(request_id), true, "")
+	GameLogger.info("net", "consume committed", {"peer_id": peer_id, "player_id": player_id, "entity_id": item_id, "request_id": int(request_id)})
+
+
 ## Server: a transaction was committed in the InventoryService. Replicates it
 ## now, so the send order is the commit order.
 func _on_inventory_transaction(event: Dictionary) -> void:
@@ -206,7 +281,8 @@ func _on_inventory_transaction(event: Dictionary) -> void:
 		_replicate_removed(event)
 	else:
 		return  # pickups are replicated (and saved) by NetworkService itself
-	_save_pending = true
+	if not _leave_to_next_save:
+		_save_pending = true
 
 
 ## Items left an inventory and now lie in the world: the owner is told what
@@ -285,6 +361,11 @@ func _send_result(peer_id: int, request_id: int, ok: bool, reason: String) -> vo
 		_rpc_drop_result.rpc_id(peer_id, request_id, ok, reason)
 
 
+func _send_consume_result(peer_id: int, request_id: int, ok: bool, reason: String) -> void:
+	if network.can_send_to(peer_id):
+		_rpc_consume_result.rpc_id(peer_id, request_id, ok, reason)
+
+
 func _flush_save(reason: String) -> void:
 	if not _save_pending or network == null or not network.is_server():
 		return
@@ -325,6 +406,39 @@ func _rpc_drop_result(request_id: Variant, ok: Variant, reason: Variant) -> void
 		_reject_payload("bad_result")
 		return
 	drop_result.emit(int(request_id), bool(ok), reason_code)
+
+
+## Asks the server to eat / drink one unit of a carried item. Returns the
+## request id the `consume_result` signal will carry, or NO_REQUEST when
+## nothing was sent (not a joined client). Nothing is decided here.
+func request_consume(item_instance_id: String) -> int:
+	if network == null or not network.is_client() or network.client_state.local_player_id.is_empty():
+		return NO_REQUEST
+	_last_consume_request_id += 1
+	send_raw_consume_request(_last_consume_request_id, item_instance_id)
+	return _last_consume_request_id
+
+
+## Sends an arbitrary request without any client-side check (tests:
+## malformed or premature input through the real RPC path).
+func send_raw_consume_request(request_id: Variant, item_instance_id: Variant) -> void:
+	if network != null and network.is_client():
+		_rpc_request_consume.rpc_id(NetworkService.SERVER_PEER_ID, request_id, item_instance_id)
+
+
+@rpc("authority", "call_remote", "reliable", 0)
+func _rpc_consume_result(request_id: Variant, ok: Variant, reason: Variant) -> void:
+	if network == null or not network.is_from_server():
+		return
+	if typeof(request_id) != TYPE_INT or typeof(ok) != TYPE_BOOL or typeof(reason) != TYPE_STRING:
+		_reject_payload("bad_result")
+		return
+	var reason_code: String = reason
+	# "" exactly when the request was accepted.
+	if int(request_id) < 0 or reason_code.length() > REASON_MAX_LENGTH or bool(ok) != reason_code.is_empty():
+		_reject_payload("bad_result")
+		return
+	consume_result.emit(int(request_id), bool(ok), reason_code)
 
 
 @rpc("authority", "call_remote", "reliable", 0)

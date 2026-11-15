@@ -102,7 +102,11 @@ func test_corrupt_system_document_fails_restore() -> void:
 func test_phase1_v1_save_is_migrated() -> void:
 	# A Phase 1 save: schema 1 documents without world_time_sec / systems.
 	var world: ServerWorld = _new_world()
-	world.seed_new_world(DevWorldSeed.load_or_default())
+	# What a Phase 1 world held: one item (today's development seed has more).
+	var phase1_seed: DevWorldSeed = DevWorldSeed.new()
+	phase1_seed.item_definition_ids = PackedStringArray(["dev_test_item"])
+	phase1_seed.item_positions = PackedVector3Array([Vector3(6.0, 0.0, 0.0)])
+	world.seed_new_world(phase1_seed)
 	var alice: PlayerState = world.join("alice")
 	alice.position = Vector3(2, 0, 3)
 	var documents: Dictionary = world.to_documents()

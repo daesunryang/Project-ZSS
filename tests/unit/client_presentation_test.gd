@@ -8,6 +8,7 @@ const ACTIONS: Array[StringName] = [
 	ClientInputActions.MOVE_RIGHT,
 	ClientInputActions.PICKUP,
 	ClientInputActions.ATTACK,
+	ClientInputActions.CONSUME,
 ]
 
 
@@ -101,3 +102,103 @@ func test_event_and_attack_result_text_preserve_private_infection_scope() -> voi
 	assert_not_contains(ClientPresentationFormatter.format_zombie_event(zombie_event, "bob"), "감염")
 	assert_contains(ClientPresentationFormatter.format_attack_result(false, "attack_on_cooldown"), "attack_on_cooldown")
 	assert_contains(ClientPresentationFormatter.format_attack_result(true, ""), "승인")
+
+
+# ------------------------------------------------------------ P2-T3: consume key and inventory HUD
+
+func _consume_catalog() -> ItemCatalog:
+	var catalog: ItemCatalog = ItemCatalog.new()
+	var food: ItemDefinition = ItemDefinition.new()
+	food.definition_id = "hud_food"
+	food.display_name = "Canned Beans"
+	food.max_stack = 5
+	food.consume_hunger_reduction = 30.0
+	catalog.add(food)
+	var water: ItemDefinition = ItemDefinition.new()
+	water.definition_id = "hud_water"
+	water.max_stack = 5
+	water.consume_thirst_reduction = 40.0
+	catalog.add(water)
+	var pipe: ItemDefinition = ItemDefinition.new()
+	pipe.definition_id = "hud_pipe"
+	pipe.display_name = "Pipe"
+	catalog.add(pipe)
+	return catalog
+
+
+func _carried(item_id: String, definition_id: String, quantity: int) -> Dictionary:
+	return {"schema_version": 1, "item_instance_id": item_id, "definition_id": definition_id, "quantity": quantity, "location_type": "inventory", "location_id": "inventory_000001", "slot_id": "slot_0"}
+
+
+func test_consume_key_picks_the_first_consumable_item_of_the_mirror() -> void:
+	var catalog: ItemCatalog = _consume_catalog()
+	var inventory: Array[Dictionary] = [
+		_carried("item_000001", "hud_pipe", 1),
+		_carried("item_000002", "hud_unknown", 1),
+		{"definition_id": "hud_food"},
+		_carried("item_000003", "hud_water", 2),
+		_carried("item_000004", "hud_food", 1),
+	]
+	assert_eq(ConsumeIntentPolicy.first_consumable_item_id(inventory, catalog), "item_000003", "mirror order, skipping what cannot be consumed")
+	var nothing: Array[Dictionary] = [_carried("item_000001", "hud_pipe", 1)]
+	assert_eq(ConsumeIntentPolicy.first_consumable_item_id(nothing, catalog), "", "nothing consumable")
+	var empty: Array[Dictionary] = []
+	assert_eq(ConsumeIntentPolicy.first_consumable_item_id(empty, catalog), "")
+	assert_eq(ConsumeIntentPolicy.first_consumable_item_id(inventory, null), "", "no catalog, no guess")
+	# The flood guard is the same rule as the attack guard, with its own interval.
+	var policy: AttackIntentPolicy = AttackIntentPolicy.new(ClientPresentationSettings.new().consume_min_interval_sec)
+	assert_false(policy.should_send(false, 0.0), "offline input sends nothing")
+	assert_true(policy.should_send(true, 0.0))
+	assert_false(policy.should_send(true, 0.1))
+	assert_true(policy.should_send(true, 0.25))
+
+
+func test_inventory_hud_lists_names_and_summed_quantities() -> void:
+	var catalog: ItemCatalog = _consume_catalog()
+	var empty: Array[Dictionary] = []
+	assert_eq(ClientPresentationFormatter.build_inventory_lines(empty, catalog, 6), PackedStringArray(["소지품: 없음"]))
+	var inventory: Array[Dictionary] = [
+		_carried("item_000001", "hud_food", 2),
+		_carried("item_000002", "hud_pipe", 1),
+		_carried("item_000003", "hud_food", 3),
+		_carried("item_000004", "hud_water", 4),
+		{"junk": true},
+		_carried("item_000005", "hud_unknown", 1),
+	]
+	assert_eq(ClientPresentationFormatter.build_inventory_lines(inventory, catalog, 6), PackedStringArray([
+		"소지품 (5)",
+		"Canned Beans x5",
+		"Pipe x1",
+		"hud_water x4",
+		"hud_unknown x1",
+	]), "first-seen order, same kinds summed, the id when there is no name")
+	assert_eq(ClientPresentationFormatter.build_inventory_lines(inventory, catalog, 2), PackedStringArray([
+		"소지품 (5)",
+		"Canned Beans x5",
+		"Pipe x1",
+		"... 외 2종",
+	]), "the configured number of kinds, the rest counted")
+	assert_eq(ClientPresentationFormatter.build_inventory_lines(inventory, null, 1)[1], "hud_food x5", "ids when no catalog is available")
+
+
+func test_consume_result_text_and_action_use_settings() -> void:
+	assert_contains(ClientPresentationFormatter.format_consume_result(true, ""), "승인")
+	assert_contains(ClientPresentationFormatter.format_consume_result(false, "not_consumable"), "not_consumable")
+	assert_false(ClientPresentationFormatter.nothing_to_consume_text().is_empty())
+	var shipped: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
+	assert_eq(shipped.consume_key, KEY_F, "shipped consume key")
+	assert_true(shipped.hud_inventory_line_count > 0)
+	var camera: CameraSettings = CameraSettings.new()
+	var presentation: ClientPresentationSettings = ClientPresentationSettings.new()
+	presentation.consume_key = KEY_G
+	ClientInputActions.register(camera, presentation)
+	var events: Array[InputEvent] = InputMap.action_get_events(ClientInputActions.CONSUME)
+	assert_eq(events.size(), 1)
+	assert_eq((events[0] as InputEventKey).physical_keycode, KEY_G)
+	ClientInputActions.register(camera, presentation)
+	assert_eq(InputMap.action_get_events(ClientInputActions.CONSUME).size(), 1, "registered once")
+	var invalid: ClientPresentationSettings = ClientPresentationSettings.new()
+	invalid.consume_key = KEY_NONE
+	invalid.consume_min_interval_sec = 0.0
+	invalid.hud_inventory_line_count = 0
+	assert_eq(invalid.validate().size(), 3, "; ".join(invalid.validate()))

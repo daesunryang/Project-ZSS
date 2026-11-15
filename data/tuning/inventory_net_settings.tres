@@ -7,3 +7,6 @@ script = ExtResource("1_inventory_net")
 drop_intent_rate_per_sec = 4.0
 drop_intent_burst = 4
 max_items_per_message = 32
+consume_intent_rate_per_sec = 4.0
+consume_intent_burst = 4
+save_after_consume = false

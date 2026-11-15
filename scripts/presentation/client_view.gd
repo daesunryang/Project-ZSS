@@ -9,6 +9,8 @@ extends Node3D
 @onready var _survival_label: Label = %SurvivalLabel
 @onready var _event_log_label: Label = %EventLogLabel
 @onready var _attack_result_label: Label = %AttackResultLabel
+@onready var _inventory_label: Label = %InventoryLabel
+@onready var _consume_result_label: Label = %ConsumeResultLabel
 
 var _settings: CameraSettings = null
 var _presentation: ClientPresentationSettings = null
@@ -31,6 +33,14 @@ var _dead_player_material: StandardMaterial3D = null
 var _zombie_materials: Dictionary[String, StandardMaterial3D] = {}
 var _event_lines: PackedStringArray = []
 var _attack_result_until_sec: float = 0.0
+var _inventory_module: InventoryNetModule = null
+## Flood guard of the consume key (same rule as the attack guard).
+var _consume_policy: AttackIntentPolicy = null
+## Static item definitions: names for the HUD and "is this consumable".
+var _item_catalog: ItemCatalog = null
+var _consume_result_until_sec: float = 0.0
+## Hash of the inventory mirror the HUD summary was built from.
+var _inventory_signature: int = 0
 
 
 func _ready() -> void:
@@ -53,6 +63,8 @@ func _ready() -> void:
 		_settings.yaw_change_epsilon_rad
 	)
 	_attack_policy = AttackIntentPolicy.new(_presentation.attack_min_interval_sec)
+	_consume_policy = AttackIntentPolicy.new(_presentation.consume_min_interval_sec)
+	_item_catalog = ItemCatalog.load_directory()
 	ClientInputActions.register(_settings, _presentation)
 	_prepare_player_resources()
 	_prepare_zombie_resources()
@@ -88,12 +100,16 @@ func _unhandled_input(event: InputEvent) -> void:
 func _process(_delta: float) -> void:
 	if _attack_result_label.visible and _now_sec() >= _attack_result_until_sec:
 		_attack_result_label.visible = false
+	if _consume_result_label.visible and _now_sec() >= _consume_result_until_sec:
+		_consume_result_label.visible = false
 
 
 func _physics_process(_delta: float) -> void:
 	_update_camera()
 	if Input.is_action_just_pressed(ClientInputActions.ATTACK):
 		_request_melee_attack()
+	if Input.is_action_just_pressed(ClientInputActions.CONSUME):
+		_request_consume()
 	if _network == null or _state == null or _state.local_player_id.is_empty():
 		return
 	var sample: Vector2 = Vector2(
@@ -142,15 +158,20 @@ func _bind_network() -> void:
 			_combat_module.melee_result.connect(_on_melee_result)
 		if not _combat_module.combat_event.is_connected(_on_combat_event):
 			_combat_module.combat_event.connect(_on_combat_event)
+	_inventory_module = _network.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule
+	if _inventory_module != null and not _inventory_module.consume_result.is_connected(_on_consume_result):
+		_inventory_module.consume_result.connect(_on_consume_result)
 	_sync_player_visuals()
 	_sync_zombie_visuals()
 	_refresh_survival_hud()
+	_refresh_inventory_hud()
 	_load_recent_events()
 
 
 func _on_world_state_changed() -> void:
 	_sync_player_visuals()
 	_update_camera()
+	_refresh_inventory_hud()
 
 
 func _on_survival_state_changed() -> void:
@@ -186,6 +207,16 @@ func _on_melee_result(_request_id: int, ok: bool, reason: String) -> void:
 	_attack_result_label.text = ClientPresentationFormatter.format_attack_result(ok, reason)
 	_attack_result_label.visible = true
 	_attack_result_until_sec = _now_sec() + _presentation.attack_result_duration_sec
+
+
+func _on_consume_result(_request_id: int, ok: bool, reason: String) -> void:
+	_show_consume_text(ClientPresentationFormatter.format_consume_result(ok, reason))
+
+
+func _show_consume_text(text: String) -> void:
+	_consume_result_label.text = text
+	_consume_result_label.visible = true
+	_consume_result_until_sec = _now_sec() + _presentation.consume_result_duration_sec
 
 
 func _prepare_player_resources() -> void:
@@ -279,6 +310,20 @@ func _refresh_survival_hud() -> void:
 	_survival_label.visible = true
 
 
+## Rebuilds the inventory summary when the local inventory mirror changed.
+## Hidden while not joined (the mirror says nothing then).
+func _refresh_inventory_hud() -> void:
+	if _state == null or _state.local_player_id.is_empty():
+		_inventory_label.visible = false
+		return
+	var signature: int = _state.inventory.hash()
+	if _inventory_label.visible and signature == _inventory_signature:
+		return
+	_inventory_signature = signature
+	_inventory_label.text = "\n".join(ClientPresentationFormatter.build_inventory_lines(_state.inventory, _item_catalog, _presentation.hud_inventory_line_count))
+	_inventory_label.visible = true
+
+
 func _load_recent_events() -> void:
 	_event_lines.clear()
 	if _combat_module != null:
@@ -333,6 +378,25 @@ func _request_melee_attack() -> void:
 	if not _attack_policy.should_send(connected, _now_sec()):
 		return
 	_combat_module.request_melee_attack(_yaw)
+
+
+## Consume key: asks the server to eat / drink the first consumable item of
+## the mirrored inventory. Only the item id is sent; the server decides.
+func _request_consume() -> void:
+	var connected: bool = (
+		_inventory_module != null
+		and _network != null
+		and _network.is_client()
+		and _state != null
+		and not _state.local_player_id.is_empty()
+	)
+	if not _consume_policy.should_send(connected, _now_sec()):
+		return
+	var item_id: String = ConsumeIntentPolicy.first_consumable_item_id(_state.inventory, _item_catalog)
+	if item_id.is_empty():
+		_show_consume_text(ClientPresentationFormatter.nothing_to_consume_text())
+		return
+	_inventory_module.request_consume(item_id)
 
 
 func _now_sec() -> float:

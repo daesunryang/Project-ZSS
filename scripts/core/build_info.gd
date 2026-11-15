@@ -20,7 +20,8 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    snapshots/events, survival replication, melee attack intent).
 ## 4: P2-T2 (InventoryNet module: drop intent and its result, world items
 ##    added, owner inventory items removed/changed).
-const PROTOCOL_VERSION: int = 4
+## 5: P2-T3 (InventoryNet: consume intent and its result).
+const PROTOCOL_VERSION: int = 5
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

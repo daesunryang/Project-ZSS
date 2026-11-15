@@ -49,6 +49,52 @@ static func format_attack_result(ok: bool, reason: String) -> String:
 	return "공격 요청 승인" if ok else "공격 요청 거부: %s" % reason
 
 
+## Server answer to a consume (eat / drink) request.
+static func format_consume_result(ok: bool, reason: String) -> String:
+	return "먹기/마시기 요청 승인" if ok else "먹기/마시기 요청 거부: %s" % reason
+
+
+## Local notice: the consume key was pressed but the mirrored inventory holds
+## nothing consumable (no request was sent).
+static func nothing_to_consume_text() -> String:
+	return "먹거나 마실 것이 없습니다"
+
+
+## HUD inventory summary from the local inventory mirror (ItemInstance
+## dictionaries): a header with the number of carried stacks, then one line
+## per item kind ("name x quantity", stacks of the same definition summed) in
+## first-seen order. At most `max_kinds` kinds are listed; the rest is
+## counted in a last line. Names come from the static item catalog (the
+## definition id when a definition or its name is missing). Malformed
+## entries are skipped.
+static func build_inventory_lines(inventory: Array[Dictionary], catalog: ItemCatalog, max_kinds: int) -> PackedStringArray:
+	var order: PackedStringArray = []
+	var quantities: Dictionary[String, int] = {}
+	var stacks: int = 0
+	for entry: Dictionary in inventory:
+		var definition_id: Variant = entry.get("definition_id", null)
+		var quantity: Variant = entry.get("quantity", null)
+		if typeof(definition_id) != TYPE_STRING or not ItemInstance.is_integer_value(quantity) or int(quantity) < 1:
+			continue
+		stacks += 1
+		var key: String = str(definition_id)
+		if not quantities.has(key):
+			order.append(key)
+			quantities[key] = 0
+		quantities[key] += int(quantity)
+	if stacks == 0:
+		return PackedStringArray(["소지품: 없음"])
+	var lines: PackedStringArray = ["소지품 (%d)" % stacks]
+	var listed: int = mini(order.size(), maxi(max_kinds, 1))
+	for index: int in range(listed):
+		var definition: ItemDefinition = catalog.get_definition(order[index]) if catalog != null else null
+		var item_name: String = definition.display_name if definition != null and not definition.display_name.is_empty() else order[index]
+		lines.append("%s x%d" % [item_name, quantities[order[index]]])
+	if order.size() > listed:
+		lines.append("... 외 %d종" % (order.size() - listed))
+	return lines
+
+
 static func format_combat_event(event: Dictionary) -> String:
 	if str(event.get(ClientCombatState.KEY_EVENT_TYPE, "")) != ClientCombatState.EVENT_MELEE_ATTACK:
 		return ""

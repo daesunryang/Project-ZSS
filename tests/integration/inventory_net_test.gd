@@ -897,7 +897,7 @@ func test_default_settings_and_composition() -> void:
 	assert_true(config.validate().size() > 0, "composition validation covers the inventory network settings")
 	config.inventory_net = null
 	assert_true(config.validate().size() > 0, "a missing settings object is reported")
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 4, "the new RPCs are a protocol change")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 5, "new RPCs are a protocol change: 4 for the drop RPCs, 5 since the consume RPCs (P2-T3)")
 
 	var service: NetworkService = NetworkService.new()
 	assert_eq(ServerComposition.install_net_modules(service, CompositionConfig.from_defaults()), OK)
@@ -910,6 +910,9 @@ func test_default_settings_and_composition() -> void:
 	var expected_modes: Dictionary[String, int] = {
 		"_rpc_request_drop": MultiplayerAPI.RPC_MODE_ANY_PEER,
 		"_rpc_drop_result": MultiplayerAPI.RPC_MODE_AUTHORITY,
+		# P2-T3 added the consume intent to this module (consume_net_test.gd).
+		"_rpc_request_consume": MultiplayerAPI.RPC_MODE_ANY_PEER,
+		"_rpc_consume_result": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_world_items_added": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_inventory_items_removed": MultiplayerAPI.RPC_MODE_AUTHORITY,
 		"_rpc_inventory_item_changed": MultiplayerAPI.RPC_MODE_AUTHORITY,

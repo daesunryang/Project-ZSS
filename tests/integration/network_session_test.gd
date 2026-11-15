@@ -20,9 +20,14 @@ func after_each() -> void:
 	GameLogger.set_capture(false)
 
 
+## A world with exactly one item (the production development seed places
+## more than one since P2-T3, so these tests name their own).
 func _new_world() -> ServerWorld:
 	var world: ServerWorld = ServerWorld.new("net_test_world", GameplaySettings.new(), ItemCatalog.load_directory())
-	world.seed_new_world(DevWorldSeed.load_or_default())
+	var one_item: DevWorldSeed = DevWorldSeed.new()
+	one_item.item_definition_ids = PackedStringArray(["dev_test_item"])
+	one_item.item_positions = PackedVector3Array([Vector3(6.0, 0.0, 0.0)])
+	world.seed_new_world(one_item)
 	return world
 
 

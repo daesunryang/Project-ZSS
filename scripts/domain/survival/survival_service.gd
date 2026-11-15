@@ -14,6 +14,8 @@ extends ServerSystem
 ##   apply_infection_exposure(player_id, InfectionState.Exposure, source_id) -> ActionResult
 ##   apply_infection_treatment(player_id, source_id) -> ActionResult
 ##   infection_stage(player_id) -> InfectionState.Stage
+##   check_reduce_needs(player_id, hunger, thirst) -> String   (preflight)
+##   reduce_needs(player_id, hunger, thirst, source_id) -> ActionResult
 ##   drain_events() -> Array[Dictionary]             (network read surface)
 ##
 ##   need_category(player_id, NeedKind.Kind) -> NeedKind.Category
@@ -48,8 +50,12 @@ const EVENT_INFECTION_RESISTED: String = "infection_exposure_resisted"
 const EVENT_PLAYER_INFECTION_STAGE_CHANGED: String = "player_infection_stage_changed"
 const EVENT_PLAYER_INFECTION_CURED: String = "player_infection_cured"
 const EVENT_NEED_CATEGORY_CHANGED: String = "need_category_changed"
+## Hunger and/or thirst were lowered (eating, drinking; P2-T3).
+const EVENT_PLAYER_NEEDS_REDUCED: String = "player_needs_reduced"
 
 const REASON_UNKNOWN_PLAYER: String = "unknown_player"
+## A need amount that is not finite, negative, or both amounts are 0.
+const REASON_BAD_NEED_AMOUNT: String = "bad_need_amount"
 const REASON_PLAYER_DEAD: String = "player_dead"
 const REASON_ALREADY_INFECTED: String = "already_infected"
 const REASON_BAD_EXPOSURE: String = "bad_exposure"
@@ -309,6 +315,55 @@ func apply_infection_treatment(player_id: String, source_id: String) -> ActionRe
 	}
 	_push_event(event)
 	GameLogger.info("survival", "player infection cured", event)
+	return ActionResult.success(event)
+
+
+## "" when reduce_needs() with these arguments would succeed now, otherwise
+## its failure reason. Changes nothing: callers that must commit something
+## else together with the reduction (ItemConsumption) check first.
+func check_reduce_needs(player_id: String, hunger_amount: float, thirst_amount: float) -> String:
+	if not is_finite(hunger_amount) or not is_finite(thirst_amount) or hunger_amount < 0.0 or thirst_amount < 0.0:
+		return REASON_BAD_NEED_AMOUNT
+	if hunger_amount <= 0.0 and thirst_amount <= 0.0:
+		return REASON_BAD_NEED_AMOUNT
+	return _check_living(player_id)
+
+
+## Lowers hunger and thirst by the given need units (server rule entry, e.g.
+## eating and drinking; P2-T3). A need never drops below 0. Fatigue is not
+## touched. Success event (also queued and logged):
+##   {event_type: "player_needs_reduced", player_id, source_id,
+##    hunger_reduced, thirst_reduced (what was actually taken off),
+##    hunger_after, thirst_after, world_time}
+## followed in the queue by "need_category_changed" for every category that
+## changed. Failure reasons: bad_need_amount, unknown_player, player_dead;
+## a refused call changes nothing.
+func reduce_needs(player_id: String, hunger_amount: float, thirst_amount: float, source_id: String) -> ActionResult:
+	var reason: String = check_reduce_needs(player_id, hunger_amount, thirst_amount)
+	if not reason.is_empty():
+		GameLogger.warning("survival", "need reduction rejected", {"player_id": player_id, "source_id": source_id, "reason": reason, "operation": "reduce_needs"})
+		return ActionResult.failure(reason)
+	var vitals: PlayerVitals = _vitals[player_id]
+	var hunger_before: NeedKind.Category = need_category(player_id, NeedKind.Kind.HUNGER)
+	var thirst_before: NeedKind.Category = need_category(player_id, NeedKind.Kind.THIRST)
+	var hunger_reduced: float = minf(vitals.hunger, hunger_amount)
+	var thirst_reduced: float = minf(vitals.thirst, thirst_amount)
+	vitals.hunger = maxf(vitals.hunger - hunger_reduced, 0.0)
+	vitals.thirst = maxf(vitals.thirst - thirst_reduced, 0.0)
+	var event: Dictionary = {
+		"event_type": EVENT_PLAYER_NEEDS_REDUCED,
+		"player_id": player_id,
+		"source_id": source_id,
+		"hunger_reduced": hunger_reduced,
+		"thirst_reduced": thirst_reduced,
+		"hunger_after": vitals.hunger,
+		"thirst_after": vitals.thirst,
+		"world_time": _clock.world_time_sec,
+	}
+	_push_event(event)
+	GameLogger.info("survival", "player needs reduced", event)
+	_report_need_category_change(player_id, vitals, NeedKind.Kind.HUNGER, hunger_before)
+	_report_need_category_change(player_id, vitals, NeedKind.Kind.THIRST, thirst_before)
 	return ActionResult.success(event)
 
 
@@ -732,16 +787,23 @@ func _advance_needs(player_id: String, vitals: PlayerVitals, world_delta: float)
 		var before: NeedKind.Category = need_category(player_id, kind)
 		var raised: float = minf(_need_value(vitals, kind) + _settings.need_rate_per_world_sec(kind) * world_delta, _settings.need_max)
 		vitals.set(NeedKind.kind_name(kind), raised)
-		var after: NeedKind.Category = need_category(player_id, kind)
-		if after != before:
-			var event: Dictionary = {
-				"event_type": EVENT_NEED_CATEGORY_CHANGED,
-				"player_id": player_id, "need": NeedKind.kind_name(kind),
-				"category": NeedKind.category_name(after), "value": raised,
-				"world_time": _clock.world_time_sec,
-			}
-			_push_event(event)
-			GameLogger.info("survival", "need category changed", event)
+		_report_need_category_change(player_id, vitals, kind, before)
+
+
+## Queues and logs "need_category_changed" when the category of `kind`
+## differs from `before`.
+func _report_need_category_change(player_id: String, vitals: PlayerVitals, kind: NeedKind.Kind, before: NeedKind.Category) -> void:
+	var after: NeedKind.Category = need_category(player_id, kind)
+	if after == before:
+		return
+	var event: Dictionary = {
+		"event_type": EVENT_NEED_CATEGORY_CHANGED,
+		"player_id": player_id, "need": NeedKind.kind_name(kind),
+		"category": NeedKind.category_name(after), "value": _need_value(vitals, kind),
+		"world_time": _clock.world_time_sec,
+	}
+	_push_event(event)
+	GameLogger.info("survival", "need category changed", event)
 
 
 func _need_value(vitals: PlayerVitals, kind: NeedKind.Kind) -> float:

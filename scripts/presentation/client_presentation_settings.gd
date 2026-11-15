@@ -24,6 +24,15 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(1, 20) var hud_event_line_count: int = 5
 @export var death_message: String = "사망했습니다. 서버의 부활을 기다리는 중입니다."
 
+## P2-T3 (docs/15 P2-124): the consume key asks the server to eat / drink the
+## first consumable item of the mirrored inventory.
+@export var consume_key: Key = KEY_F
+## Local flood guard between two consume requests (the server has its own).
+@export_range(0.01, 5.0) var consume_min_interval_sec: float = 0.25
+@export_range(0.1, 10.0) var consume_result_duration_sec: float = 2.0
+## Item kinds listed in the HUD inventory summary; the rest is counted.
+@export_range(1, 50) var hud_inventory_line_count: int = 6
+
 
 func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
@@ -41,6 +50,14 @@ func validate() -> PackedStringArray:
 		errors.append("hud_event_line_count must be > 0")
 	if death_message.is_empty():
 		errors.append("death_message must not be empty")
+	if consume_key == KEY_NONE:
+		errors.append("consume_key must not be KEY_NONE")
+	if consume_min_interval_sec <= 0.0:
+		errors.append("consume_min_interval_sec must be > 0")
+	if consume_result_duration_sec <= 0.0:
+		errors.append("consume_result_duration_sec must be > 0")
+	if hud_inventory_line_count <= 0:
+		errors.append("hud_inventory_line_count must be > 0")
 	return errors
 
 

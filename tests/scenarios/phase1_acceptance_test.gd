@@ -8,6 +8,10 @@ const WORLD: String = "phase1_world"
 const PICKUP_MARGIN_M: float = 0.5
 const MAX_MOVE_FRAMES: int = 600
 const STOP_FRAMES: int = 3
+## The one shared item of this scenario (the production development seed
+## places more than one item since P2-T3, so the scenario names its own).
+const ITEM_DEFINITION: String = "dev_test_item"
+const ITEM_POSITION: Vector3 = Vector3(6.0, 0.0, 0.0)
 
 var _root: String = ""
 var _settings: NetworkSettings = null
@@ -28,8 +32,15 @@ func after_each() -> void:
 	GameLogger.set_capture(false)
 
 
+## Production settings with a world that holds exactly one item.
 func _persistence() -> WorldPersistence:
-	return WorldPersistence.new(SaveService.new(_root), CompositionConfig.from_defaults())
+	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# from_defaults() returns cached, shared resources: replace, never edit.
+	var one_item: DevWorldSeed = DevWorldSeed.new()
+	one_item.item_definition_ids = PackedStringArray([ITEM_DEFINITION])
+	one_item.item_positions = PackedVector3Array([ITEM_POSITION])
+	config.dev_seed = one_item
+	return WorldPersistence.new(SaveService.new(_root), config)
 
 
 func _collect_results(client: NetworkService) -> Dictionary:

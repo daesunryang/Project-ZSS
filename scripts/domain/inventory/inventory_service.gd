@@ -222,6 +222,13 @@ func get_item(item_instance_id: String) -> ItemInstance:
 	return _items.get(item_instance_id, null)
 
 
+## Static definition of an existing item instance (null when the item or its
+## definition is unknown). Read-only.
+func definition_of(item_instance_id: String) -> ItemDefinition:
+	var item: ItemInstance = _items.get(item_instance_id, null)
+	return null if item == null else _catalog.get_definition(item.definition_id)
+
+
 func has_inventory(inventory_id: String) -> bool:
 	return _inventories.has(inventory_id)
 

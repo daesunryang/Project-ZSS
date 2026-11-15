@@ -8,6 +8,7 @@ const MOVE_LEFT: StringName = &"move_left"
 const MOVE_RIGHT: StringName = &"move_right"
 const PICKUP: StringName = &"pickup"
 const ATTACK: StringName = &"attack"
+const CONSUME: StringName = &"consume"
 
 
 static func register(settings: CameraSettings, presentation: ClientPresentationSettings = null) -> void:
@@ -18,6 +19,7 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 	_add_key_action(PICKUP, settings.pickup_key, settings.input_deadzone)
 	if presentation != null:
 		_add_mouse_action(ATTACK, presentation.attack_mouse_button, settings.input_deadzone)
+		_add_key_action(CONSUME, presentation.consume_key, settings.input_deadzone)
 
 
 static func _add_key_action(action: StringName, key: Key, deadzone: float) -> void:

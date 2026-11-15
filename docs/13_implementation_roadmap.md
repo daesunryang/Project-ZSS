@@ -157,7 +157,7 @@ Phase 2는 단일 조정자(Opus)가 티켓을 쪼개고 병합한다. 설계 �
 |---|---|---|---|---|
 | P2-T1 | 달력 시간과 행동 시간 분리, 월드 시간 24배속(ADR-006). 계약은 docs/09 §14.16, 임시 가정과 24배속 소요 시간 표는 docs/15 §9 | `scripts/core/world_clock*`, 각 시스템의 시간 사용 | Fable | 완료 |
 | P2-T2 | 인벤토리 변화 복제 기반: 아이템을 월드에 내려놓기·인벤토리에서 제거, 클라이언트 반영. 서버 트랜잭션 3개(`drop_item`, `drop_all_items`, `remove_item`), 내려놓기 의도 RPC, NetModule `InventoryNet`, `PROTOCOL_VERSION` 4. 계약은 docs/09 §14.17, 임시 가정은 docs/15 §10 | `scripts/domain/inventory/`, `scripts/services/multiplayer/inventory_net_*.gd`, `tests/integration/inventory_net_test.gd` | Fable | 완료 |
-| P2-T3 | 먹기·마시기: 소비 의도 → 서버가 허기·갈증 감소(ADR-010) | `survival/`, 아이템 정의, 새 RPC | Fable | 대기(T1·T2 후) |
+| P2-T3 | 먹기·마시기: 소비 의도 → 서버가 허기·갈증 감소(ADR-010). 아이템 정의의 소비 효과, `SurvivalService.reduce_needs`, 서버 규칙 `ItemConsumption`(아이템 제거와 욕구 감소를 함께 확정), `InventoryNet`의 소비 의도 RPC, 개발용 음식·물 아이템과 새 월드 배치(파이프 포함), 소비 키와 인벤토리 HUD, `PROTOCOL_VERSION` 5. 계약은 docs/09 §14.18, 임시 가정은 docs/15 §11.1 | `scripts/domain/survival/`, `scripts/domain/inventory/item_definition.gd`, `scripts/services/multiplayer/inventory_net_*.gd`, `scripts/presentation/`, `tests/integration/consume_net_test.gd` | Fable | 완료(병합 대기) |
 | P2-T4 | 영구 사망: 사망 시 소지품 처리와 새 캐릭터 시작(ADR-007) | `survival/`, `server_world.gd` | Fable | 대기(T3 후) |
 | P2-T5 | 감염으로 죽은 자리에 좀비 생성(ADR-008) | `survival/`, `zombie/` | Fable | 대기(T4 후) |
 

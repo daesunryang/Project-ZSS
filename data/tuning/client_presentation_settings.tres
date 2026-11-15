@@ -20,3 +20,7 @@ attack_min_interval_sec = 0.15
 attack_result_duration_sec = 2.0
 hud_event_line_count = 5
 death_message = "사망했습니다. 서버의 부활을 기다리는 중입니다."
+consume_key = 70
+consume_min_interval_sec = 0.25
+consume_result_duration_sec = 2.0
+hud_inventory_line_count = 6

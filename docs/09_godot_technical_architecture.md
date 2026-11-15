@@ -233,7 +233,7 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
 | 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가). `SaveService` 기본 마이그레이터 |
 
-채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 4(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4. §14.17).
+채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 5(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18)).
 
 ### 14.6 생존 계약(B1, system id `survival`)
 
@@ -245,7 +245,7 @@ B3에서 `Wound.is_bleeding`과 `PlayerVitals.died_at_world_time`을 저장 상�
 
 B4에서 `InfectionState.stage_elapsed_world_sec`를 추가하고 생존 fragment 스키마를 v3으로 올렸다(v1/v2는 경과 시간 0으로 읽음). 서버는 접속 중이고 생존한 플레이어의 활성 월드 시간만 누적해 `LATENT → EARLY → PROGRESSING → SEVERE → TERMINAL → ZOMBIFIED`를 진행한다. 각 단계 시간과 감염 경로별 시간 배율은 `SurvivalSettings`에서 읽으며 감염 단계 경계를 B3의 구간 적분 경계에 포함한다. `ZOMBIFIED` 진입 즉시 원인 `infection`으로 사망시키고 플레이어 좀비는 만들지 않으며, 기존 리스폰이 감염을 해제한다. 단계 변화는 `player_infection_stage_changed` 로그(`player_id`, `from`, `to`, `world_time`)로 남긴다.
 
-단계별 스태미나 회복 배율은 기존 욕구 배율과 곱하고, 단계별 체력 감소율은 출혈·굶주림·탈수 피해와 합산한다. 양수인 감염 체력 감소가 적용되는 동안에는 자연 회복을 허용하지 않는다. 치료 seam `apply_infection_treatment(player_id, source_id)`는 설정된 최대 단계 이하에서 감염을 해제하고 `player_infection_cured`를 반환·기록하며, 아이템·품질·의료 능력 판정은 후속 티켓 소유다. 읽기 전용 `infection_stage(player_id)`는 현재 단계를 반환한다. 임시 수치는 docs/15 P2-7/P2-8/P2-18/P2-19에 기록한다. 감염 복제(B5), 섭취/수면(B6)은 아직 없다.
+단계별 스태미나 회복 배율은 기존 욕구 배율과 곱하고, 단계별 체력 감소율은 출혈·굶주림·탈수 피해와 합산한다. 양수인 감염 체력 감소가 적용되는 동안에는 자연 회복을 허용하지 않는다. 치료 seam `apply_infection_treatment(player_id, source_id)`는 설정된 최대 단계 이하에서 감염을 해제하고 `player_infection_cured`를 반환·기록하며, 아이템·품질·의료 능력 판정은 후속 티켓 소유다. 읽기 전용 `infection_stage(player_id)`는 현재 단계를 반환한다. 임시 수치는 docs/15 P2-7/P2-8/P2-18/P2-19에 기록한다. 감염 복제는 §14.14(P2-N1c), 섭취는 §14.18(P2-T3: `reduce_needs`, `check_reduce_needs`)에서 추가됐다. 수면은 아직 없다.
 
 P2-T1부터 이 절의 "월드 시간"은 달력 시간이고, 스태미나 회복·리스폰 대기·피해 이벤트 묶는 간격만 행동 시간(실제 초)이다. 설정 이름은 `stamina_regen_per_sec`, `respawn_delay_sec`, `survival_damage_event_interval_sec`로 바뀌었고 생존 fragment 스키마 v4가 `died_at_action_time`을 추가했다. 구간 적분이 두 축을 함께 다루는 방식은 §14.16.
 
@@ -590,7 +590,7 @@ HUD는 owner 미러가 존재할 때만 체력·스태미나 수치, 세 욕구 
 - 테스트: `tests/unit/time_axes_test.gd`. 같은 실제 시간을 배율 1과 24로 돌려 행동 시간 결과(좀비 이동 거리·공격 틱·조사/수색 전환·시체 제거, 발소리 수, 소음 만료 틱, 근접 공격 승인 틱, 스태미나, 리스폰 틱, 피해 이벤트 수)는 같고 달력 시간 결과(욕구, 감염 경과, 출혈 피해, 체력·상처 회복)는 24배임을 비교한다. 접속자 0명일 때 두 시각 정지, 이벤트 `world_time`이 달력 시각임, 두 시각의 저장 → 재생성 → 로드, 저장된 좀비 공격 기한과 리스폰 기한이 재시작 뒤에도 남은 시간만큼 흐르는지, P2-T1 이전 저장(월드 v2, 생존 fragment v3)의 마이그레이션, 배율 24에서의 생존 구간 적분을 포함한다. Phase 2 수용 시나리오는 기본 배율 24로 실행된다.
 ### 14.17 인벤토리 변화 복제 기반(P2-T2, 모듈 `InventoryNet`)
 
-Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절은 반대 방향(아이템이 인벤토리에서 월드로 가거나 인벤토리에서 없어지는 변화)의 서버 트랜잭션과 복제를 정한다. 먹기(P2-T3)와 영구 사망(P2-T4)은 이 절의 서버 API를 호출하는 후속 티켓이며 여기에는 구현하지 않았다. 임시 가정은 docs/15 §10 P2-110~P2-119.
+Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절은 반대 방향(아이템이 인벤토리에서 월드로 가거나 인벤토리에서 없어지는 변화)의 서버 트랜잭션과 복제를 정한다. 먹기(P2-T3, §14.18)와 영구 사망(P2-T4)은 이 절의 서버 API를 호출하는 후속 티켓이다. 임시 가정은 docs/15 §10 P2-110~P2-119.
 
 구성: `InventoryService`(트랜잭션 3개와 `transaction_committed` 시그널 추가), `ServerWorld`(줍기 옆의 래퍼 3개), `InventoryNetModule`(NetModule, 노드 이름 `InventoryNet`: 내려놓기 의도 RPC, 결과 응답, 변화 복제, 클라이언트 표면), `InventoryNetSettings`(`data/tuning/inventory_net_settings.tres`), `ClientWorldState`(미러 적용 메서드 추가). 조립은 `ServerComposition.install_net_modules`에서만 하고 `CompositionConfig`에 `inventory_net` 필드가 추가됐다(`validate()`에 포함). `network_service.gd`는 수정하지 않았고 §14.5의 공개 헬퍼만 쓴다.
 
@@ -662,7 +662,7 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 - 늦게 접속한 클라이언트: 내려놓인 아이템은 일반 월드 아이템이므로 기존 join 스냅샷(`world_items`, 본인 `inventory`)으로 충분하다. 모듈의 join 조각은 없다.
 - 거리 필터가 없다: 접속 중인 모든 클라이언트가 월드 어디에 놓인 아이템이든 받는다(줍기와 같다).
 
-저장: 내려놓기 의도가 승인되면 결과를 보내기 전에 월드 전체를 저장한다(줍기와 같은 "주요 트랜잭션", docs/10 §5). 서버 규칙이 부른 변화는 그 서버 틱의 끝(`server_physics`)에 한 번 저장한다.
+저장: 내려놓기 의도가 승인되면 결과를 보내기 전에 월드 전체를 저장한다(줍기와 같은 "주요 트랜잭션", docs/10 §5). 서버 규칙이 부른 변화는 그 서버 틱의 끝(`server_physics`)에 한 번 저장한다. 예외는 소비 의도(P2-T3)가 일으킨 제거로, 따로 저장하지 않고 다음 저장에 맡긴다(§14.18).
 
 클라이언트 표면(`network.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule`):
 
@@ -688,5 +688,68 @@ Phase 1에는 "월드 아이템을 줍는다" 한 방향만 있었다. 이 절�
 
 - 서버 전용 RPC를 클라이언트가 보내는 경우: 결과·복제 RPC 4개는 `@rpc("authority")`라 엔진이 서버 아닌 발신자를 거부하고, 핸들러도 `network.is_from_server()`를 다시 확인한다. 요청 RPC 핸들러는 서버가 아니면 아무것도 하지 않는다.
 - 알려진 한계: 서버 코드가 `ServerWorld.try_pickup`을 직접 부르면(줍기 RPC를 거치지 않으면) 복제되지 않는다. 줍기 복제는 동결된 `NetworkService`의 RPC 핸들러 안에만 있기 때문이다. 아이템을 인벤토리에 바로 만들어 주는 트랜잭션(지급)도 아직 없다(docs/15 P2-119).
-- 클라이언트 표시(`scripts/presentation/**`)는 이 티켓에서 바꾸지 않았다. 내려놓기 입력과 인벤토리 화면은 없다.
+- 클라이언트 표시(`scripts/presentation/**`)는 이 티켓에서 바꾸지 않았다. 내려놓기 입력은 없다. 인벤토리 요약 HUD는 P2-T3에서 생겼다(§14.18).
 - 테스트: `tests/unit/inventory_transactions_test.gd`(트랜잭션 3개의 성공·실패·원자성, 시그널, ID 미재사용, `ServerWorld` 래퍼와 저장 문서 왕복, 미러 메서드), `tests/integration/inventory_net_test.gd`(서버 1 + 클라이언트 2~3, 실제 ENet: 줍기 → 내려놓기 → 다른 플레이어가 줍기와 총수 보존, 한 번의 서버 poll 안에서 처리되는 내려놓기·줍기·중복 내려놓기, 조작된 요청과 거부 카운터, join 전 요청, 빈도 초과, 죽은 플레이어, 클라이언트가 보낸 서버 전용 RPC, 서버가 보낸 형식 오류 페이로드, 늦은 접속, 서버 직접 호출의 제거·전부 내려놓기와 메시지 분할·소유자 한정, 저장 → 서버 재시작 → 재접속, 기본 설정·조립·RPC 설정).
+
+### 14.18 먹기·마시기(P2-T3, docs/00 ADR-010)
+
+플레이어가 들고 있는 음식·물 아이템 한 단위를 소비하면 서버가 그 플레이어의 허기·갈증을 낮춘다. 임시 가정은 docs/15 §11 P2-120~P2-125.
+
+구성: `ItemDefinition`(소비 효과 필드), `SurvivalService.reduce_needs`(욕구를 낮추는 서버 전용 API), `ItemConsumption`(아이템 제거와 욕구 감소를 하나로 묶는 서버 규칙, `scripts/domain/survival/item_consumption.gd`), `InventoryNetModule`(소비 의도 RPC와 결과 응답 추가, §14.17), `DevWorldSeed`(수량 필드), 개발용 아이템 정의 2개, 클라이언트 소비 키와 인벤토리 HUD. `network_service.gd`는 수정하지 않았다.
+
+**프로토콜 변경 있음**: RPC 2개(`_rpc_request_consume`, `_rpc_consume_result`)가 새로 생겨 `BuildInfo.PROTOCOL_VERSION`을 5로 올렸다. join 스냅샷 형식은 그대로다.
+
+#### 데이터
+
+- `ItemDefinition.consume_hunger_reduction`, `consume_thirst_reduction`: 한 단위를 소비했을 때 줄어드는 허기·갈증(`SurvivalSettings.need_max`와 같은 단위, 0 이상의 유한값). 둘 다 0이면 소비할 수 없는 아이템이다(`is_consumable()`). 정적 Resource이며 저장 데이터에는 들어가지 않는다(docs/02 §4.2, ADR-005).
+- 개발용 정의: `dev_food_ration`(허기 −40, 최대 스택 5), `dev_water_bottle`(갈증 −50, 최대 스택 5). `resources/definitions/items/`.
+- 개발용 월드(`data/tuning/dev_world_seed.tres`): 새 월드에 `dev_test_item` 1개(6, 0, 0), `dev_food_ration` 3개 묶음 2개((2, 0, 2), (2, 0, −2)), `dev_water_bottle` 3개 묶음 2개((−2, 0, 2), (−2, 0, −2)), `dev_melee_pipe` 1개(0, 0, 3)를 놓는다. `DevWorldSeed.item_quantities`가 묶음 수량이다(비어 있으면 모두 1, 아니면 아이템 수와 같은 길이·각 1 이상. 정의의 최대 스택을 넘으면 월드 생성이 실패한다).
+
+#### 서버 규칙
+
+`SurvivalService`(§14.6에 추가):
+
+| API | 계약 |
+|---|---|
+| `reduce_needs(player_id, hunger_amount, thirst_amount, source_id) -> ActionResult` | 허기·갈증을 그만큼 낮춘다(0 미만으로 내려가지 않음, 피로는 건드리지 않음). 성공 이벤트 `{event_type: "player_needs_reduced", player_id, source_id, hunger_reduced, thirst_reduced(실제로 줄어든 양), hunger_after, thirst_after, world_time}`를 돌려주고 이벤트 큐와 로그에 남긴다. 범주가 바뀐 욕구마다 기존 `need_category_changed`가 뒤따른다. 실패 사유: `bad_need_amount`(유한값이 아니거나 음수, 또는 둘 다 0), `unknown_player`, `player_dead`. 실패하면 아무것도 바뀌지 않는다 |
+| `check_reduce_needs(player_id, hunger_amount, thirst_amount) -> String` | 같은 인자의 `reduce_needs`가 지금 성공하면 `""`, 아니면 그 실패 사유. 상태를 바꾸지 않는다(다른 변경과 함께 확정해야 하는 호출자의 사전 검사) |
+
+`ItemConsumption.try_consume(world, player_id, item_instance_id) -> ActionResult`(정적 함수, 상태 없음, 네트워크 없음):
+
+- 검사 순서(먼저 걸린 것 하나): `not_online` → `consumption_unavailable`(월드에 생존 시스템이 없음) → `unknown_player`/`player_dead` → `unknown_item` → `item_not_in_inventory`(그 플레이어의 인벤토리에 들어 있지 않음: 월드에 있거나 남의 것) → `not_consumable` → `bad_need_amount`. 소유 검사가 정의 검사보다 앞이라, 자기 것이 아닌 아이템에 대해서는 종류를 알 수 없다.
+- 원자성: 두 쪽의 조건을 전부 검사한 뒤에만 확정한다. 확정은 `ServerWorld.remove_player_item(player_id, item_instance_id, 1)`(§14.17 트랜잭션, `InventoryNet`이 복제) 다음 `SurvivalService.reduce_needs`다. 거부된 요청은 아이템도 욕구도 바꾸지 않는다. 사전 검사와 실제 호출이 같은 조건을 쓰고 그 사이에 다른 코드가 실행되지 않으므로 한쪽만 반영되는 경로가 없다(단위 테스트로 거부 경우마다 양쪽이 그대로임을 확인).
+- 효과의 크기는 서버의 아이템 정의에서만 온다. 한 번에 한 단위(`ItemConsumption.CONSUMED_QUANTITY`)다.
+- 성공 이벤트: `{event_type: "item_consumed", player_id, item_instance_id, definition_id, remaining_quantity(0 = 인스턴스 삭제됨), hunger_reduced, thirst_reduced, world_time}`. 반환값과 로그로만 쓰이고 복제되지 않는다.
+
+#### 네트워크 메시지(`InventoryNetModule`에 추가)
+
+| 방향 | RPC | 채널/모드 | 받는 쪽 검증 |
+|---|---|---|---|
+| C→S | `_rpc_request_consume(request_id: int, item_instance_id: String)` | 0 reliable | 아래 "요청 검증" |
+| S→요청자 | `_rpc_consume_result(request_id: int, ok: bool, reason: String)` | 0 reliable | 서버 발신만 수용, 타입, `request_id` ≥ 0, `reason` 길이 ≤ 64, `ok`일 때만 `reason`이 빈 문자열 |
+
+요청: 클라이언트는 의도만 보낸다(자신이 붙인 요청 번호와 아이템 인스턴스 ID). 대상 플레이어·수량·효과 인자는 없다. 행위자는 보낸 peer의 플레이어다. 인자를 더 붙인 호출은 엔진이 거부한다(테스트로 고정).
+
+요청 검증(순서대로, 먼저 걸린 것 하나. 거부되면 서버 상태는 바뀌지 않고 `rejected_intent_count(reason)`이 1 오른다):
+
+| 순서 | 사유 코드(카운터) | 조건 | 요청자에게 결과 전송 |
+|---|---|---|---|
+| 1 | `not_joined` | join 핸드셰이크를 마치지 않은 peer | 보내지 않음 |
+| 2 | `bad_type` | `request_id`가 int가 아니거나 `item_instance_id`가 String이 아님 | `request_id`가 0 이상 int일 때만 |
+| 3 | `bad_sequence` | `request_id` < 0 | 보내지 않음 |
+| 4 | `bad_item_id` | ID가 비었거나 64자 초과 | 보냄 |
+| 5 | `rate_limited` | peer별 토큰 버킷(`InventoryNetSettings.consume_intent_rate_per_sec`/`consume_intent_burst`, 기본 4/s·버스트 4. 내려놓기 버킷과 별개) 초과. 형식이 틀린 요청은 토큰을 쓰지 않는다 | 보냄 |
+| 6 | `ItemConsumption`의 사유(`player_dead`, `item_not_in_inventory`, `unknown_item`, `not_consumable` 등) | 규칙이 거부 | 보냄. 단 `unknown_item`은 요청자에게 `item_not_in_inventory`로 알린다(§14.17 `public_reason`) |
+
+- 1~5와 `consumption_unavailable`은 `reject_intent`(횟수 + 경고 로그), 나머지 6은 `count_rejection`(횟수만)이다.
+- 결과는 요청자에게만 간다. 승인되면 `(request_id, true, "")`.
+- 복제: 인벤토리 변화는 §14.17의 기존 경로로 소유자에게만 간다(수량이 남으면 `_rpc_inventory_item_changed`, 0이 되면 `_rpc_inventory_items_removed`). 같은 채널이라 그 메시지가 결과보다 먼저 도착한다. 욕구 변화는 §14.14의 본인 생존 경로로 간다: 범주가 바뀌면 다음 서버 틱의 `need_category_changed` 이벤트로, 그 밖에는 본인 스냅샷(2Hz, 범주만)으로. 그래서 본인 미러의 욕구 범주는 결과보다 한 틱쯤 늦게 바뀔 수 있다. `player_needs_reduced`와 `item_consumed`는 어떤 클라이언트에도 보내지 않는다.
+- 정보 공개(ADR-009): 다른 플레이어는 누가 무엇을 먹었는지, 누구의 욕구가 어떤지 어떤 메시지로도 받지 않는다(테스트: 다른 클라이언트의 결과·인벤토리 메시지·생존 이벤트가 0개).
+
+저장: 승인된 소비는 그것만으로 저장하지 않는다(`InventoryNetSettings.save_after_consume` 기본 false). 다음에 일어나는 저장(60초 자동 저장, 플레이어 퇴장, 서버 종료, 줍기·내려놓기)에 함께 들어간다. 저장은 항상 월드 전체(아이템과 플레이어 상태)를 한 번에 쓰므로, 서버가 비정상 종료하면 마지막 저장 뒤의 소비는 "아이템도 돌아오고 욕구도 돌아온" 상태로 복구된다(한쪽만 반영된 저장은 없다). 잃을 수 있는 범위는 마지막 저장 이후의 소비, 기본 설정에서 최대 60초 분량이다. `save_after_consume`을 켜면 내려놓기처럼 결과를 보내기 전에 저장한다. `ServerWorld.remove_player_item`을 서버 규칙이 직접 부른 경우의 "그 틱 끝에 저장"(§14.17)은 그대로다.
+
+클라이언트 표면(`InventoryNetModule`): `request_consume(item_instance_id) -> int`(요청 번호, 1부터. join 전이면 `NO_REQUEST`), `signal consume_result(request_id, ok, reason)`, `send_raw_consume_request(request_id, item_instance_id)`(테스트 전용).
+
+클라이언트 표시(`scripts/presentation/`): 소비 키(`ClientPresentationSettings.consume_key`, 기본 F)를 누르면 `ConsumeIntentPolicy.first_consumable_item_id`가 인벤토리 미러에서 첫 소비 가능 아이템(미러 순서, 정적 아이템 카탈로그로 판단)을 골라 그 ID만 `request_consume`으로 보낸다. 없으면 보내지 않고 안내 문구만 띄운다. 요청 사이 최소 간격(`consume_min_interval_sec`)은 공격 입력과 같은 로컬 flood guard(`AttackIntentPolicy`)다. HUD에 인벤토리 요약(`ClientPresentationFormatter.build_inventory_lines`: 묶음 수, 종류별 이름·합계 수량, 설정된 줄 수까지)과 마지막 소비 결과(승인 또는 서버 사유 코드, 설정 시간 동안)를 표시한다. 월드에 놓인 아이템은 여전히 화면에 그려지지 않는다.
+
+테스트: `tests/unit/item_consumption_test.gd`(욕구 감소·하한·사망자와 잘못된 양 거부, 소비의 성공·수량 감소·삭제, 거부 경우마다 아이템과 욕구가 그대로임, 생존 시스템 없는 월드, 정의 데이터, 기본 개발용 월드, seed 수량, 저장 → 재생성 → 로드), `tests/integration/consume_net_test.gd`(서버 1 + 클라이언트 2, 실제 ENet: 주워서 먹고 마시면 서버와 본인 미러의 욕구 범주·인벤토리가 일치하고 다른 클라이언트는 아무것도 받지 않음, 조작된 요청 13종, join 전 요청, 빈도 초과와 버킷 분리, 죽은 플레이어, 클라이언트가 보낸 결과 RPC, 소비 저장 방침과 재시작, 즉시 저장 설정, 설정·검증 규칙), `tests/unit/client_presentation_test.gd`(첫 소비 가능 아이템 선택, 인벤토리 요약, 결과 문구, 소비 키 등록·설정 검증).
