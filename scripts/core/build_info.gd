@@ -94,7 +94,16 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    ZombieNet join fragment starts each client at 0); combat event
 ##    sequences may have holes; a refused pickup reports an unknown id as
 ##    "item_not_in_world". No existing RPC signature changed.
-const PROTOCOL_VERSION: int = 13
+## 14: P3-5 (blueprints, materials, work; docs/00 ADR-025, docs/09 §15.5).
+##    StructureNet: three new intents (_rpc_request_deliver,
+##    _rpc_request_work, _rpc_request_cancel), answered with the existing
+##    _rpc_structure_result, and who is working to the clients
+##    (_rpc_work_changed). Changed format: a structure row of
+##    _rpc_structure_rows has 11 values (progress, delivered and required
+##    materials were added), and the "StructureNet" join fragment is schema 2
+##    with a "workers" list. The owner of an inventory that materials left
+##    gets the existing owner-only InventoryNet messages.
+const PROTOCOL_VERSION: int = 14
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

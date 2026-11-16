@@ -43,10 +43,10 @@ extends NetModule
 ## `bad_quantity` (below 0 or above StructureDefinition.MAX_COST_QUANTITY).
 ## What is taken, how fast the work goes and what a cancellation returns is
 ## decided by BuildingService from server state. The inventory the materials
-## left is sent to its owner only, with InventoryNetModule's own messages
-## (the server listens to InventoryService.transaction_committed for
-## `items_taken`); returned materials are world items and InventoryNetModule
-## announces them like any dropped item.
+## left is sent to its owner only, by InventoryNetModule (it replicates the
+## `items_taken` transaction without scheduling a save); returned materials
+## are world items and InventoryNetModule announces them like any dropped
+## item, to the peers that are told about that cell.
 ## Progress is not sent every tick: BuildingService records an event when a
 ## structure becomes `constructing`, every
 ## BuildingSettings.progress_event_step of progress, when its last worker
@@ -113,11 +113,6 @@ const SAVE_REASON_DOOR: String = "structure_door"
 const SAVE_REASON_DELIVERED: String = "structure_materials_delivered"
 const SAVE_REASON_CANCELLED: String = "structure_cancelled"
 const SAVE_REASON_COMPLETED: String = "structure_completed"
-## InventoryNetModule's messages to the owner of an inventory, sent by name
-## for the materials a delivery took (that file belongs to another ticket;
-## on_server_started checks that they exist).
-const RPC_INVENTORY_ITEM_CHANGED: StringName = &"_rpc_inventory_item_changed"
-const RPC_INVENTORY_ITEMS_REMOVED: StringName = &"_rpc_inventory_items_removed"
 ## Returned by the request functions when nothing was sent.
 const NO_REQUEST: int = 0
 ## Longest reason code a client accepts in a result.
@@ -247,14 +242,10 @@ func on_server_started(world: ServerWorld) -> void:
 	_deliver_limiter = RateLimiter.new(_settings.deliver_intent_rate_per_sec, _settings.deliver_intent_burst)
 	_work_limiter = RateLimiter.new(_settings.work_intent_rate_per_sec, _settings.work_intent_burst)
 	_completion_unsaved = false
-	# P3-5: the materials a delivery takes leave an inventory; its owner is
-	# told with InventoryNetModule's messages.
+	# P3-5: the inventory module replicates the materials a delivery takes
+	# and the items a cancellation returns; here only its pending save is
+	# used (_save). Null in an assembly without it.
 	_inventory_net = network.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule
-	if _inventory_net == null or not _inventory_net.has_method(RPC_INVENTORY_ITEM_CHANGED) or not _inventory_net.has_method(RPC_INVENTORY_ITEMS_REMOVED):
-		GameLogger.error("net", "the inventory messages are missing; delivered materials are not replicated to their owner", {"world_id": world.world_id, "module": MODULE_NAME, "operation": "on_server_started"})
-		_inventory_net = null
-	if not world.inventory.transaction_committed.is_connected(_on_inventory_transaction):
-		world.inventory.transaction_committed.connect(_on_inventory_transaction)
 	_cells = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
 	if _cells != null:
 		_cells.cell_loaded.connect(_on_cell_loaded)
@@ -262,8 +253,6 @@ func on_server_started(world: ServerWorld) -> void:
 
 
 func _exit_tree() -> void:
-	if _world != null and _world.inventory.transaction_committed.is_connected(_on_inventory_transaction):
-		_world.inventory.transaction_committed.disconnect(_on_inventory_transaction)
 	if _cells == null:
 		return
 	if _cells.cell_loaded.is_connected(_on_cell_loaded):
@@ -497,54 +486,6 @@ func _on_cell_unloading(cell_id: String) -> void:
 			_building.stop_work(player_id, BuildingService.STOP_UNLOADED)
 	_flush_events()
 	_broadcast_removed(Array(structure_ids))
-
-
-## P3-5: materials left an inventory for a structure
-## (InventoryService.take_items). The owner of that inventory is told its
-## smaller stacks and the stacks that are gone, with InventoryNetModule's
-## own messages; nobody else is told anything about that inventory.
-func _on_inventory_transaction(event: Dictionary) -> void:
-	if network == null or not network.is_server() or _inventory_net == null:
-		return
-	if str(event.get("event_type", "")) != InventoryService.EVENT_ITEMS_TAKEN:
-		return
-	var inventory_id: String = str(event.get("inventory_id", ""))
-	var owner_peer: int = _owner_peer(inventory_id)
-	if owner_peer == 0:
-		return
-	var gone: Array = []
-	var taken: Variant = event.get("taken", [])
-	for entry: Variant in (taken as Array if typeof(taken) == TYPE_ARRAY else []):
-		if typeof(entry) != TYPE_DICTIONARY:
-			continue
-		var item_id: String = str((entry as Dictionary).get("item_instance_id", ""))
-		var item: ItemInstance = _world.inventory.get_item(item_id)
-		# Only what is in that inventory now is ever sent to its owner.
-		if item == null or item.location_type != ItemInstance.LOCATION_INVENTORY or item.location_id != inventory_id:
-			gone.append(item_id)
-			continue
-		var data: Dictionary = item.to_dict()
-		# The server holds its own output to the rule its clients apply.
-		if not InventoryNetModule.is_valid_inventory_item(data):
-			GameLogger.error("net", "inventory item not replicated", {"entity_id": item_id, "module": MODULE_NAME, "operation": "replicate_taken"})
-			continue
-		_inventory_net.rpc_id(owner_peer, RPC_INVENTORY_ITEM_CHANGED, data)
-	var offset: int = 0
-	while offset < gone.size():
-		var message: Array = gone.slice(offset, offset + InventoryNetModule.MAX_ITEMS_PER_MESSAGE)
-		_inventory_net.rpc_id(owner_peer, RPC_INVENTORY_ITEMS_REMOVED, message)
-		offset += message.size()
-
-
-## Peer of the online player whose inventory is `inventory_id`, or 0.
-func _owner_peer(inventory_id: String) -> int:
-	for player_id: String in _world.online_player_ids():
-		var state: PlayerState = _world.get_player(player_id)
-		if state == null or state.inventory_id != inventory_id:
-			continue
-		var peer_id: int = network.peer_of_player(player_id)
-		return peer_id if peer_id != 0 and network.can_send_to(peer_id) else 0
-	return 0
 
 
 ## Tells every joined peer that a player started or stopped working on a

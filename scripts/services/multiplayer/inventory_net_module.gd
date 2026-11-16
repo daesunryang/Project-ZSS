@@ -511,10 +511,37 @@ func _on_inventory_transaction(event: Dictionary) -> void:
 		# the carried stacks that grew are sent from here.
 		_replicate_merged(event)
 		return
+	elif event_type == InventoryService.EVENT_ITEMS_TAKEN:
+		# P3-5: materials went into a structure. Replicated to the owner; no
+		# save is scheduled here (whoever took them decides, docs/00 ADR-025).
+		_replicate_taken(event)
+		return
 	else:
 		return
 	if not _leave_to_next_save:
 		_save_pending = true
+
+
+## Units of carried stacks went into something that is not an item any more
+## (InventoryService.take_items, P3-5: materials delivered to a structure).
+## Only the owner is told: its smaller stacks, and the stacks that are gone.
+func _replicate_taken(event: Dictionary) -> void:
+	var inventory_id: String = str(event.get("inventory_id", ""))
+	var owner_peer: int = _owner_peer(inventory_id)
+	if owner_peer == 0:
+		return
+	var gone: Array = []
+	var taken: Variant = event.get("taken", [])
+	for entry: Variant in (taken as Array if typeof(taken) == TYPE_ARRAY else []):
+		var item_id: String = str((entry as Dictionary).get("item_instance_id", "")) if typeof(entry) == TYPE_DICTIONARY else ""
+		var item: ItemInstance = _world.inventory.get_item(item_id)
+		# Only what is in that inventory now is ever sent to its owner.
+		if item != null and item.location_type == ItemInstance.LOCATION_INVENTORY and item.location_id == inventory_id:
+			_send_inventory_item(owner_peer, item)
+		elif not item_id.is_empty():
+			gone.append(item_id)
+	for message: Array in _split(gone):
+		_rpc_inventory_items_removed.rpc_id(owner_peer, message)
 
 
 ## Items left an inventory and now lie in the world: the owner is told what

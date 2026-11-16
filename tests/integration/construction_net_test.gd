@@ -823,7 +823,7 @@ func test_a_construction_survives_a_server_restart_and_a_crash_loses_no_material
 
 # ------------------------------------------------------------ 7. returned materials
 
-func test_returned_materials_appear_as_world_items_for_every_client() -> void:
+func test_returned_materials_appear_as_world_items_for_the_clients_that_see_the_place() -> void:
 	assert_true(_start(), "server started")
 	var planks: String = _lay(PLANK, 6)
 	var nails: String = _lay(NAIL, 4)
@@ -832,8 +832,16 @@ func test_returned_materials_appear_as_world_items_for_every_client() -> void:
 		return
 	var a: NetworkService = clients[0]
 	var b: NetworkService = clients[1]
+	# Carol is far away: the spawn cell is not one of her cells (P3-2).
+	var c: NetworkService = await _cluster.join_client("carol")
+	assert_not_null(c)
+	_player(c).position = FAR_SPOT
+	var carol_peer: int = _cluster.server.peer_of_player(_id(c))
+	assert_true(await _eventually(func() -> bool: return not _cluster.server.is_cell_of_interest(carol_peer, "cell_0_0")), "carol is not told about the spawn cell")
+	var carol_items: Array[int] = [0]
+	_inventory_net(c).world_items_added.connect(func(ids: PackedStringArray) -> void: carol_items[0] += ids.size())
 	await _pick_up(b, [planks, nails])
-	assert_true(await _eventually(func() -> bool: return a.client_state.world_items.is_empty()), "nothing lies in the world")
+	assert_true(await _eventually(func() -> bool: return a.client_state.world_items.is_empty() and c.client_state.world_items.is_empty()), "nothing lies in the world")
 	var wall_id: String = (await _place(a, WALL))[2]
 	assert_eq(await _deliver(b, wall_id), [true, "", wall_id])
 	assert_eq(await _work(b, wall_id, true), [true, "", wall_id])
@@ -853,6 +861,12 @@ func test_returned_materials_appear_as_world_items_for_every_client() -> void:
 		assert_eq(seen, {PLANK: 4, NAIL: 2}, "everything that was delivered, nothing more")
 		assert_eq(_mirror(client).workers.size(), 0, "bob's work ended with the wall")
 	assert_true(_matches_server(a) and _matches_server(b))
+	# Returned materials are a drop in that cell: a client that is not told
+	# about the cell hears nothing of them.
+	await _settle()
+	assert_eq(c.client_state.world_items.size(), 0, "carol, far away, does not get the returned materials")
+	assert_eq(carol_items[0], 0, "no world item message reached her")
+	assert_eq(_cluster.server.peers_interested_in("cell_0_0").has(carol_peer), false)
 	# They are ordinary items: alice, who paid nothing, picks the planks up.
 	var returned_planks: String = ""
 	for item_id: String in a.client_state.world_items:
@@ -864,7 +878,11 @@ func test_returned_materials_appear_as_world_items_for_every_client() -> void:
 	assert_eq(_mirrored_units(a, PLANK), 4)
 	assert_eq(ConstructionTestKit.total(_world, [_player(a), _player(b)], PLANK), 6, "six planks came into this world and six are in it")
 	assert_eq(ConstructionTestKit.total(_world, [_player(a), _player(b)], NAIL), 4)
-	_clean(clients)
+	# Carol walks there: now the place is hers to see, with what still lies there.
+	_player(c).position = SPAWN
+	assert_true(await _eventually(func() -> bool: return c.client_state.world_items.size() == 1), "carol sees the nails that are left when she comes")
+	assert_eq(c.client_state.world_items, b.client_state.world_items, "the same as bob, who stood there all along")
+	_clean([a, b, c])
 
 
 # ------------------------------------------------------------ rules (no network)

@@ -233,7 +233,7 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. 시스템 사이의 시그널 연결도 여기서 한다(P2-T5: `SurvivalService.player_died` → `ZombieService.on_player_died`, §14.20). `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
 | 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가), player v2→v3(`character_generation` 추가, 값은 1. P2-T4), player v3→v4(`character` 추가, 값은 기본 이름과 빈 외형. P2-T9, §14.24). `SaveService` 기본 마이그레이터 |
 
-채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 13(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24), P2-T10~T12 묶음에서 8: 기상 원인(§14.25), `PostureNet` 모듈(§14.26), 다른 플레이어 치료(§14.27), P2-T14에서 9: 건네기 의도와 건네기 알림(§14.28), P2-T15에서 10: 건네기 RPC 삭제와 내려놓기 수량(§14.29), P2-T16에서 11: `TradeNet` 모듈(§14.30), P3-4a에서 12: `StructureNet` 모듈(§15.4), P3-2에서 13: 셀 기반 복제 범위(§15.2)). 버전별 메시지 목록은 `scripts/core/build_info.gd`의 주석에 있다.
+채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 14(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24), P2-T10~T12 묶음에서 8: 기상 원인(§14.25), `PostureNet` 모듈(§14.26), 다른 플레이어 치료(§14.27), P2-T14에서 9: 건네기 의도와 건네기 알림(§14.28), P2-T15에서 10: 건네기 RPC 삭제와 내려놓기 수량(§14.29), P2-T16에서 11: `TradeNet` 모듈(§14.30), P3-4a에서 12: `StructureNet` 모듈(§15.4), P3-2에서 13: 셀 기반 복제 범위(§15.2), P3-5에서 14: 건축 의도 셋·작업 변화 메시지·구조물 행 11값·접속 조각 스키마 2(§15.5)). 버전별 메시지 목록은 `scripts/core/build_info.gd`의 주석에 있다.
 
 P2-T11에서 `ServerSystem`에 훅 넷이 추가됐다(모두 기본값은 "영향 없음"이고 `ServerWorld`의 같은 이름 함수가 모든 시스템의 값을 모은다, §14.26): `player_attack_block_reason(player_id)`(공격만 막는 사유. `ServerWorld.player_attack_block_reason`은 행동 전체를 막는 사유를 먼저 본다), `player_visibility_multiplier(player_id)`(좀비 시야 거리에 곱하는 가시성, 곱을 0~1로 제한), `player_footstep_loudness_multiplier(player_id)`·`player_footstep_stride_multiplier(player_id)`(발소리 세기·보폭 배율, 곱). 잘못된 값(NaN·무한·음수)은 오류 로그를 남기고 무시한다(1.0으로 취급: 고장 난 시스템이 누구도 숨기지 못한다). 조립에 시그널 연결 둘이 늘었다: `SurvivalService.rest_changed`·`player_died` → `PostureService.on_rest_changed`·`on_player_died`.
 
@@ -2208,7 +2208,7 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 
 ### 15.5 건축 흐름: 청사진·자재·작업·완공(P3-5, docs/00 ADR-025, system id `building`, 모듈 `StructureNet`)
 
-서버·네트워크·클라이언트 미러까지다. 청사진을 화면에 그리는 것과 건축 모드 입력은 P3-4b다. 보관 상자는 P3-3으로 옮겼다(docs/13 §15). **프로토콜 변경 있음**: RPC 넷이 새로 생기고 구조물 행과 접속 조각의 형식이 바뀌었다. 이 브랜치에서는 `BuildInfo.PROTOCOL_VERSION`(12)을 올리지 않았다(다른 티켓이 `build_info.gd`를 고치고 있다): **병합할 때 13으로 올려야 한다.** 올리기 전의 12 클라이언트는 새 서버의 행(값 11개)을 전부 거부한다.
+서버·네트워크·클라이언트 미러까지다. 청사진을 화면에 그리는 것과 건축 모드 입력은 P3-4b다. 보관 상자는 P3-3으로 옮겼다(docs/13 §15). **프로토콜 변경 있음**: RPC 넷이 새로 생기고 구조물 행과 접속 조각의 형식이 바뀌었다. `BuildInfo.PROTOCOL_VERSION` 13 → **14**(13은 먼저 병합된 P3-2의 셀 기반 복제 범위다, §15.2). 13 이하의 클라이언트는 접속 단계에서 거부된다.
 
 **정의와 설정**
 
@@ -2251,8 +2251,8 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 
 **인벤토리 트랜잭션 둘**(티켓 밖의 구조 변경, `InventoryService`):
 
-- `take_items(inventory_id, takes) -> ActionResult`: `takes`는 `[{item_instance_id, quantity}]`. 한 인벤토리의 여러 묶음에서 단위를 한 번에 뺀다(전부 또는 전무). 비워진 묶음은 삭제되고 ID가 은퇴한다. 이벤트 `items_taken {inventory_id, taken: [{item_instance_id, definition_id, quantity, remaining_quantity}]}`. 빠진 단위는 더는 아이템이 아니다: 부른 쪽이 수량을 기억한다. `InventoryNetModule`은 이 이벤트를 모른다(복제도 저장 예약도 하지 않는다): `StructureNetModule`이 소유자에게 알린다.
-- `place_world_items(quantities, cell_id, position) -> ActionResult`: 인벤토리에서 나오지 않은 새 아이템을 월드에 놓는다(`{정의 ID: 수량}`, 정의 ID 순, 묶음 크기대로 나눔, 전부 또는 전무). 이벤트는 `items_dropped`이고 `inventory_id`가 `""`이며 `placed: [{item_instance_id, definition_id, quantity}]`가 더 붙는다. 그래서 `InventoryNetModule`이 수정 없이 내려놓은 아이템과 똑같이 모든 접속자에게 알린다.
+- `take_items(inventory_id, takes) -> ActionResult`: `takes`는 `[{item_instance_id, quantity}]`. 한 인벤토리의 여러 묶음에서 단위를 한 번에 뺀다(전부 또는 전무). 비워진 묶음은 삭제되고 ID가 은퇴한다. 이벤트 `items_taken {inventory_id, taken: [{item_instance_id, definition_id, quantity, remaining_quantity}]}`. 빠진 단위는 더는 아이템이 아니다: 부른 쪽이 수량을 기억한다. `InventoryNetModule`이 그 인벤토리의 주인에게 알리되(`_replicate_taken`) **저장은 예약하지 않는다**: 언제 저장할지는 부른 쪽이 정한다.
+- `place_world_items(quantities, cell_id, position) -> ActionResult`: 인벤토리에서 나오지 않은 새 아이템을 월드에 놓는다(`{정의 ID: 수량}`, 정의 ID 순, 묶음 크기대로 나눔, 전부 또는 전무). 이벤트는 `items_dropped`이고 `inventory_id`가 `""`이며 `placed: [{item_instance_id, definition_id, quantity}]`가 더 붙는다. 그래서 `InventoryNetModule`이 수정 없이 내려놓은 아이템과 똑같이, 그 셀에 관심 있는 접속자에게 알린다(§15.2).
 - 두 트랜잭션 모두 `transaction_committed`로 나가므로 `TradeService`의 제안 재조정(§14.30)이 불린다. 거래 중에 제안에 올린 묶음을 청사진에 넣는 경우는 시험하지 않았다(docs/15 §15.5).
 
 **월드 셀과 저장 배치**: 문서 스키마 2(`SCHEMA_VERSION`, `CELL_SCHEMA_VERSION`), 구조물 문서의 새 필드는 docs/14 §3. 스키마 1(`SCHEMA_VERSION_P3_4A`) 문서는 읽을 때 올린다. 복구 검증에 "상태·진행률·자재가 서로 맞는가"가 더해졌다(틀리면 그 문서 전체를 거부). 셀이 내려갈 때 그 셀의 조각에서 일하던 작업자는 멈춘다(실제로는 그 전에 `too_far`로 멈춘다: 작업 사거리 2.5m, 셀 해제는 플레이어에게서 먼 셀). 누가 일하는지는 어디에도 저장하지 않는다.
@@ -2285,8 +2285,8 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 - 접속 조각: `{schema_version: 2, structures: [행, ...], workers: [[player_id, structure_id], ...]}`. 작업자는 조각에 든 구조물만 가리킨다.
 - 의도 검증: §15.4의 순서 그대로이고 모양 검사에 `bad_item_id`(아이템 ID 64자 초과), `bad_quantity`(0 미만 또는 10000 초과: 64비트 수로 비교한 뒤에 규칙에 넘긴다)가 더해졌다. 빈도는 배달·작업이 각자의 버킷, 취소는 철거 버킷이다.
 - 진행률은 틱마다 보내지 않는다: `BuildingService`가 남긴 이벤트 하나가 행 하나다(위 "작업"의 진행률 이벤트 규칙). 완공과 상태 변화는 그 틱에 간다. 작업자가 남아 있는 동안 미러의 진행률은 최대 한 단계(5%)만큼 서버보다 뒤처질 수 있고, 마지막 작업자가 멈추면 정확한 값이 간다.
-- 자재를 넣은 플레이어의 인벤토리: 서버가 `InventoryService.transaction_committed`의 `items_taken`을 듣고, **그 인벤토리의 주인에게만** `InventoryNetModule`의 기존 메시지(`_rpc_inventory_item_changed`, `_rpc_inventory_items_removed`)를 보낸다. 다른 접속자는 남의 인벤토리에 대해 아무것도 받지 않는다(구조물 행의 `delivered`만 본다). 두 메시지는 이름으로 부른다(`inventory_net_module.gd`가 다른 티켓 소유라서: `WorldCellNetModule`과 같은 방식). 순서는 인벤토리 변화 → 구조물 행 → 요청 결과다.
-- 환급된 아이템: `InventoryNetModule`이 기존 `_rpc_world_items_added`로 모든 접속자에게 보낸다(이 모듈은 아무것도 하지 않는다).
+- 자재를 넣은 플레이어의 인벤토리: `InventoryNetModule`이 `items_taken` 트랜잭션을 **그 인벤토리의 주인에게만** 기존 메시지(`_rpc_inventory_item_changed`, `_rpc_inventory_items_removed`)로 복제한다. 다른 접속자는 남의 인벤토리에 대해 아무것도 받지 않는다(구조물 행의 `delivered`만 본다). 순서는 인벤토리 변화 → 구조물 행 → 요청 결과다. (처음에는 `StructureNetModule`이 이 두 메시지를 이름으로 불렀다. main 위로 옮기면서 `InventoryNetModule`에 분기 하나와 함수 하나를 넣고 그 우회를 없앴다: docs/15 P3-142.)
+- 환급된 아이템: `InventoryNetModule`이 기존 `_rpc_world_items_added`로, **그 셀에 관심 있는 접속자에게만** 보낸다(§15.2의 내려놓기와 같은 경로. 이 모듈은 아무것도 하지 않는다). 멀리 있는 접속자는 받지 않고, 걸어 들어오면 그 셀의 다른 아이템과 함께 받는다.
 - 셀이 내려갈 때는 그 셀의 조각에서 일하던 작업자의 중지를 먼저 보내고 그다음에 제거를 보낸다.
 - 진단 값: `sent_work_change_count`, `sent_message_count`(행·제거·작업 변화 메시지 수, 받는 사람 수와 무관하게 메시지 하나를 한 번 센다).
 

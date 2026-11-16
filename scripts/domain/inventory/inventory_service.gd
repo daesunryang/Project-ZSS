@@ -135,9 +135,9 @@ const REASON_SECOND_INVENTORY_FULL: String = "second_inventory_full"
 ## structure): {inventory_id, taken: Array of {item_instance_id,
 ##  definition_id, quantity (units taken), remaining_quantity (what the
 ##  stack still holds; 0 = the instance no longer exists)}}, in the order
-## they were asked for. InventoryNetModule does not know this event: whoever
-## calls take_items tells the owner (StructureNetModule does) and decides
-## when the world is saved.
+## they were asked for. InventoryNetModule tells the owner of the inventory
+## but schedules no save for it: whoever calls take_items decides when the
+## world is saved (docs/00 ADR-025).
 const EVENT_ITEMS_TAKEN: String = "items_taken"
 ## A request names an item definition the catalog does not have.
 const REASON_UNKNOWN_DEFINITION: String = "unknown_item_definition"
