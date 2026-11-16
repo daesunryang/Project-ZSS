@@ -32,8 +32,8 @@ extends NetModule
 ##                                       working:bool, reason:String)        reliable, ch0
 ## Every request is answered with _rpc_structure_result.
 ## Initial state: join fragment {schema_version, structures: [row, ...],
-## workers: [[player_id, structure_id], ...]} with every structure the
-## server has in memory and everybody who is working.
+## workers: [[player_id, structure_id], ...]} with the structures of the
+## joining peer's cells and the players working on them.
 ##
 ## Construction (P3-5). Deliver: the client names the structure, one of its
 ## carried stacks ("" = whatever it carries that is needed) and how many
@@ -51,8 +51,8 @@ extends NetModule
 ## structure becomes `constructing`, every
 ## BuildingSettings.progress_event_step of progress, when its last worker
 ## stops and when it is completed, and each event is one row. Who is working
-## is sent to everybody (_rpc_work_changed): it is something anybody
-## standing there can see.
+## is sent to the peers that see the structure (_rpc_work_changed): it is
+## something anybody standing there can see.
 ##
 ## Intents. A client names what it wants: a definition, a tile and a
 ## rotation (whole numbers: a request cannot be off the grid); a structure
@@ -70,18 +70,46 @@ extends NetModule
 ## `structure_id` is the structure that was placed, demolished or changed
 ## ("" on a refusal).
 ##
-## Replication. A structure is something anybody can see, so every joined
-## peer gets every structure in the server's memory: no interest management
-## yet (docs/15 P3-112; per-client scope is P3-2). BuildingService records
-## events; this module drains them every server tick, and at once when a
-## request was accepted, so that everybody learns of a change before the
-## requester gets its answer (same ordered channel). This module is the
-## only consumer of BuildingService.drain_events().
+## Replication. A structure is something anybody standing there can see.
+## BuildingService records events; this module drains them every server
+## tick, and at once when a request was accepted, so that the peers that see
+## the structure learn of a change before the requester gets its answer
+## (same ordered channel). This module is the only consumer of
+## BuildingService.drain_events().
 ##
-## World cells (docs/09 §15.1): when a cell comes into memory its
-## structures are sent as rows, when it is about to leave memory as
-## removals. Nothing was built or demolished in the world then, so those are
-## not BuildingService events.
+## Scope by cell (docs/09 §15.2, §15.5; docs/15 P3-056 resolved). A peer is
+## told only about the structures of the cells it is told about
+## (NetworkService.cell_interest), and about who works on those structures:
+##   - the join fragment holds the structures and workers of the joining
+##     peer's cells (none for a player without a character);
+##   - when a peer gains a cell (it walked there, entered the world, or the
+##     cell came into the server's memory) it gets that cell's structures as
+##     rows and their workers as work changes; when it loses a cell (it
+##     walked away, or the cell is about to leave memory) it gets one removal
+##     for that cell's structures. The mirror drops their workers with them.
+##     Nothing was built or demolished then: these are no BuildingService
+##     events;
+##   - every event goes to NetworkService.peers_interested_in(the cell of
+##     the structure) only. Events of a cell that are still queued when a
+##     peer gains or loses that cell are sorted out first, so a mirror never
+##     gets a removal or a stop for something it was not told about, and
+##     never keeps something that was removed while it left;
+##   - the requester always gets the answer to its own request.
+## Invariant: a mirror holds exactly the structures of the peer's cells.
+## Without an interest module (an assembly that did not install it) every
+## joined peer is told about everything and cells are not followed.
+##
+## What a requester may learn (docs/00 ADR-009). A request that names a
+## structure the requester is not told about is handled as if it named a
+## structure that does not exist: the rule is asked about no structure, so
+## the answer (normally `unknown_structure`, or the requester's own state
+## such as `player_dead`) is exactly the one an invented id gets, and
+## nothing happens to the structure (counted:
+## hidden_structure_request_count). A request to STOP working is not
+## treated this way: its only refusals (`not_online`, `not_working`) say
+## nothing about any structure. Placement names no structure; its refusals
+## (`slot_occupied`, ...) concern a slot within placement range of the
+## requester (docs/15 P3-058).
 ##
 ## Saving (docs/00 ADR-025). A placement, a cancellation and a demolition
 ## are saved at once (persist_on_place_and_demolish), a completion at the
@@ -113,6 +141,13 @@ const SAVE_REASON_DOOR: String = "structure_door"
 const SAVE_REASON_DELIVERED: String = "structure_materials_delivered"
 const SAVE_REASON_CANCELLED: String = "structure_cancelled"
 const SAVE_REASON_COMPLETED: String = "structure_completed"
+## Kinds of operations queued for a peer while events are sent
+## (_flush_events): a structure row, a removed structure id, a work change.
+const OP_ROW: int = 0
+const OP_REMOVED: int = 1
+const OP_WORK: int = 2
+## _flush_events: the peer named is gaining every cell at once (a join).
+const ALL_CELLS: String = "*"
 ## Returned by the request functions when nothing was sent.
 const NO_REQUEST: int = 0
 ## Longest reason code a client accepts in a result.
@@ -123,23 +158,30 @@ const DEFINITION_ID_MAX_LENGTH: int = 64
 ## Client: the mirror. Stays empty on the server (which uses it to hold its
 ## own rows to the rule its clients apply).
 var client_state: ClientStructureState
-## Diagnostics.
+## Server diagnostics: rows, removed ids, work changes and messages of any of
+## the three kinds sent since the start. Each is counted once per peer it
+## was sent to (peers get different streams since the scope by cell).
 var sent_row_count: int = 0
 var sent_removal_count: int = 0
 var unsendable_row_count: int = 0
-## Work changes announced, and messages of any kind (rows, removals, work
-## changes) made since the start; one message counts once however many
-## peers it goes to.
 var sent_work_change_count: int = 0
 var sent_message_count: int = 0
 ## Client: results from the server that failed validation.
 var rejected_payload_count: int = 0
+## Client (diagnostics): replication messages received from the server (rows,
+## removals, work changes; not the answers to this client's own requests)
+## and what they carried.
+var received_message_count: int = 0
+var received_row_count: int = 0
+var received_removal_count: int = 0
+var received_work_change_count: int = 0
 
 var _settings: StructureNetSettings
 # --- server state ---
 var _world: ServerWorld = null
 var _building: BuildingService = null
-var _cells: WorldCellService = null
+## The session's cell interest (docs/09 §15.2), or null without the module.
+var _interest: CellInterest = null
 var _place_limiter: RateLimiter = null
 var _demolish_limiter: RateLimiter = null
 var _door_limiter: RateLimiter = null
@@ -148,6 +190,9 @@ var _work_limiter: RateLimiter = null
 var _inventory_net: InventoryNetModule = null
 ## A structure was completed and the world was not saved since.
 var _completion_unsaved: bool = false
+## Diagnostics: requests that named a structure the requester is not told
+## about and were answered as if it did not exist.
+var hidden_structure_request_count: int = 0
 # --- client state ---
 var _last_request_id: int = NO_REQUEST
 
@@ -246,19 +291,25 @@ func on_server_started(world: ServerWorld) -> void:
 	# and the items a cancellation returns; here only its pending save is
 	# used (_save). Null in an assembly without it.
 	_inventory_net = network.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule
-	_cells = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
-	if _cells != null:
-		_cells.cell_loaded.connect(_on_cell_loaded)
-		_cells.cell_unloading.connect(_on_cell_unloading)
+	# Scope by cell: the interest module (registered first) decides who is
+	# told about which cell; a cell entering or leaving the server's memory
+	# reaches this module through it as a gain or a loss.
+	_interest = network.cell_interest
+	if _interest == null:
+		GameLogger.warning("net", "no interest module: every joined peer is told about every structure", {"world_id": world.world_id, "module": MODULE_NAME, "operation": "on_server_started"})
+		return
+	_interest.cell_gained.connect(_on_cell_gained)
+	_interest.cell_lost.connect(_on_cell_lost)
 
 
 func _exit_tree() -> void:
-	if _cells == null:
+	if _interest == null:
 		return
-	if _cells.cell_loaded.is_connected(_on_cell_loaded):
-		_cells.cell_loaded.disconnect(_on_cell_loaded)
-	if _cells.cell_unloading.is_connected(_on_cell_unloading):
-		_cells.cell_unloading.disconnect(_on_cell_unloading)
+	if _interest.cell_gained.is_connected(_on_cell_gained):
+		_interest.cell_gained.disconnect(_on_cell_gained)
+	if _interest.cell_lost.is_connected(_on_cell_lost):
+		_interest.cell_lost.disconnect(_on_cell_lost)
+	_interest = null
 
 
 func on_player_left(peer_id: int, _player_id: String) -> void:
@@ -276,17 +327,35 @@ func server_physics(_delta: float) -> void:
 			network.persist(SAVE_REASON_COMPLETED)
 
 
-## Every structure in memory as it is right now. Events still queued in
-## BuildingService are sent to the peers that are joined already first, so
-## the fragment and the stream never disagree.
-func build_join_fragment(_player_id: String) -> Dictionary:
+## The structures of the joining peer's cells as they are right now, and the
+## players working on them (the peer's first cells are decided already: the
+## interest module builds its fragment first). Events still queued in
+## BuildingService are sent first, to everybody but the joining peer (the
+## fragment already holds their outcome), so the fragment and the stream
+## never disagree.
+func build_join_fragment(player_id: String) -> Dictionary:
 	if _building == null:
 		return {}
-	_flush_events()
+	var peer_id: int = network.peer_of_player(player_id)
+	_flush_events(peer_id, ALL_CELLS, false)
+	var rows: Array = []
+	var visible: Dictionary[String, bool] = {}
+	for public_row: Dictionary in _building.rows():
+		var structure_id: String = str(public_row.get(BuildingService.KEY_STRUCTURE_ID, ""))
+		if not _is_told_about(peer_id, structure_id):
+			continue
+		var row: Array = _checked_row(public_row, "build_join_fragment")
+		if not row.is_empty():
+			rows.append(row)
+			visible[structure_id] = true
+	var workers: Array = []
+	for worker: Array in _building.worker_rows():
+		if visible.has(str(worker[1])):
+			workers.append(worker)
 	return {
 		ClientStructureState.KEY_SCHEMA_VERSION: ClientStructureState.SCHEMA_VERSION,
-		ClientStructureState.KEY_STRUCTURES: _encode_rows(_building.rows()),
-		ClientStructureState.KEY_WORKERS: _building.worker_rows(),
+		ClientStructureState.KEY_STRUCTURES: rows,
+		ClientStructureState.KEY_WORKERS: workers,
 	}
 
 
@@ -318,7 +387,7 @@ func _rpc_request_demolish(request_id: Variant, structure_id: Variant) -> void:
 	var player_id: String = network.sender_player_id()
 	if not _accept_request(peer_id, player_id, INTENT_DEMOLISH, request_id, validate_demolish_request(request_id, structure_id), _demolish_limiter):
 		return
-	var result: ActionResult = _building.try_demolish(_world, player_id, str(structure_id))
+	var result: ActionResult = _building.try_demolish(_world, player_id, _id_for_rule(peer_id, str(structure_id)))
 	_finish_request(peer_id, player_id, INTENT_DEMOLISH, int(request_id), result, _settings.persist_on_place_and_demolish, SAVE_REASON_REMOVED)
 
 
@@ -330,7 +399,7 @@ func _rpc_request_door(request_id: Variant, structure_id: Variant, open: Variant
 	var player_id: String = network.sender_player_id()
 	if not _accept_request(peer_id, player_id, INTENT_DOOR, request_id, validate_door_request(request_id, structure_id, open), _door_limiter):
 		return
-	var result: ActionResult = _building.try_set_door(_world, player_id, str(structure_id), bool(open))
+	var result: ActionResult = _building.try_set_door(_world, player_id, _id_for_rule(peer_id, str(structure_id)), bool(open))
 	_finish_request(peer_id, player_id, INTENT_DOOR, int(request_id), result, _settings.persist_on_door_change, SAVE_REASON_DOOR)
 
 
@@ -344,7 +413,7 @@ func _rpc_request_deliver(request_id: Variant, structure_id: Variant, item_insta
 		return
 	# The owner's inventory is replicated inside this call
 	# (transaction_committed), before the row and the result.
-	var result: ActionResult = _building.try_deliver(_world, player_id, str(structure_id), str(item_instance_id), int(quantity))
+	var result: ActionResult = _building.try_deliver(_world, player_id, _id_for_rule(peer_id, str(structure_id)), str(item_instance_id), int(quantity))
 	_finish_request(peer_id, player_id, INTENT_DELIVER, int(request_id), result, _settings.persist_on_delivery, SAVE_REASON_DELIVERED)
 
 
@@ -356,7 +425,9 @@ func _rpc_request_work(request_id: Variant, structure_id: Variant, working: Vari
 	var player_id: String = network.sender_player_id()
 	if not _accept_request(peer_id, player_id, INTENT_WORK, request_id, validate_work_request(request_id, structure_id, working), _work_limiter):
 		return
-	var result: ActionResult = _building.try_set_work(_world, player_id, str(structure_id), bool(working))
+	# A stop request is passed on as it is: its refusals reveal no structure.
+	var named: String = _id_for_rule(peer_id, str(structure_id)) if bool(working) else str(structure_id)
+	var result: ActionResult = _building.try_set_work(_world, player_id, named, bool(working))
 	# Who works is not saved at all.
 	_finish_request(peer_id, player_id, INTENT_WORK, int(request_id), result, false, "")
 
@@ -370,7 +441,7 @@ func _rpc_request_cancel(request_id: Variant, structure_id: Variant) -> void:
 	# The demolish bucket: both take a structure out of the world.
 	if not _accept_request(peer_id, player_id, INTENT_CANCEL, request_id, validate_cancel_request(request_id, structure_id), _demolish_limiter):
 		return
-	var result: ActionResult = _building.try_cancel(_world, player_id, str(structure_id))
+	var result: ActionResult = _building.try_cancel(_world, player_id, _id_for_rule(peer_id, str(structure_id)))
 	_finish_request(peer_id, player_id, INTENT_CANCEL, int(request_id), result, _settings.persist_on_place_and_demolish, SAVE_REASON_CANCELLED)
 
 
@@ -430,78 +501,140 @@ func _send_result(peer_id: int, request_id: int, ok: bool, reason: String, struc
 		_rpc_structure_result.rpc_id(peer_id, request_id, ok, reason, structure_id)
 
 
-## Sends what BuildingService recorded since the last call to every joined
-## peer, in the order it happened.
-func _flush_events() -> void:
+## The structure id a rule is asked about for a request of `peer_id`:
+## `structure_id` itself, or "" (no structure at all) when it names a
+## structure the peer is not told about. See "What a requester may learn".
+func _id_for_rule(peer_id: int, structure_id: String) -> String:
+	if not _building.has_structure(structure_id) or _is_told_about(peer_id, structure_id):
+		return structure_id
+	hidden_structure_request_count += 1
+	return ""
+
+
+## True when the structure is in memory and in one of the peer's cells.
+func _is_told_about(peer_id: int, structure_id: String) -> bool:
+	var structure: StructureInstance = _building.get_structure(structure_id)
+	return structure != null and network.is_cell_of_interest(peer_id, structure.cell_id)
+
+
+## Sends what BuildingService recorded since the last call, in the order it
+## happened, each event to the peers that are told about its cell.
+## `peer_id` / `cell_id` name a peer that is gaining (`leaving` false) or
+## losing (`leaving` true) a cell right now, when the interest set already
+## shows the new state: the queued events of that cell do not go to a peer
+## that is about to get the whole cell, and still go to a peer that is
+## about to have the cell taken away. `cell_id` ALL_CELLS (with `leaving`
+## false) is a peer that is joining: no queued event goes to it.
+func _flush_events(peer_id: int = 0, cell_id: String = "", leaving: bool = false) -> void:
 	if _building == null or network == null or not network.is_server():
 		return
 	var events: Array[Dictionary] = _building.drain_events()
 	if events.is_empty():
 		return
-	var rows: Array = []
-	var removed: Array = []
+	# peer id -> its operations in order: [OP_*, payload].
+	var outbox: Dictionary[int, Array] = {}
 	for event: Dictionary in events:
 		var event_type: String = str(event.get("event_type", ""))
+		var operation: Array = []
 		if event_type == BuildingService.EVENT_WORK_STARTED or event_type == BuildingService.EVENT_WORK_STOPPED:
-			_broadcast_rows(rows)
+			operation = _work_operation(event, event_type == BuildingService.EVENT_WORK_STARTED)
+		elif event_type == BuildingService.EVENT_REMOVED:
+			operation = [OP_REMOVED, str(event.get(BuildingService.KEY_STRUCTURE_ID, ""))]
+		else:
+			if event_type == BuildingService.EVENT_CHANGED and str(event.get("cause", "")) == BuildingService.CAUSE_COMPLETED:
+				_completion_unsaved = true
+			var row: Array = _checked_row(event, "flush_events")
+			if not row.is_empty():
+				operation = [OP_ROW, row]
+		if operation.is_empty():
+			continue
+		var event_cell: String = str(event.get("cell_id", ""))
+		var receivers: PackedInt32Array = network.peers_interested_in(event_cell)
+		if peer_id != 0 and (event_cell == cell_id or cell_id == ALL_CELLS):
+			var index: int = receivers.find(peer_id)
+			if leaving and index < 0:
+				receivers.append(peer_id)
+			elif not leaving and index >= 0:
+				receivers.remove_at(index)
+		for receiver: int in receivers:
+			if not outbox.has(receiver):
+				outbox[receiver] = []
+			outbox[receiver].append(operation)
+	for receiver: int in outbox:
+		_send_operations(receiver, outbox[receiver])
+
+
+## Sends one peer its operations in order: consecutive rows as row messages,
+## consecutive removals as removal messages, each work change by itself.
+func _send_operations(peer_id: int, operations: Array) -> void:
+	var rows: Array = []
+	var removed: Array = []
+	for operation: Array in operations:
+		if operation[0] != OP_ROW:
+			_send_rows(peer_id, rows)
 			rows = []
-			_broadcast_removed(removed)
+		if operation[0] != OP_REMOVED:
+			_send_removed(peer_id, removed)
 			removed = []
-			_broadcast_work(event, event_type == BuildingService.EVENT_WORK_STARTED)
-			continue
-		if event_type == BuildingService.EVENT_REMOVED:
-			_broadcast_rows(rows)
-			rows = []
-			removed.append(str(event.get(BuildingService.KEY_STRUCTURE_ID, "")))
-			continue
-		if event_type == BuildingService.EVENT_CHANGED and str(event.get("cause", "")) == BuildingService.CAUSE_COMPLETED:
-			_completion_unsaved = true
-		_broadcast_removed(removed)
-		removed = []
-		var row: Array = _checked_row(event, "flush_events")
-		if not row.is_empty():
-			rows.append(row)
-	_broadcast_rows(rows)
-	_broadcast_removed(removed)
+		if operation[0] == OP_ROW:
+			rows.append(operation[1])
+		elif operation[0] == OP_REMOVED:
+			removed.append(operation[1])
+		else:
+			_send_work(peer_id, operation[1] as Array)
+	_send_rows(peer_id, rows)
+	_send_removed(peer_id, removed)
 
 
-## P3-1: the structures of a cell that came into memory appear on the
-## clients.
-func _on_cell_loaded(cell_id: String) -> void:
+## A peer is told about a cell from now on (it walked there, it entered the
+## world, or the cell came into the server's memory): it gets the cell's
+## structures as they are, then who is working on them.
+func _on_cell_gained(peer_id: int, cell_id: String) -> void:
 	if _building == null or network == null or not network.is_server():
 		return
-	_flush_events()
-	_broadcast_rows(_encode_rows(_building.rows_in_cell(_world, cell_id)))
-
-
-## P3-1: the structures of a cell that is about to leave memory disappear
-## from the clients. Whoever worked on one of them stops first (P3-5), so a
-## client never has a worker on a structure it does not have.
-func _on_cell_unloading(cell_id: String) -> void:
-	if _building == null or network == null or not network.is_server():
-		return
+	_flush_events(peer_id, cell_id, false)
 	var structure_ids: PackedStringArray = _building.structure_ids_in_cell(_world, cell_id)
+	if structure_ids.is_empty():
+		return
+	_send_rows(peer_id, _encode_rows(_building.rows_in_cell(_world, cell_id)))
 	for structure_id: String in structure_ids:
 		for player_id: String in _building.workers_of(structure_id):
-			_building.stop_work(player_id, BuildingService.STOP_UNLOADED)
-	_flush_events()
-	_broadcast_removed(Array(structure_ids))
+			var operation: Array = _work_operation({"player_id": player_id, BuildingService.KEY_STRUCTURE_ID: structure_id}, true)
+			if not operation.is_empty():
+				_send_work(peer_id, operation[1] as Array)
 
 
-## Tells every joined peer that a player started or stopped working on a
-## structure (BuildingService work event).
-func _broadcast_work(event: Dictionary, working: bool) -> void:
+## A peer is no longer told about a cell (it walked away, or the cell is
+## about to leave the server's memory; its structures can still be read):
+## the cell's structures leave its mirror, and their workers with them
+## (ClientStructureState drops the workers of a structure that is removed).
+func _on_cell_lost(peer_id: int, cell_id: String) -> void:
+	if _building == null or network == null or not network.is_server():
+		return
+	_flush_events(peer_id, cell_id, true)
+	_send_removed(peer_id, Array(_building.structure_ids_in_cell(_world, cell_id)))
+
+
+## The operation for a BuildingService work event ([] when it would not pass
+## the check the clients apply: logged and counted).
+func _work_operation(event: Dictionary, working: bool) -> Array:
 	var player_id: String = str(event.get("player_id", ""))
 	var structure_id: String = str(event.get(BuildingService.KEY_STRUCTURE_ID, ""))
 	var reason: String = "" if working else str(event.get("reason", ""))
 	# The server holds its own output to the rule its clients apply.
 	if not PlayerState.is_valid_player_id(player_id) or not StructureInstance.is_valid_structure_id(structure_id) or working != reason.is_empty() or reason.length() > ClientStructureState.REASON_MAX_LENGTH:
 		unsendable_row_count += 1
-		GameLogger.error("net", "work change does not fit the wire format", {"entity_id": structure_id, "player_id": player_id, "module": MODULE_NAME, "operation": "broadcast_work"})
+		GameLogger.error("net", "work change does not fit the wire format", {"entity_id": structure_id, "player_id": player_id, "module": MODULE_NAME, "operation": "work_operation"})
+		return []
+	return [OP_WORK, [player_id, structure_id, working, reason]]
+
+
+## Tells one peer that a player started or stopped working on a structure:
+## `change` is [player_id, structure_id, working, reason].
+func _send_work(peer_id: int, change: Array) -> void:
+	if not network.can_send_to(peer_id):
 		return
-	for peer_id: int in network.joined_peers():
-		if network.can_send_to(peer_id):
-			_rpc_work_changed.rpc_id(peer_id, player_id, structure_id, working, reason)
+	_rpc_work_changed.rpc_id(peer_id, change[0], change[1], change[2], change[3])
 	sent_work_change_count += 1
 	sent_message_count += 1
 
@@ -526,31 +659,29 @@ func _checked_row(public_row: Dictionary, operation: String) -> Array:
 	return row
 
 
-func _broadcast_rows(rows: Array) -> void:
-	if rows.is_empty():
+## Sends one peer structure rows (added or changed structures), cut into
+## messages of rows_per_message.
+func _send_rows(peer_id: int, rows: Array) -> void:
+	if rows.is_empty() or not network.can_send_to(peer_id):
 		return
-	var peers: PackedInt32Array = network.joined_peers()
 	var offset: int = 0
 	while offset < rows.size():
 		var message: Array = rows.slice(offset, offset + _settings.rows_per_message)
-		for peer_id: int in peers:
-			if network.can_send_to(peer_id):
-				_rpc_structure_rows.rpc_id(peer_id, message)
+		_rpc_structure_rows.rpc_id(peer_id, message)
 		offset += message.size()
 		sent_row_count += message.size()
 		sent_message_count += 1
 
 
-func _broadcast_removed(structure_ids: Array) -> void:
-	if structure_ids.is_empty():
+## Takes structures out of one peer's mirror, cut into messages of
+## removals_per_message.
+func _send_removed(peer_id: int, structure_ids: Array) -> void:
+	if structure_ids.is_empty() or not network.can_send_to(peer_id):
 		return
-	var peers: PackedInt32Array = network.joined_peers()
 	var offset: int = 0
 	while offset < structure_ids.size():
 		var message: Array = structure_ids.slice(offset, offset + _settings.removals_per_message)
-		for peer_id: int in peers:
-			if network.can_send_to(peer_id):
-				_rpc_structures_removed.rpc_id(peer_id, message)
+		_rpc_structures_removed.rpc_id(peer_id, message)
 		offset += message.size()
 		sent_removal_count += message.size()
 		sent_message_count += 1
@@ -679,6 +810,8 @@ func _rpc_structure_result(request_id: Variant, ok: Variant, reason: Variant, st
 func _rpc_structure_rows(rows: Variant) -> void:
 	if network == null or not network.is_from_server():
 		return
+	received_message_count += 1
+	received_row_count += (rows as Array).size() if typeof(rows) == TYPE_ARRAY else 0
 	client_state.apply_rows(rows)
 
 
@@ -686,6 +819,8 @@ func _rpc_structure_rows(rows: Variant) -> void:
 func _rpc_structures_removed(structure_ids: Variant) -> void:
 	if network == null or not network.is_from_server():
 		return
+	received_message_count += 1
+	received_removal_count += (structure_ids as Array).size() if typeof(structure_ids) == TYPE_ARRAY else 0
 	client_state.apply_removed(structure_ids)
 
 
@@ -693,6 +828,8 @@ func _rpc_structures_removed(structure_ids: Variant) -> void:
 func _rpc_work_changed(player_id: Variant, structure_id: Variant, working: Variant, reason: Variant) -> void:
 	if network == null or not network.is_from_server():
 		return
+	received_message_count += 1
+	received_work_change_count += 1
 	client_state.apply_work_change(player_id, structure_id, working, reason)
 
 

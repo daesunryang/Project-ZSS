@@ -2038,7 +2038,7 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 | 좀비 위치 스냅샷 | `ZombieNetModule._rpc_zombie_snapshot` | 접속자마다 자기가 아는 좀비의 행만 |
 | 근접 공격 이벤트(`melee_attack`) | `CombatNetModule._rpc_combat_events` | 공격자 본인(항상), 맞은 좀비를 아는 접속자, 빗나간 공격은 공격자의 셀에 관심 있는 접속자 |
 | 플레이어에 관한 것(위치, 생존 공개 이벤트, 자세, 캐릭터 행, 거래·치료 알림) | 기존 그대로 | **모든 접속자**(이 티켓에서 범위를 두지 않았다) |
-| 구조물(§15.4: 접속 조각, 배치·철거·문, 셀 로딩·해제) | `StructureNetModule` 그대로 | **모든 접속자**, 서버 메모리에 있는 모든 셀(아직 범위를 두지 않았다, docs/15 P3-056) |
+| 구조물(§15.4: 접속 조각, 배치·철거·문, 셀 로딩·해제) | `StructureNetModule` 그대로 | **모든 접속자**, 서버 메모리에 있는 모든 셀(아직 범위를 두지 않았다, docs/15 P3-056). P3-5 브랜치에서 해소: 그 셀에 관심 있는 접속자, 셀 얻음/잃음 때 추가/제거(§15.5 "복제 범위") |
 
 요청자에게 가는 결과(`_rpc_pickup_result`, `_rpc_drop_result`, `_rpc_melee_result` 등)와 소유자 전용 메시지는 관심 셀과 무관하게 항상 간다. 요청자의 미러는 다음 불변식으로 일관된다: **미러에 있는 월드 아이템·좀비 = 지금 관심 셀에 있는 것**. 내려놓은 아이템의 셀이 (아주 드물게) 아직 요청자의 관심 셀이 아니면 추가는 가지 않고, 다음 틱에 그 셀을 얻을 때 함께 간다.
 
@@ -2121,7 +2121,7 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 
 #### 다음 티켓(P3-3 보관함, P3-4 구조물)이 알아야 할 것
 
-**구조물은 아직 범위 밖이다(임시, docs/15 P3-056)**: 이 절과 따로 병합된 `StructureNetModule`(§15.4)은 관심 셀을 쓰지 않는다. 셀 서비스의 `cell_loaded`/`cell_unloading`을 직접 듣고 `joined_peers()` 전원에게 보내며, 접속 조각에는 메모리의 모든 구조물이 들어 있다. 이 티켓의 변경(접속 스냅샷에서 모듈 조각을 먼저 만드는 순서, 관심 모듈이 첫 번째)과는 서로 영향을 주지 않는다: 그 모듈은 `cell_interest`와 월드 아이템 목록을 읽지 않는다. P3-5가 병합된 뒤 아래 순서대로 범위를 둔다.
+**구조물은 아직 범위 밖이다(임시, docs/15 P3-056 — P3-5 브랜치에서 해소됨: 아래 순서를 그대로 따랐다, §15.5 "복제 범위")**: 이 절과 따로 병합된 `StructureNetModule`(§15.4)은 관심 셀을 쓰지 않는다. 셀 서비스의 `cell_loaded`/`cell_unloading`을 직접 듣고 `joined_peers()` 전원에게 보내며, 접속 조각에는 메모리의 모든 구조물이 들어 있다. 이 티켓의 변경(접속 스냅샷에서 모듈 조각을 먼저 만드는 순서, 관심 모듈이 첫 번째)과는 서로 영향을 주지 않는다: 그 모듈은 `cell_interest`와 월드 아이템 목록을 읽지 않는다. P3-5가 병합된 뒤 아래 순서대로 범위를 둔다.
 
 셀에 사는 엔티티를 복제하는 모듈은 다음 넷만 하면 된다.
 
@@ -2195,7 +2195,7 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 - 의도 검증 순서: 접속(`not_joined`) → 인자 타입(`bad_type`) → 요청 번호 ≥ 0(`bad_sequence`) → ID·숫자의 모양(`bad_definition_id`, `bad_structure_id`, `out_of_bounds`(좌표 ±1,000,000 밖), `bad_rotation`) → 의도별 빈도(`rate_limited`) → 규칙(`BuildingService`: 사거리·겹침·권한·상태). 행위자는 보낸 peer의 플레이어이고 인자에 없다. 위치·소유자·비용·결과는 클라이언트가 보내지 않는다. 모든 거부는 `NetworkService.rejected_intent_count`에 세고, 요청 번호를 쓸 수 있으면 요청자에게 결과를 보낸다.
 - 승인된 요청은 먼저 전체에 복제하고 그다음 요청자에게 결과를 보낸다(같은 순서 채널). 서버 규칙이 직접 만든 변화는 다음 서버 틱에 복제된다. 이 모듈이 `BuildingService.drain_events()`의 유일한 소비자다.
 - 셀: `WorldCellService.cell_loaded`에서 그 셀의 구조물을 행으로, `cell_unloading`에서 ID 묶음으로 보낸다(P3-1의 아이템·좀비와 같은 방식).
-- 범위: 서버 메모리에 있는 구조물 전부를 접속자 전원에게 보낸다(클라이언트별 범위는 P3-2).
+- 범위: 서버 메모리에 있는 구조물 전부를 접속자 전원에게 보낸다(클라이언트별 범위는 P3-2). P3-5 브랜치에서 바뀜: 위 "셀" 항목과 이 항목은 §15.5 "복제 범위"로 대체됐다(관심 셀로 거름, `cell_loaded`/`cell_unloading`을 직접 듣지 않음).
 - 저장: 배치·철거가 승인되면 바로 월드를 저장한다(`persist_on_place_and_demolish`). 문 여닫기는 바로 저장하지 않는다(자동 저장·셀 해제·종료 저장에 들어간다).
 
 **클라이언트 미러(`ClientStructureState`, `StructureNetModule.client_state`)**: 권한 없음. `structures`(`structure_id -> {definition_id, tile: Vector2i, rotation, state, door_open, health_fraction}`), `structure_ids()`, `has_structure`, `get_structure`, `structure_count`, `slot_of(id)`, `structure_id_at(slot)`, 시그널 `changed`, `structure_added(id)`, `structure_changed(id)`, `structure_removed(id)`. 모든 payload를 검증한다(행 길이와 타입, ID 형식과 길이, 클라이언트가 가진 정의인지, 좌표·회전 범위, 상태 이름, 문이 아닌데 열려 있지 않은지, 체력 비율 0~1, 메시지당 행 256개·ID 256개, 미러 상한). 틀린 행은 세고(`rejected_payload_count`) 건너뛴다. 틀린 접속 조각은 통째로 버리고 미러를 비운다. 모르는 ID의 제거는 오류가 아니다(`unknown_removal_count`). 클라이언트 API: `request_place(definition_id, tile, rotation)`, `request_demolish(structure_id)`, `request_door(structure_id, open)`(요청 번호를 돌려준다), 시그널 `structure_result(request_id, ok, reason, structure_id)`.
@@ -2277,9 +2277,9 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 | C→S | `_rpc_request_deliver(request_id:int, structure_id:String, item_instance_id:String, quantity:int)` | 자재 배달 의도. `item_instance_id` `""` = 들고 있는 것 중 필요한 것 전부, `quantity` 0 = 모자란 만큼 |
 | C→S | `_rpc_request_work(request_id:int, structure_id:String, working:bool)` | 그 조각에서 일하겠다(true) / 그만두겠다(false) |
 | C→S | `_rpc_request_cancel(request_id:int, structure_id:String)` | 짓는 중인 조각 취소 |
-| S→전체 | `_rpc_work_changed(player_id:String, structure_id:String, working:bool, reason:String)` | 누가 어느 조각에서 일하기 시작했다 / 멈췄다. `reason`은 시작일 때만 `""` |
+| S→관심 셀의 접속자 | `_rpc_work_changed(player_id:String, structure_id:String, working:bool, reason:String)` | 누가 어느 조각에서 일하기 시작했다 / 멈췄다. `reason`은 시작일 때만 `""` |
 | S→요청자 | `_rpc_structure_result`(P3-4a 그대로) | 새 의도 셋의 답도 이것으로 간다. `structure_id`는 승인일 때 그 조각 |
-| S→전체 | `_rpc_structure_rows`(**형식 바뀜**) | 행이 값 11개가 됐다 |
+| S→관심 셀의 접속자 | `_rpc_structure_rows`(**형식 바뀜**) | 행이 값 11개가 됐다. `_rpc_structures_removed`도 받는 사람이 같다(아래 "복제 범위") |
 
 - 행: `[structure_id, definition_id, x, z, rotation, state, door_open, health_fraction, progress:float, delivered:Dictionary, required:Dictionary]`. `required`는 `{아이템 정의 ID: 수량 1~10000}`(최대 8종류), `delivered`는 그 일부(같은 키 또는 더 적은 키, 수량은 `required` 이하).
 - 접속 조각: `{schema_version: 2, structures: [행, ...], workers: [[player_id, structure_id], ...]}`. 작업자는 조각에 든 구조물만 가리킨다.
@@ -2287,14 +2287,23 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 - 진행률은 틱마다 보내지 않는다: `BuildingService`가 남긴 이벤트 하나가 행 하나다(위 "작업"의 진행률 이벤트 규칙). 완공과 상태 변화는 그 틱에 간다. 작업자가 남아 있는 동안 미러의 진행률은 최대 한 단계(5%)만큼 서버보다 뒤처질 수 있고, 마지막 작업자가 멈추면 정확한 값이 간다.
 - 자재를 넣은 플레이어의 인벤토리: `InventoryNetModule`이 `items_taken` 트랜잭션을 **그 인벤토리의 주인에게만** 기존 메시지(`_rpc_inventory_item_changed`, `_rpc_inventory_items_removed`)로 복제한다. 다른 접속자는 남의 인벤토리에 대해 아무것도 받지 않는다(구조물 행의 `delivered`만 본다). 순서는 인벤토리 변화 → 구조물 행 → 요청 결과다. (처음에는 `StructureNetModule`이 이 두 메시지를 이름으로 불렀다. main 위로 옮기면서 `InventoryNetModule`에 분기 하나와 함수 하나를 넣고 그 우회를 없앴다: docs/15 P3-142.)
 - 환급된 아이템: `InventoryNetModule`이 기존 `_rpc_world_items_added`로, **그 셀에 관심 있는 접속자에게만** 보낸다(§15.2의 내려놓기와 같은 경로. 이 모듈은 아무것도 하지 않는다). 멀리 있는 접속자는 받지 않고, 걸어 들어오면 그 셀의 다른 아이템과 함께 받는다.
-- 셀이 내려갈 때는 그 셀의 조각에서 일하던 작업자의 중지를 먼저 보내고 그다음에 제거를 보낸다.
-- 진단 값: `sent_work_change_count`, `sent_message_count`(행·제거·작업 변화 메시지 수, 받는 사람 수와 무관하게 메시지 하나를 한 번 센다).
+- 셀이 내려갈 때: 관심 모듈이 먼저 그 셀을 모두에게서 빼므로(아래 "복제 범위"의 셀 잃음) 제거 묶음 하나만 간다. 서버가 `release_cell`에서 멈추게 한 작업자의 중지(`structure_unloaded`)는 아무에게도 가지 않고, 미러가 제거된 조각의 작업자를 함께 뺀다(docs/15 P3-059. 처음에는 중지를 먼저 보내고 제거를 보냈다).
+- 진단 값(서버): `sent_row_count`, `sent_removal_count`, `sent_work_change_count`, `sent_message_count`(행·제거·작업 변화 메시지 수). 받는 접속자마다 한 번씩 센다(docs/15 P3-060, 처음에는 메시지당 한 번), `hidden_structure_request_count`(아래). 클라이언트: `received_message_count`, `received_row_count`, `received_removal_count`, `received_work_change_count`(복제 메시지만, 자기 요청의 결과는 빼고).
 
-**정보 공개**(ADR-009): 모든 접속자가 받는 것은 상태, 진행률, 투입된 자재와 필요한 자재, 누가 그 조각에서 일하는지와 왜 멈췄는지다. 보내지 않는 것은 누가 배치했는지(P3-4a 그대로), 누가 무엇을 얼마나 넣었는지, 남의 인벤토리다.
+**복제 범위**(§15.2의 관심 셀, docs/15 P3-056 해소, P3-057~P3-060): §15.4의 "모든 접속자"가 "그 구조물의 셀에 관심 있는 접속자"로 바뀌었다. §15.2 끝의 순서를 그대로 따랐다. 메시지 형식은 바뀌지 않았다(`PROTOCOL_VERSION` 14 그대로).
+
+- 접속 조각: 접속자의 관심 셀(`network.is_cell_of_interest(peer_of_player(player_id), cell_id)`)에 있는 구조물과, 그 구조물에서 일하는 작업자만. 캐릭터가 없는 접속자는 관심 셀이 없으므로 빈 조각을 받는다. 조각을 만들기 전에 남은 이벤트를 보내되 접속하는 접속자에게는 보내지 않는다(조각에 결과가 들어 있다).
+- 셀 얻음(`network.cell_interest.cell_gained`: 걸어 들어감, 월드 진입, 셀이 메모리에 들어옴): 그 셀의 구조물 행 묶음(`rows_per_message`씩)과 작업자마다 `_rpc_work_changed(…, true, "")`. 셀 잃음(`cell_lost`: 걸어 나감, 셀이 메모리에서 나감): 그 셀의 구조물 ID 묶음(`removals_per_message`씩). 미러가 그 작업자를 함께 뺀다. 어느 쪽도 `BuildingService` 이벤트가 아니다(지어지거나 철거된 것이 없다). 이 모듈은 셀 서비스의 `cell_loaded`/`cell_unloading`을 더 이상 직접 듣지 않는다.
+- 배치·변경·제거·진행률 행과 작업 변화: 이벤트의 `cell_id`에 대해 `network.peers_interested_in(cell_id)`에게만. 접속자마다 자기 순서대로 묶어 보낸다(연속된 행은 행 메시지, 연속된 제거는 제거 메시지, 작업 변화는 하나씩). 접속자가 셀을 얻거나 잃는 순간 아직 보내지 않은 그 셀의 이벤트는 먼저 정리한다: 얻는 접속자에게는 보내지 않고(셀 전체를 지금 상태로 받는다), 잃는 접속자에게는 보낸 뒤 제거한다. 그래서 미러는 받은 적 없는 구조물의 제거나 작업 중지를 받지 않고, 떠나 있는 동안 제거된 구조물을 붙들고 있지도 않는다.
+- 불변식: **미러의 구조물 = 지금 관심 셀에 있는 구조물**, 미러의 작업자 = 그 구조물의 작업자. 요청자는 자기 요청의 결과(`_rpc_structure_result`)를 관심 셀과 무관하게 항상 받는다. 관심 모듈이 없는 조립에서는 전처럼 모든 접속자가 모든 것을 받는다(경고 로그 하나).
+- 관심 셀 밖 구조물에 대한 요청(docs/15 P3-058): 철거·문·배달·작업 시작·취소가 요청자의 관심 셀 밖 구조물을 가리키면 규칙에 빈 ID(없는 구조물)를 넘긴다. 그래서 답은 지어낸 ID와 같다(`unknown_structure`, 또는 요청자 자신의 상태 사유 `player_dead`·`player_resting`·`not_online`). 구조물에는 아무 일도 없고 `hidden_structure_request_count`가 하나 는다. 작업 중지 요청은 거르지 않는다(거부 사유가 구조물을 드러내지 않는다). 배치 요청은 구조물을 가리키지 않고, 그 거부 사유는 배치 사거리 안(관심 셀 안)의 자리에 관한 것이다.
+- 서버의 이동 차단(`is_edge_blocked`, `resolve_movement`)은 서버 메모리의 구조물 전부로 하고 미러와 무관하다. 관심 반경(기본 2칸, 최소 100m)이 배치·철거 4m, 문·배달·작업 2.5m보다 훨씬 넓어서 플레이어가 닿거나 부딪칠 수 있는 구조물은 항상 미러에 있다.
+
+**정보 공개**(ADR-009): 그 구조물의 셀에 관심 있는 접속자 모두가 받는 것은(위 "복제 범위") 상태, 진행률, 투입된 자재와 필요한 자재, 누가 그 조각에서 일하는지와 왜 멈췄는지다. 보내지 않는 것은 누가 배치했는지(P3-4a 그대로), 누가 무엇을 얼마나 넣었는지, 남의 인벤토리다.
 
 **클라이언트 미러(`ClientStructureState`)**: 항목에 `progress`, `delivered`, `required`가 늘었다. `workers`(`player_id -> structure_id`), `work_of(player_id)`, `workers_of(structure_id)`, 시그널 `work_changed(player_id, structure_id, working, reason)`, `apply_work_change(...)`. 검증: 진행률 0~1의 유한한 float, 자재 사전의 키·값·개수·`delivered ⊆ required`, 작업 변화의 ID 형식과 "시작이면 사유 없음"·"시작은 미러에 있는 구조물에만". 미러에 없는 작업자에 대한 중지는 오류가 아니다(`unknown_work_stop_count`). 구조물이 제거되면 그 작업자도 미러에서 빠진다(`reason: "structure_removed"`). 클라이언트 API: `request_deliver(structure_id, item_instance_id = "", quantity = 0)`, `request_work(structure_id, working)`, `request_cancel(structure_id)`(요청 번호를 돌려준다. 답은 `structure_result`).
 
-**테스트**: `tests/unit/building_construction_test.gd`(정의의 비용·작업량·환급 검증, 개발용 정의와 새 월드의 자재, 청사진, 배달: 필요한 만큼만·한 번에 전부·거부 사유 전부·여러 사람, 진행률 상한, 행동 시간·조작 배율·작업자 합산, 작업 거부 사유, 작업이 멈추는 모든 사유, 여러 작업자가 한 틱에 멈춤, 상태 전이와 이벤트 수, 변에 누가 서 있을 때의 완공, 취소·철거 환급과 수량 보존, 즉시 완공 스위치, 서버 규칙), `building_construction_save_test.gd`(새 필드의 저장 형식, P3-4a 문서 올리기, 짓는 중에 셀 해제 → 재로딩, 월드 문서 왕복, 복구 검증), `structure_construction_state_test.gd`(미러 검증), `construction_measure_test.gd`(측정값 출력), `tests/integration/construction_net_test.gd`(한 사람이 놓고 다른 사람이 자재를 넣고 둘이 지어 두 미러가 같은 벽을 봄, 위조 요청, 빈도 제한, 늦은 접속, 짓는 중 셀 해제·재로딩, 실제 파일로 저장 → 재시작 → 복구와 "지금 죽으면 디스크에 남는 것", 환급 아이템이 클라이언트에 나타남). 지원 코드: `tests/framework/construction_test_kit.gd`(테스트 전용 자재·구조물 정의: 개발용 수치를 조정해도 테스트 기대값이 바뀌지 않게).
+**테스트**: `tests/unit/building_construction_test.gd`(정의의 비용·작업량·환급 검증, 개발용 정의와 새 월드의 자재, 청사진, 배달: 필요한 만큼만·한 번에 전부·거부 사유 전부·여러 사람, 진행률 상한, 행동 시간·조작 배율·작업자 합산, 작업 거부 사유, 작업이 멈추는 모든 사유, 여러 작업자가 한 틱에 멈춤, 상태 전이와 이벤트 수, 변에 누가 서 있을 때의 완공, 취소·철거 환급과 수량 보존, 즉시 완공 스위치, 서버 규칙), `building_construction_save_test.gd`(새 필드의 저장 형식, P3-4a 문서 올리기, 짓는 중에 셀 해제 → 재로딩, 월드 문서 왕복, 복구 검증), `structure_construction_state_test.gd`(미러 검증), `construction_measure_test.gd`(측정값 출력), `tests/integration/construction_net_test.gd`(한 사람이 놓고 다른 사람이 자재를 넣고 둘이 지어 두 미러가 같은 벽을 봄, 위조 요청, 빈도 제한, 늦은 접속, 짓는 중 셀 해제·재로딩, 실제 파일로 저장 → 재시작 → 복구와 "지금 죽으면 디스크에 남는 것", 환급 아이템이 클라이언트에 나타남), `tests/integration/structure_interest_net_test.gd`(복제 범위: 500m 맵의 클라이언트 셋, 멀리 있는 클라이언트는 구조물·작업자를 받지 않고 걸어 들어오면 반쯤 지은 벽·작업 중인 벽·열린 문과 작업자를 지금 상태로 받고 걸어 나가면 잃음, 함께 선 셋의 일치, 늦은 접속자의 거른 접속 조각, 관심 셀 밖 구조물에 대한 조작된 요청이 없는 ID와 같은 답, 캐릭터 없는 접속자). 지원 코드: `tests/framework/construction_test_kit.gd`(테스트 전용 자재·구조물 정의: 개발용 수치를 조정해도 테스트 기대값이 바뀌지 않게).
 
 **P3-4b(클라이언트 표시·건축 모드 입력)가 알아야 할 것**
 

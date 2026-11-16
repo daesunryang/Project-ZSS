@@ -74,6 +74,13 @@ func before_each() -> void:
 	_config.world_cells.deactivate_delay_sec = 0.1
 	_config.world_cells.unload_delay_sec = 0.3
 	_config.world_cells.refresh_period_sec = 0.0
+	# These tests watch cells leave and enter the server's memory from afar:
+	# the interest area is the whole map here (as in world_cell_net_test.gd),
+	# so every client is told about every cell the server has in memory. The
+	# scope by cell itself: structure_interest_net_test.gd.
+	_config.interest = InterestSettings.new()
+	_config.interest.interest_radius_cells = 10
+	_config.interest.keep_margin_cells = 0
 	_cluster = NetTestCluster.new(tree, _net_settings, _config)
 	_world = null
 
@@ -553,7 +560,7 @@ func test_a_released_cell_takes_its_structures_from_the_mirrors_and_a_reload_bri
 	var far_floor: Array = await _place(a, FLOOR, FAR_TILE, 0)
 	assert_true(far_wall[0] and far_door[0] and far_floor[0], "%s %s %s" % [str(far_wall), str(far_door), str(far_floor)])
 	assert_eq(await _door(a, str(far_door[2]), true), [true, "", str(far_door[2])])
-	assert_true(await _eventually(func() -> bool: return _mirror(b).structure_count() == 4 and _matches_server(b)), "bob sees them from afar (no interest management yet)")
+	assert_true(await _eventually(func() -> bool: return _mirror(b).structure_count() == 4 and _matches_server(b)), "bob sees them from afar (the interest area of this file is the whole map)")
 	var far_expected: Dictionary = _client_view(b)
 	far_expected.erase(str(near[2]))
 	var b_removed: PackedStringArray = []

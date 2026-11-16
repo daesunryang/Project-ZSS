@@ -332,14 +332,14 @@ func test_one_places_the_other_delivers_both_work_and_both_see_the_same_wall() -
 	_mirror(a).structure_changed.connect(func(structure_id: String) -> void: a_progress.append(float(_mirror(a).get_structure(structure_id)["progress"])))
 	_mirror(a).work_changed.connect(func(player_id: String, structure_id: String, working: bool, reason: String) -> void: a_work.append([player_id, structure_id, working, reason]))
 	_mirror(b).work_changed.connect(func(player_id: String, structure_id: String, working: bool, reason: String) -> void: b_work.append([player_id, structure_id, working, reason]))
-	var server_module: StructureNetModule = _net(_cluster.server)
-	var messages_before: int = server_module.sent_message_count
+	# Counted where it arrives: the server counts once per receiving peer.
+	var messages_before: int = _net(a).received_message_count
 	var tick_before: int = Engine.get_physics_frames()
 	assert_eq(await _work(a, wall_id, true), [true, "", wall_id])
 	assert_eq(await _work(b, wall_id, true), [true, "", wall_id])
 	assert_true(await _eventually(func() -> bool: return _mirror(a).get_structure(wall_id)["state"] == "completed" and _mirror(b).get_structure(wall_id)["state"] == "completed"), "both see the wall completed")
 	var ticks: int = Engine.get_physics_frames() - tick_before
-	var messages: int = server_module.sent_message_count - messages_before
+	var messages: int = _net(a).received_message_count - messages_before
 	# The acceptance line of the phase: two players see the same structure.
 	var completed: Dictionary = blueprint.duplicate(true)
 	completed.merge({"state": "completed", "health_fraction": 1.0, "progress": 1.0, "delivered": {PLANK: 4, NAIL: 2}}, true)
@@ -381,8 +381,9 @@ func test_measure_the_messages_of_one_wall_built_by_one_worker() -> void:
 		return
 	var a: NetworkService = clients[0]
 	await _pick_up(a, [planks, nails])
-	var server_module: StructureNetModule = _net(_cluster.server)
-	var before: Array[int] = [server_module.sent_message_count, server_module.sent_row_count, server_module.sent_work_change_count]
+	# Counted where it arrives (the server counts once per receiving peer).
+	var observer: StructureNetModule = _net(clients[1])
+	var before: Array[int] = [observer.received_message_count, observer.received_row_count, observer.received_work_change_count]
 	var tick_before: int = Engine.get_physics_frames()
 	var placed: Array = await _place(a, WALL)
 	var wall_id: String = placed[2]
@@ -390,9 +391,9 @@ func test_measure_the_messages_of_one_wall_built_by_one_worker() -> void:
 	assert_eq(await _work(a, wall_id, true), [true, "", wall_id])
 	assert_true(await _eventually(func() -> bool: return _mirror(clients[1]).has_structure(wall_id) and _mirror(clients[1]).get_structure(wall_id)["state"] == "completed"))
 	await _settle()
-	var messages: int = server_module.sent_message_count - before[0]
-	var rows: int = server_module.sent_row_count - before[1]
-	var work_changes: int = server_module.sent_work_change_count - before[2]
+	var messages: int = observer.received_message_count - before[0]
+	var rows: int = observer.received_row_count - before[1]
+	var work_changes: int = observer.received_work_change_count - before[2]
 	var ticks: int = Engine.get_physics_frames() - tick_before
 	# Placed, delivered, became `constructing`, a row per progress step,
 	# completed; work started and stopped.
@@ -639,6 +640,13 @@ func test_a_late_joiner_gets_the_blueprint_with_its_materials_progress_and_worke
 # ------------------------------------------------------------ 5. world cells
 
 func test_a_cell_released_in_the_middle_of_a_construction_comes_back_for_everybody() -> void:
+	# This test is about a cell leaving the server's memory while a client
+	# watches it: bob, at home, is told about the far cell too (the interest
+	# area is the whole map here, as in world_cell_net_test.gd). With the
+	# shipped interest area he would never see it (structure_interest_net_test.gd).
+	_config.interest = InterestSettings.new()
+	_config.interest.interest_radius_cells = 10
+	_config.interest.keep_margin_cells = 0
 	assert_true(_start(), "server started")
 	var planks: String = _lay(PLANK, 4)
 	var nails: String = _lay(NAIL, 2)
