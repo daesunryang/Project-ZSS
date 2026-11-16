@@ -253,27 +253,42 @@ func test_labels_and_markers_follow_the_mirror() -> void:
 	var mirror: Dictionary = {NEAR_ID: _container(CRATE, Vector3(3.0, 0.0, 4.0)), FAR_ID: _container(CABINET, Vector3(-2.0, 0.0, 1.0), true), "broken": {"position": 3}}
 	markers.sync(mirror)
 	assert_eq(markers.marker_count(), 2, "one marker per container, none for a broken row")
-	var marker: Node3D = markers.marker_of(NEAR_ID)
-	assert_not_null(marker)
-	assert_eq(marker.name, StringName(ContainerMarkers.MARKER_PREFIX + NEAR_ID))
-	assert_eq(marker.position, Vector3(3.0, 0.0, 4.0))
-	assert_eq((marker.get_node(ContainerMarkers.LABEL_NODE) as Label3D).text, "%s (수색 전)" % crate_name)
-	var body: MeshInstance3D = marker.get_node(ContainerMarkers.BODY_NODE) as MeshInstance3D
-	assert_eq((body.mesh as BoxMesh).size, Vector3.ONE * _settings.container_marker_size_m)
-	assert_eq((body.material_override as StandardMaterial3D).albedo_color, _settings.container_marker_color)
-	assert_eq(((markers.marker_of(FAR_ID).get_node(ContainerMarkers.BODY_NODE) as MeshInstance3D).material_override as StandardMaterial3D).albedo_color, _settings.container_searched_marker_color, "a searched container looks different")
+	assert_eq(markers.body_instance_count(), 2)
+	assert_eq(markers.transform_of(NEAR_ID).origin, Vector3(3.0, _settings.container_marker_size_m * 0.5, 4.0))
+	var label: Label3D = markers.label_of(NEAR_ID)
+	assert_eq(label.text, "%s (수색 전)" % crate_name)
+	var unsearched: MultiMeshInstance3D = root.get_node(ContainerMarkers.UNSEARCHED_BATCH_NODE) as MultiMeshInstance3D
+	var searched: MultiMeshInstance3D = root.get_node(ContainerMarkers.SEARCHED_BATCH_NODE) as MultiMeshInstance3D
+	assert_eq((unsearched.multimesh.mesh as BoxMesh).size, Vector3.ONE * _settings.container_marker_size_m)
+	assert_eq((unsearched.material_override as StandardMaterial3D).albedo_color, _settings.container_marker_color)
+	assert_eq((searched.material_override as StandardMaterial3D).albedo_color, _settings.container_searched_marker_color, "a searched container looks different")
 	# Searched: the same marker, another label and colour.
 	mirror[NEAR_ID] = _container(CRATE, Vector3(3.0, 0.0, 4.0), true)
 	markers.sync(mirror)
-	assert_eq(markers.marker_of(NEAR_ID), marker, "the marker is updated, not replaced")
-	assert_eq((marker.get_node(ContainerMarkers.LABEL_NODE) as Label3D).text, crate_name)
-	assert_eq((body.material_override as StandardMaterial3D).albedo_color, _settings.container_searched_marker_color)
+	assert_eq(markers.label_of(NEAR_ID), label, "the nearby label is updated, not replaced")
+	assert_eq(label.text, crate_name)
 	# Out of the mirror: out of the world.
 	mirror.erase(FAR_ID)
 	markers.sync(mirror)
 	assert_eq(markers.marker_count(), 1)
-	assert_null(markers.marker_of(FAR_ID))
-	assert_eq(root.get_child_count(), 1)
+	assert_false(markers.has_marker(FAR_ID))
 	markers.sync({})
 	assert_eq(markers.marker_count(), 0)
+	assert_eq(root.get_child_count(), 2, "the two empty material batches remain")
+	root.free()
+
+
+func test_container_labels_use_their_own_distance_setting() -> void:
+	var root: Node3D = Node3D.new()
+	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
+	settings.container_label_distance_m = 2.0
+	var markers := ContainerMarkers.new(root, _containers, settings)
+	markers.sync({NEAR_ID: _container(CRATE, Vector3.ZERO), FAR_ID: _container(CRATE, Vector3.RIGHT * 10.0)}, Vector3.ZERO)
+	assert_eq(markers.body_instance_count(), 2)
+	assert_eq(markers.label_count(), 1)
+	assert_not_null(markers.label_of(NEAR_ID))
+	assert_null(markers.label_of(FAR_ID))
+	markers.update_focus(Vector3.RIGHT * 10.0)
+	assert_eq(markers.label_count(), 1)
+	assert_not_null(markers.label_of(FAR_ID))
 	root.free()

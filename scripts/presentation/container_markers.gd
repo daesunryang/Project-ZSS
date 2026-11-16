@@ -1,102 +1,132 @@
 class_name ContainerMarkers
 extends RefCounted
-## Client-only placeholder visuals of the containers standing in the world
-## (P3-3, docs/09 §15.3): one marker per mirrored container, a box with a
-## label above it (the container's name, and whether it was searched).
-## Markers are created, updated and removed as the mirror changes.
-## Presentation only: it reads the mirror and decides nothing.
+## Batched client-only container bodies, split by searched material.
 
-## Node names inside the root: "Container_<container id>" with the children
-## below.
+const UNSEARCHED_BATCH_NODE: String = "UnsearchedContainerBodies"
+const SEARCHED_BATCH_NODE: String = "SearchedContainerBodies"
 const MARKER_PREFIX: String = "Container_"
-const BODY_NODE: String = "Body"
 const LABEL_NODE: String = "Label"
 
 var _root: Node3D
 var _catalog: ContainerCatalog
 var _settings: ClientPresentationSettings
-## container_id -> its marker node.
-var _markers: Dictionary[String, Node3D] = {}
-## container_id -> what the marker was last built from.
-var _keys: Dictionary[String, String] = {}
+var _batches: Dictionary[bool, MultiMeshInstance3D] = {}
+var _entries: Dictionary[String, Dictionary] = {}
+var _transforms: Dictionary[String, Transform3D] = {}
+var _labels: Dictionary[String, Node3D] = {}
+var _focus: Vector3 = Vector3.ZERO
 var _mesh: BoxMesh = BoxMesh.new()
-var _unsearched_material: StandardMaterial3D = StandardMaterial3D.new()
-var _searched_material: StandardMaterial3D = StandardMaterial3D.new()
 
 
-## `root` is the node the markers are added to; it must outlive this object
-## or be freed together with its children.
 func _init(root: Node3D, catalog: ContainerCatalog, settings: ClientPresentationSettings) -> void:
 	_root = root
 	_catalog = catalog
 	_settings = settings
 	_mesh.size = Vector3.ONE * settings.container_marker_size_m
-	_unsearched_material.albedo_color = settings.container_marker_color
-	_searched_material.albedo_color = settings.container_searched_marker_color
+	_make_batch(false, UNSEARCHED_BATCH_NODE, settings.container_marker_color)
+	_make_batch(true, SEARCHED_BATCH_NODE, settings.container_searched_marker_color)
 
 
-## Makes the markers match `containers` (the mirror
-## ClientContainerState.containers: {container_id: {definition_id, position,
-## searched}}). Rows that are no containers get no marker.
-func sync(containers: Dictionary) -> void:
-	if not is_instance_valid(_root):
-		return
-	for existing_id: String in _markers.keys():
-		if not containers.has(existing_id) or not _is_drawable(containers[existing_id]):
-			# Out of the tree at once (queue_free alone keeps the node, and its
-			# name, until the end of the frame).
-			_root.remove_child(_markers[existing_id])
-			_markers[existing_id].queue_free()
-			_markers.erase(existing_id)
-			_keys.erase(existing_id)
+func sync(containers: Dictionary, focus: Vector3 = Vector3.ZERO) -> void:
+	_focus = focus
+	_entries.clear()
+	_transforms.clear()
+	var ids_by_kind: Dictionary[bool, PackedStringArray] = {false: PackedStringArray(), true: PackedStringArray()}
 	for container_id: Variant in containers:
 		if typeof(container_id) != TYPE_STRING or not _is_drawable(containers[container_id]):
 			continue
-		var entry: Dictionary = containers[container_id]
-		var label_text: String = ClientPresentationFormatter.container_label(entry, _catalog)
-		var position: Vector3 = entry[ClientContainerState.KEY_POSITION]
-		var searched: bool = entry.get(ClientContainerState.KEY_SEARCHED, false) == true
-		var key: String = "%s|%s|%s" % [label_text, str(position), str(searched)]
-		if _keys.get(container_id, "") == key:
-			continue
-		var marker: Node3D = _markers.get(container_id, null)
-		if marker == null:
-			marker = _make_marker(container_id)
-			_root.add_child(marker)
-			_markers[container_id] = marker
-		_keys[container_id] = key
-		marker.position = position
-		(marker.get_node(BODY_NODE) as MeshInstance3D).material_override = _searched_material if searched else _unsearched_material
-		(marker.get_node(LABEL_NODE) as Label3D).text = label_text
+		var entry: Dictionary = (containers[container_id] as Dictionary).duplicate()
+		_entries[container_id] = entry
+		ids_by_kind[entry.get(ClientContainerState.KEY_SEARCHED, false) == true].append(container_id)
+	for searched: bool in ids_by_kind:
+		var ids: PackedStringArray = ids_by_kind[searched]
+		ids.sort()
+		var multimesh: MultiMesh = MultiMesh.new()
+		multimesh.transform_format = MultiMesh.TRANSFORM_3D
+		multimesh.mesh = _mesh
+		multimesh.instance_count = ids.size()
+		for index: int in range(ids.size()):
+			var position: Vector3 = _entries[ids[index]][ClientContainerState.KEY_POSITION]
+			var transform := Transform3D(Basis.IDENTITY, position + Vector3.UP * (_settings.container_marker_size_m * 0.5))
+			multimesh.set_instance_transform(index, transform)
+			_transforms[ids[index]] = transform
+		_batches[searched].multimesh = multimesh
+	_update_labels()
+
+
+func update_focus(focus: Vector3) -> void:
+	if focus.distance_squared_to(_focus) < 0.0625:
+		return
+	_focus = focus
+	_update_labels()
 
 
 func marker_count() -> int:
-	return _markers.size()
+	return _entries.size()
 
 
-## The marker node of a container, or null.
-func marker_of(container_id: String) -> Node3D:
-	return _markers.get(container_id, null)
+func body_instance_count() -> int:
+	return (_batches[false].multimesh.instance_count if _batches[false].multimesh != null else 0) + (_batches[true].multimesh.instance_count if _batches[true].multimesh != null else 0)
+
+
+func label_count() -> int:
+	return _labels.size()
+
+
+func has_marker(container_id: String) -> bool:
+	return _entries.has(container_id)
+
+
+func transform_of(container_id: String) -> Transform3D:
+	return _transforms.get(container_id, Transform3D())
+
+
+func label_of(container_id: String) -> Label3D:
+	var anchor: Node3D = _labels.get(container_id, null)
+	return anchor.get_node(LABEL_NODE) as Label3D if anchor != null else null
+
+
+func _make_batch(searched: bool, node_name: String, color: Color) -> void:
+	var material: StandardMaterial3D = StandardMaterial3D.new()
+	material.albedo_color = color
+	var batch: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	batch.name = node_name
+	batch.material_override = material
+	_root.add_child(batch)
+	_batches[searched] = batch
+
+
+func _update_labels() -> void:
+	var max_distance_sq: float = _settings.container_label_distance_m * _settings.container_label_distance_m
+	for container_id: String in _labels.keys():
+		var position: Vector3 = _entries.get(container_id, {}).get(ClientContainerState.KEY_POSITION, Vector3.INF)
+		if not _entries.has(container_id) or position.distance_squared_to(_focus) > max_distance_sq:
+			_labels[container_id].free()
+			_labels.erase(container_id)
+	for container_id: String in _entries:
+		var entry: Dictionary = _entries[container_id]
+		var position: Vector3 = entry[ClientContainerState.KEY_POSITION]
+		if position.distance_squared_to(_focus) > max_distance_sq:
+			continue
+		var anchor: Node3D = _labels.get(container_id, null)
+		if anchor == null:
+			anchor = _make_label(container_id)
+			_root.add_child(anchor)
+			_labels[container_id] = anchor
+		anchor.position = position
+		(anchor.get_node(LABEL_NODE) as Label3D).text = ClientPresentationFormatter.container_label(entry, _catalog)
 
 
 func _is_drawable(entry: Variant) -> bool:
 	if typeof(entry) != TYPE_DICTIONARY:
 		return false
 	var position: Variant = (entry as Dictionary).get(ClientContainerState.KEY_POSITION, null)
-	if typeof(position) != TYPE_VECTOR3 or not (position as Vector3).is_finite():
-		return false
-	return not ClientPresentationFormatter.container_label(entry as Dictionary, _catalog).is_empty()
+	return typeof(position) == TYPE_VECTOR3 and (position as Vector3).is_finite() and not ClientPresentationFormatter.container_label(entry as Dictionary, _catalog).is_empty()
 
 
-## A box standing on the ground and a billboard label above it.
-func _make_marker(container_id: String) -> Node3D:
-	var marker: Node3D = Node3D.new()
-	marker.name = MARKER_PREFIX + container_id
-	var body: MeshInstance3D = MeshInstance3D.new()
-	body.name = BODY_NODE
-	body.mesh = _mesh
-	body.position = Vector3.UP * (_settings.container_marker_size_m * 0.5)
-	marker.add_child(body)
+func _make_label(container_id: String) -> Node3D:
+	var anchor: Node3D = Node3D.new()
+	anchor.name = MARKER_PREFIX + container_id
 	var label: Label3D = Label3D.new()
 	label.name = LABEL_NODE
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -104,5 +134,5 @@ func _make_marker(container_id: String) -> Node3D:
 	label.font_size = _settings.container_label_font_size
 	label.modulate = _settings.container_label_color
 	label.position = Vector3.UP * (_settings.container_marker_size_m + _settings.container_label_margin_m)
-	marker.add_child(label)
-	return marker
+	anchor.add_child(label)
+	return anchor

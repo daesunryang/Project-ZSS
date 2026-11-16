@@ -66,9 +66,15 @@ func start_server(world: ServerWorld, persistence: WorldPersistence) -> Error:
 
 ## Adds a client and starts connecting (not yet joined).
 func add_client(player_key: String, auto_join: bool = true) -> NetworkService:
+	return add_client_with_settings(player_key, settings, auto_join)
+
+
+## Adds a client with an explicit transport contract. Compression mismatch
+## tests use this because normal clusters intentionally share one resource.
+func add_client_with_settings(player_key: String, client_settings: NetworkSettings, auto_join: bool = true) -> NetworkService:
 	var client: NetworkService = _make_service("TestClient")
 	clients.append(client)
-	client.start_client(HOST, port, player_key, settings, auto_join)
+	client.start_client(HOST, port, player_key, client_settings, auto_join)
 	return client
 
 

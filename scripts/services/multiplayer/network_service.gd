@@ -180,6 +180,9 @@ func start_server(world: ServerWorld, persistence: WorldPersistence, settings: N
 		GameLogger.error("net", "failed to start server", {"port": port, "error": error_string(error), "operation": "start_server"})
 		_peer = null
 		return error
+	# Compression is a host property and must be installed after create_host.
+	# A different client mode cannot complete the ENet connection.
+	_peer.host.compress(settings.compression_mode)
 	# Clients must never reach each other directly: disable SceneMultiplayer
 	# relay so every message goes through server validation (CLAUDE.md §5).
 	# This also stops the engine from notifying peers that are already
@@ -193,7 +196,7 @@ func start_server(world: ServerWorld, persistence: WorldPersistence, settings: N
 	_mode = Mode.SERVER
 	for module: NetModule in _modules:
 		module.on_server_started(world)
-	GameLogger.info("net", "server listening", {"port": port, "max_players": settings.max_players, "protocol": BuildInfo.PROTOCOL_VERSION, "world_id": world.world_id, "modules": _modules.size()})
+	GameLogger.info("net", "server listening", {"port": port, "max_players": settings.max_players, "protocol": BuildInfo.PROTOCOL_VERSION, "compression": NetworkSettings.compression_mode_name(settings.compression_mode), "world_id": world.world_id, "modules": _modules.size()})
 	server_started.emit(port)
 	return OK
 
@@ -212,12 +215,15 @@ func start_client(address: String, port: int, player_key: String, settings: Netw
 		GameLogger.error("net", "failed to create client", {"address": address, "port": port, "error": error_string(error), "operation": "start_client"})
 		_peer = null
 		return error
+	# This must match the server. ENet reports only a failed connection when it
+	# does not, so retain the configured value for the diagnostic below.
+	_peer.host.compress(settings.compression_mode)
 	multiplayer.multiplayer_peer = _peer
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(_on_server_disconnected)
 	_mode = Mode.CLIENT
-	GameLogger.info("net", "connecting", {"address": address, "port": port})
+	GameLogger.info("net", "connecting; ENet compression must match the server", {"address": address, "port": port, "compression": NetworkSettings.compression_mode_name(settings.compression_mode)})
 	return OK
 
 

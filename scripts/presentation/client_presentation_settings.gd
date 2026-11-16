@@ -107,6 +107,9 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.0001, 0.1) var world_item_label_pixel_size: float = 0.005
 @export_range(1, 256) var world_item_label_font_size: int = 32
 @export var world_item_label_color: Color = Color(1.0, 0.95, 0.70, 1.0)
+## Labels are nodes, unlike batched bodies. Only items within this distance
+## of the local player receive one.
+@export_range(0.0, 100.0) var world_item_label_distance_m: float = 12.0
 ## The pickup candidate shown in the HUD and named by the pickup key: the
 ## nearest world item within this distance of the local player, in the
 ## mirror. Only a suggestion: the server checks its own positions and range
@@ -182,6 +185,7 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.0001, 0.1) var container_label_pixel_size: float = 0.006
 @export_range(1, 256) var container_label_font_size: int = 36
 @export var container_label_color: Color = Color(0.85, 0.95, 1.0, 1.0)
+@export_range(0.0, 100.0) var container_label_distance_m: float = 16.0
 
 ## Building presentation (P3-4b). These values affect only input mapping,
 ## placeholder geometry and client-side preview estimates; the server owns
@@ -216,6 +220,7 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.0001, 0.1) var structure_label_pixel_size: float = 0.005
 @export_range(1, 256) var structure_label_font_size: int = 28
 @export var structure_label_color: Color = Color(0.85, 0.95, 1.0, 1.0)
+@export_range(0.0, 100.0) var structure_label_distance_m: float = 20.0
 
 
 func validate() -> PackedStringArray:
@@ -274,6 +279,8 @@ func validate() -> PackedStringArray:
 		errors.append("drop_min_interval_sec must be > 0")
 	if world_item_marker_size_m <= 0.0 or world_item_label_margin_m < 0.0 or world_item_label_pixel_size <= 0.0 or world_item_label_font_size < 1:
 		errors.append("world item marker size and label pixel size must be > 0, label margin >= 0 and font size >= 1")
+	if world_item_label_distance_m < 0.0:
+		errors.append("world_item_label_distance_m must be >= 0")
 	if not is_finite(pickup_candidate_range_m) or pickup_candidate_range_m <= 0.0:
 		errors.append("pickup_candidate_range_m must be > 0")
 	var trade_keys: Dictionary[String, Key] = {"trade_request_key": trade_request_key, "trade_accept_key": trade_accept_key, "trade_decline_key": trade_decline_key, "trade_offer_add_key": trade_offer_add_key, "trade_offer_remove_key": trade_offer_remove_key}
@@ -306,6 +313,8 @@ func validate() -> PackedStringArray:
 		errors.append("hud_container_line_count must be > 0")
 	if container_marker_size_m <= 0.0 or container_label_margin_m < 0.0 or container_label_pixel_size <= 0.0 or container_label_font_size < 1:
 		errors.append("container marker size and label pixel size must be > 0, label margin >= 0 and font size >= 1")
+	if container_label_distance_m < 0.0:
+		errors.append("container_label_distance_m must be >= 0")
 	var build_keys: Dictionary[String, Key] = {"build_mode_key": build_mode_key, "build_floor_key": build_floor_key, "build_wall_key": build_wall_key, "build_door_key": build_door_key, "build_storage_box_key": build_storage_box_key, "build_rotate_key": build_rotate_key, "build_deliver_key": build_deliver_key, "build_work_key": build_work_key, "build_remove_key": build_remove_key}
 	for key_name: String in build_keys:
 		if build_keys[key_name] == KEY_NONE:
@@ -316,6 +325,8 @@ func validate() -> PackedStringArray:
 		errors.append("structure placeholder dimensions must be > 0")
 	if structure_label_margin_m < 0.0 or structure_label_pixel_size <= 0.0 or structure_label_font_size < 1:
 		errors.append("structure label margin must be >= 0, pixel size > 0 and font size >= 1")
+	if structure_label_distance_m < 0.0:
+		errors.append("structure_label_distance_m must be >= 0")
 	if not _are_distinct(assigned_keys().values()):
 		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier, the trade keys, the cell overlay key, the container keys and the building keys must be different keys")
 	return errors

@@ -153,8 +153,8 @@ func _markers(view: ClientView) -> Node3D:
 
 
 func _marker_text(view: ClientView, container_id: String) -> String:
-	var marker: Node3D = _markers(view).get_node_or_null(ContainerMarkers.MARKER_PREFIX + container_id) as Node3D
-	return (marker.get_node(ContainerMarkers.LABEL_NODE) as Label3D).text if marker != null else "<no marker>"
+	var label: Label3D = view.container_visual_label(container_id)
+	return label.text if label != null else "<no marker>"
 
 
 ## The container block of the HUD ("" while it is hidden).
@@ -237,11 +237,11 @@ func test_the_view_shows_containers_and_the_keys_search_take_and_put() -> void:
 	var guard: float = presentation.container_min_interval_sec + 0.1
 
 	# --- every container has a marker with its name and its search state.
-	assert_true(await _wait(func() -> bool: return _markers(view).get_child_count() == 3), "three markers (%d)" % _markers(view).get_child_count())
+	assert_true(await _wait(func() -> bool: return ((_markers(view).get_node(ContainerMarkers.UNSEARCHED_BATCH_NODE) as MultiMeshInstance3D).multimesh.instance_count + (_markers(view).get_node(ContainerMarkers.SEARCHED_BATCH_NODE) as MultiMeshInstance3D).multimesh.instance_count) == 3), "three batched markers")
 	assert_eq(_marker_text(view, cabinet_id), "%s (수색 전)" % cabinet_name)
 	assert_eq(_marker_text(view, crate_id), crate_name, "a searched container says so")
-	assert_eq(_marker_text(view, far_id), "%s (수색 전)" % crate_name)
-	assert_eq((_markers(view).get_node(ContainerMarkers.MARKER_PREFIX + cabinet_id) as Node3D).position, CABINET_AT, "where the container stands")
+	assert_eq(_marker_text(view, far_id), "<no marker>", "far container bodies have no Label3D")
+	assert_eq(view.container_visual_transform(cabinet_id).origin, CABINET_AT + Vector3.UP * ClientPresentationSettings.new().container_marker_size_m * 0.5, "where the container stands")
 	# --- the HUD names what the open key would open: the nearest in reach.
 	assert_true(await _wait(func() -> bool: return view.container_candidate_id() == cabinet_id), "the nearest container in reach is the candidate (%s)" % view.container_candidate_id())
 	assert_eq(_hud(view), "보관함 열기 [H]: %s (수색 전)" % cabinet_name)
@@ -340,5 +340,6 @@ func test_the_view_shows_containers_and_the_keys_search_take_and_put() -> void:
 	assert_eq(results.size(), 0, "no request was sent for either")
 	assert_eq(_cluster.server.rejected_intent_count(), 0)
 	assert_eq(mirror.rejected_payload_count, 0)
-	# The far container is still shown: markers have no range of their own.
-	assert_eq(_markers(view).get_child_count(), 3)
+	# The far container body is still shown; only its label has a range.
+	assert_true(view.has_container_visual(far_id))
+	assert_eq(_markers(view).get_child_count(), 2, "only the two body batches remain when every label is far")

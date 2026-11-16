@@ -142,12 +142,11 @@ func _map_label(view: ClientView) -> String:
 
 
 func _has_marker(view: ClientView, item_id: String) -> bool:
-	return (view.get_node("%WorldItems") as Node3D).get_node_or_null(WorldItemMarkers.MARKER_PREFIX + item_id) != null
+	return view.has_world_item_visual(item_id)
 
 
 func _has_zombie_visual(view: ClientView, zombie_id: String) -> bool:
-	var visual: Node = (view.get_node("%Zombies") as Node3D).get_node_or_null("Zombie_" + zombie_id)
-	return visual != null and not visual.is_queued_for_deletion()
+	return view.has_zombie_visual(zombie_id)
 
 
 func _overlay(view: ClientView) -> Node3D:
@@ -207,6 +206,11 @@ func test_the_view_draws_the_servers_map_and_follows_the_players_cells() -> void
 	assert_contains(_map_label(view), "cell_-3_-3")
 	assert_contains(_map_label(view), "꺼짐")
 	assert_true(await _wait(func() -> bool: return _has_marker(view, near_item) and _has_zombie_visual(view, near_zombie)), "what is near is shown")
+	# A snapshot moves the existing MultiMesh instance without adding a node.
+	var zombie_mirror: ClientZombieState = (network.get_module(ZombieNetModule.MODULE_NAME) as ZombieNetModule).client_state
+	var moved_zombie: Vector3 = NEAR_ZOMBIE_AT + Vector3.RIGHT
+	assert_eq(zombie_mirror.apply_snapshot(zombie_mirror.last_snapshot_tick + 1, [[near_zombie, moved_zombie, 0.25, 0, 1.0]]), "")
+	assert_eq(view.zombie_visual_transform(near_zombie).origin, moved_zombie + Vector3.UP * presentation.zombie_capsule_height_m * 0.5, "snapshot moved the batched zombie transform")
 	assert_false(_has_marker(view, far_item), "an item five cells away is not")
 	assert_false(_has_zombie_visual(view, far_zombie), "nor a zombie there")
 
@@ -217,7 +221,7 @@ func test_the_view_draws_the_servers_map_and_follows_the_players_cells() -> void
 	assert_contains(_map_label(view), "x 45, z 45")
 	assert_true(await _wait(func() -> bool: return _has_marker(view, far_item) and _has_zombie_visual(view, far_zombie)), "what lies there appeared")
 	assert_true(await _wait(func() -> bool: return not _has_marker(view, near_item) and not _has_zombie_visual(view, near_zombie)), "and what was left behind is gone")
-	assert_eq((view.get_node("%WorldItems") as Node3D).get_child_count(), 1, "exactly the markers of the mirror")
+	assert_eq((view.get_node("%WorldItems/WorldItemBodies") as MultiMeshInstance3D).multimesh.instance_count, 1, "exactly the markers of the mirror")
 
 	# --- the cell overlay is off until its key is pressed ---
 	assert_false(view.is_cell_overlay_visible())

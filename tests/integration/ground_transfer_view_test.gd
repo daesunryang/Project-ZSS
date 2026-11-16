@@ -141,8 +141,8 @@ func _markers(view: ClientView) -> Node3D:
 
 
 func _marker_text(view: ClientView, item_id: String) -> String:
-	var marker: Node3D = _markers(view).get_node_or_null(WorldItemMarkers.MARKER_PREFIX + item_id) as Node3D
-	return (marker.get_node(WorldItemMarkers.LABEL_NODE) as Label3D).text if marker != null else "<no marker>"
+	var label: Label3D = view.world_item_visual_label(item_id)
+	return label.text if label != null else "<no marker>"
 
 
 func _hud(view: ClientView) -> String:
@@ -184,12 +184,11 @@ func test_the_view_shows_ground_items_the_cursor_and_puts_the_selected_stack_dow
 	assert_true(view.is_game_input_enabled(), "the player has a character: game input is on")
 
 	# --- every item lying in the world has a marker with its name and quantity.
-	assert_true(await _wait(func() -> bool: return _markers(view).get_child_count() == 3), "three markers (%d)" % _markers(view).get_child_count())
+	assert_true(await _wait(func() -> bool: return (_markers(view).get_node(WorldItemMarkers.BATCH_NODE) as MultiMeshInstance3D).multimesh.instance_count == 3), "three batched markers")
 	assert_eq(_marker_text(view, food), "%s x3" % food_name)
 	assert_eq(_marker_text(view, water), "%s x2" % water_name)
-	var food_marker: Node3D = _markers(view).get_node(WorldItemMarkers.MARKER_PREFIX + food) as Node3D
-	assert_eq(food_marker.position, FOOD_AT, "where the item lies")
-	assert_eq(_markers(view).get_node(WorldItemMarkers.MARKER_PREFIX + far).position, FAR_AT, "items far away are shown too")
+	assert_eq(view.world_item_visual_transform(food).origin, FOOD_AT + Vector3.UP * ClientPresentationSettings.new().world_item_marker_size_m * 0.5, "where the item lies")
+	assert_true(view.has_world_item_visual(far), "items far away are shown too, without a far label node")
 	# --- the HUD: nothing carried, the nearest item in reach is the candidate.
 	assert_true(await _wait(func() -> bool: return view.pickup_candidate_id() == food), "the nearest item in reach is the pickup candidate (%s)" % view.pickup_candidate_id())
 	assert_contains(_hud(view), "소지품: 없음")
@@ -199,8 +198,8 @@ func test_the_view_shows_ground_items_the_cursor_and_puts_the_selected_stack_dow
 	# --- the pickup key takes the candidate; its marker goes, the cursor lands on it.
 	await _press(ClientInputActions.PICKUP)
 	assert_true(await _wait(func() -> bool: return network.client_state.has_inventory_item(food)), "the pickup key picked the candidate up")
-	assert_true(await _wait(func() -> bool: return _markers(view).get_child_count() == 2), "its marker is gone")
-	assert_null(_markers(view).get_node_or_null(WorldItemMarkers.MARKER_PREFIX + food))
+	assert_true(await _wait(func() -> bool: return (_markers(view).get_node(WorldItemMarkers.BATCH_NODE) as MultiMeshInstance3D).multimesh.instance_count == 2), "its marker is gone")
+	assert_false(view.has_world_item_visual(food))
 	assert_true(await _wait(func() -> bool: return view.selected_item_id() == food), "the cursor is on the only stack")
 	assert_contains(_hud(view), "> %s x3" % food_name)
 	assert_true(await _wait(func() -> bool: return _notice(view) == "줍기 승인"), "the pickup result is shown (%s)" % _notice(view))
@@ -254,7 +253,7 @@ func test_the_view_shows_ground_items_the_cursor_and_puts_the_selected_stack_dow
 	if b == null:
 		return
 	b.request_pickup(unit)
-	assert_true(await _wait(func() -> bool: return _markers(view).get_node_or_null(WorldItemMarkers.MARKER_PREFIX + unit) == null), "an item somebody else picked up has no marker")
+	assert_true(await _wait(func() -> bool: return not view.has_world_item_visual(unit)), "an item somebody else picked up has no marker")
 	assert_eq(_server_rows(viewer_id), [[WATER, 1]], "nothing arrived in the viewer's inventory")
 
 	# --- nothing in reach: the pickup key sends nothing and says so.

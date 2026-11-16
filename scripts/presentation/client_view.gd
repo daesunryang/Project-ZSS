@@ -42,7 +42,10 @@ var _player_visuals: Dictionary[String, Node3D] = {}
 ## player_id -> what the capsule and the name tag were last built from
 ## (the mirrors change many times a second; meshes are rebuilt on change).
 var _player_look_keys: Dictionary[String, String] = {}
-var _zombie_visuals: Dictionary[String, MeshInstance3D] = {}
+## One MultiMesh per zombie state/material; ids map to their last transform
+## only for presentation queries and tests, never to one node per zombie.
+var _zombie_batches: Dictionary[String, MultiMeshInstance3D] = {}
+var _zombie_transforms: Dictionary[String, Transform3D] = {}
 var _zombie_capsule_mesh: CapsuleMesh = null
 var _dead_player_material: StandardMaterial3D = null
 var _zombie_materials: Dictionary[String, StandardMaterial3D] = {}
@@ -198,6 +201,7 @@ func _process(_delta: float) -> void:
 
 func _physics_process(_delta: float) -> void:
 	_update_camera()
+	_update_batched_label_focus()
 	_update_treat_target()
 	_update_pickup_candidate()
 	_update_container_candidate()
@@ -387,7 +391,35 @@ func _sync_world_item_markers() -> void:
 	if signature == _world_items_signature:
 		return
 	_world_items_signature = signature
-	_world_item_markers.sync(_state.world_items)
+	_world_item_markers.sync(_state.world_items, _local_player_position())
+
+
+func has_world_item_visual(item_id: String) -> bool:
+	return _world_item_markers != null and _world_item_markers.has_marker(item_id)
+
+
+func world_item_visual_transform(item_id: String) -> Transform3D:
+	return _world_item_markers.transform_of(item_id) if _world_item_markers != null else Transform3D()
+
+
+func world_item_visual_label(item_id: String) -> Label3D:
+	return _world_item_markers.label_of(item_id) if _world_item_markers != null else null
+
+
+func _local_player_position() -> Vector3:
+	if _state == null or _state.local_player_id.is_empty() or not _state.players.has(_state.local_player_id):
+		return Vector3.ZERO
+	return _state.position_of(_state.local_player_id)
+
+
+## Meshes remain batched while the small set of nearby labels follows the
+## local player as it crosses each configured distance boundary.
+func _update_batched_label_focus() -> void:
+	var focus: Vector3 = _local_player_position()
+	if _world_item_markers != null:
+		_world_item_markers.update_focus(focus)
+	if _container_markers != null:
+		_container_markers.update_focus(focus)
 
 
 func _on_survival_state_changed() -> void:
@@ -452,10 +484,8 @@ func _on_zombie_added(_zombie_id: String) -> void:
 
 
 func _on_zombie_removed(zombie_id: String) -> void:
-	var visual: MeshInstance3D = _zombie_visuals.get(zombie_id, null)
-	if visual != null:
-		visual.queue_free()
-		_zombie_visuals.erase(zombie_id)
+	_zombie_transforms.erase(zombie_id)
+	_sync_zombie_visuals()
 
 
 func _on_zombie_event(event: Dictionary) -> void:
@@ -514,6 +544,11 @@ func _prepare_zombie_resources() -> void:
 		var material: StandardMaterial3D = StandardMaterial3D.new()
 		material.albedo_color = ClientPresentationFormatter.zombie_color(state_name, _presentation)
 		_zombie_materials[state_name] = material
+		var batch: MultiMeshInstance3D = MultiMeshInstance3D.new()
+		batch.name = "ZombieBatch_" + state_name
+		batch.material_override = material
+		_zombies_root.add_child(batch)
+		_zombie_batches[state_name] = batch
 
 
 func _sync_player_visuals() -> void:
@@ -606,25 +641,45 @@ func _make_player_visual(player_id: String) -> Node3D:
 func _sync_zombie_visuals() -> void:
 	if _zombie_state == null:
 		return
-	for existing_id: String in _zombie_visuals.keys():
-		if not _zombie_state.has_zombie(existing_id):
-			_zombie_visuals[existing_id].queue_free()
-			_zombie_visuals.erase(existing_id)
+	_zombie_transforms.clear()
+	var ids_by_state: Dictionary[String, PackedStringArray] = {}
+	for state_name: String in ZombieState.STATE_NAMES:
+		ids_by_state[state_name] = PackedStringArray()
 	for zombie_id: String in _zombie_state.zombie_ids():
-		var visual: MeshInstance3D = _zombie_visuals.get(zombie_id, null)
-		if visual == null:
-			visual = MeshInstance3D.new()
-			visual.name = "Zombie_" + zombie_id
-			visual.mesh = _zombie_capsule_mesh
-			_zombies_root.add_child(visual)
-			_zombie_visuals[zombie_id] = visual
 		var entry: Dictionary = _zombie_state.get_zombie(zombie_id)
 		var state_name: String = str(entry.get("state", ClientZombieState.STATE_IDLE))
-		var dead: bool = state_name == ClientZombieState.STATE_DEAD
-		var center_height: float = _presentation.zombie_capsule_radius_m if dead else _presentation.zombie_capsule_height_m * 0.5
-		visual.position = (entry.get("position", Vector3.ZERO) as Vector3) + Vector3.UP * center_height
-		visual.rotation = Vector3(_presentation.dead_tilt_rad if dead else 0.0, float(entry.get("yaw", 0.0)), 0.0)
-		visual.material_override = _zombie_materials.get(state_name, _zombie_materials[ClientZombieState.STATE_IDLE])
+		if not ids_by_state.has(state_name):
+			state_name = ClientZombieState.STATE_IDLE
+		ids_by_state[state_name].append(zombie_id)
+	for state_name: String in ZombieState.STATE_NAMES:
+		var ids: PackedStringArray = ids_by_state[state_name]
+		ids.sort()
+		var multimesh: MultiMesh = MultiMesh.new()
+		multimesh.transform_format = MultiMesh.TRANSFORM_3D
+		multimesh.mesh = _zombie_capsule_mesh
+		multimesh.instance_count = ids.size()
+		for index: int in range(ids.size()):
+			var zombie_id: String = ids[index]
+			var entry: Dictionary = _zombie_state.get_zombie(zombie_id)
+			var dead: bool = state_name == ClientZombieState.STATE_DEAD
+			var center_height: float = _presentation.zombie_capsule_radius_m if dead else _presentation.zombie_capsule_height_m * 0.5
+			var basis := Basis.from_euler(Vector3(_presentation.dead_tilt_rad if dead else 0.0, float(entry.get("yaw", 0.0)), 0.0))
+			var transform := Transform3D(basis, (entry.get("position", Vector3.ZERO) as Vector3) + Vector3.UP * center_height)
+			multimesh.set_instance_transform(index, transform)
+			_zombie_transforms[zombie_id] = transform
+		_zombie_batches[state_name].multimesh = multimesh
+
+
+func zombie_visual_count() -> int:
+	return _zombie_transforms.size()
+
+
+func has_zombie_visual(zombie_id: String) -> bool:
+	return _zombie_transforms.has(zombie_id)
+
+
+func zombie_visual_transform(zombie_id: String) -> Transform3D:
+	return _zombie_transforms.get(zombie_id, Transform3D())
 
 
 func _refresh_survival_hud() -> void:
@@ -1044,7 +1099,19 @@ func _sync_container_markers() -> void:
 	if signature == _containers_signature:
 		return
 	_containers_signature = signature
-	_container_markers.sync(_container_state.containers)
+	_container_markers.sync(_container_state.containers, _local_player_position())
+
+
+func has_container_visual(container_id: String) -> bool:
+	return _container_markers != null and _container_markers.has_marker(container_id)
+
+
+func container_visual_transform(container_id: String) -> Transform3D:
+	return _container_markers.transform_of(container_id) if _container_markers != null else Transform3D()
+
+
+func container_visual_label(container_id: String) -> Label3D:
+	return _container_markers.label_of(container_id) if _container_markers != null else null
 
 
 ## Keeps the HUD's "open" line current: the candidate changes when the local

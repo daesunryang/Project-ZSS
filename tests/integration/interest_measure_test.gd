@@ -43,6 +43,8 @@ const WHOLE_MAP_RADIUS: int = 64
 const PEERS: int = 8
 const IDLE_TICKS: int = 2000
 const MOVE_TICKS: int = 200
+const STRUCTURES: int = 370
+const JOIN_CONTAINERS: int = 12
 
 var _cluster: NetTestCluster = null
 var _config: CompositionConfig = null
@@ -74,10 +76,11 @@ func _settle() -> void:
 
 ## The scene's server with the given interest area. Cells nobody wants are
 ## released quickly (memory store), as on a server that has been running.
-func _start(radius_cells: int, margin_cells: int) -> bool:
+func _start(radius_cells: int, margin_cells: int, compression_mode: int = NetworkSettings.CompressionMode.RANGE_CODER, include_join_map: bool = false) -> bool:
 	var network_settings: NetworkSettings = NetworkSettings.new()
 	network_settings.autosave_interval_sec = 0.0
 	network_settings.max_players = PEERS
+	network_settings.compression_mode = compression_mode
 	# from_defaults() hands out shared cached resources: replace, never edit.
 	_config = CompositionConfig.from_defaults()
 	_config.gameplay = GameplaySettings.new()
@@ -100,6 +103,8 @@ func _start(radius_cells: int, margin_cells: int) -> bool:
 	_config.interest = InterestSettings.new()
 	_config.interest.interest_radius_cells = radius_cells
 	_config.interest.keep_margin_cells = margin_cells
+	_config.building = BuildingSettings.new()
+	_config.containers = ContainerSettings.new()
 	_cluster = NetTestCluster.new(tree, network_settings, _config)
 	_world = ServerComposition.create_world(WORLD, _config)
 	if _world == null:
@@ -114,6 +119,27 @@ func _start(radius_cells: int, margin_cells: int) -> bool:
 		_world.inventory.spawn_world_item("dev_test_item", 1, _world.cell_id_at(position), position)
 	for index: int in range(ZOMBIES):
 		zombies.spawn_zombie(_world, Vector3(rng.randf_range(-SPREAD_M, SPREAD_M), 0.0, rng.randf_range(-SPREAD_M, SPREAD_M)), 0.0)
+	if include_join_map:
+		# Structure/container rules require their cell to be in memory. Load the
+		# spawn cells through the production lifecycle before seeding the map.
+		var loader: PlayerState = _world.join("perf_seed_loader")
+		loader.position = Vector3.ZERO
+		(_world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).refresh(_world)
+		var building: BuildingService = _world.get_system(BuildingService.SYSTEM_ID) as BuildingService
+		var placed_count: int = 0
+		for index: int in range(STRUCTURES):
+			var placed: ActionResult = building.place_structure(_world, BuildPresentation.FLOOR_ID, Vector2i(-10 + index % 20, -10 + index / 20), 0)
+			if placed.ok:
+				building.complete_structure(_world, str(placed.event["structure_id"]))
+				placed_count += 1
+		var containers: ContainerService = _world.get_system(ContainerService.SYSTEM_ID) as ContainerService
+		var container_count: int = 0
+		for index: int in range(JOIN_CONTAINERS):
+			if containers.create_container(_world, "dev_crate", Vector3(-6.0 + float(index), 0.0, 6.0)).ok:
+				container_count += 1
+		_world.leave(loader.player_id)
+		if placed_count != STRUCTURES or container_count != JOIN_CONTAINERS:
+			fail("PERF-2 scene seed incomplete: %d/%d structures, %d/%d containers" % [placed_count, STRUCTURES, container_count, JOIN_CONTAINERS])
 	return _cluster.start_server(_world, null) == OK
 
 
@@ -371,3 +397,81 @@ func test_measure_the_zombie_replication_tick_with_and_without_scope() -> void:
 	assert_true(float(before["rows"]) > 0.0 and float(after["rows"]) > 0.0, "snapshots were sent")
 	assert_true(float(after["rows"]) < float(before["rows"]), "with scope fewer rows are sent")
 	assert_eq(before["memory_zombies"], after["memory_zombies"], "the same zombies are in memory in both runs")
+
+
+# ------------------------------------------------------------ PERF-2 transport
+
+func _pop_sent_bytes(service: NetworkService) -> int:
+	var peer: ENetMultiplayerPeer = service.get("_peer") as ENetMultiplayerPeer
+	return int(peer.host.pop_statistic(ENetConnection.HOST_TOTAL_SENT_DATA))
+
+
+## Same authoritative scene for every ENet mode. Wire bytes come from
+## ENetConnection.pop_statistic(HOST_TOTAL_SENT_DATA), after ENet framing and
+## compression. CPU is snapshot build + RPC enqueue + ENet host flush.
+func _measure_compression_mode(mode: int) -> Dictionary:
+	var name: String = NetworkSettings.compression_mode_name(mode)
+	if not _start(InterestSettings.new().interest_radius_cells, InterestSettings.new().keep_margin_cells, mode, true):
+		fail("%s: server did not start" % name)
+		return {}
+	var a: NetworkService = await _cluster.join_client("compression_a")
+	var b: NetworkService = await _cluster.join_client("compression_b")
+	if a == null or b == null:
+		fail("%s: first clients did not join" % name)
+		return {}
+	await _settle()
+	_pop_sent_bytes(_cluster.server)
+	var c: NetworkService = await _cluster.join_client("compression_c")
+	if c == null:
+		fail("%s: measured client did not join" % name)
+		return {}
+	await _settle()
+	var join_bytes: int = _pop_sent_bytes(_cluster.server)
+	var structure_state: ClientStructureState = (c.get_module(StructureNetModule.MODULE_NAME) as StructureNetModule).client_state
+	var container_state: ClientContainerState = (c.get_module(ContainerNetModule.MODULE_NAME) as ContainerNetModule).client_state
+	assert_eq(structure_state.structure_count(), STRUCTURES, "%s join sees the structure test map" % name)
+	assert_eq(container_state.container_count(), JOIN_CONTAINERS, "%s join sees its containers" % name)
+	await _place(a, CORNER_A)
+	await _place(b, CORNER_B)
+	await _place(c, CORNER_C)
+	_pop_sent_bytes(_cluster.server)
+	await _cluster.wait_ticks(WINDOW_TICKS)
+	var standing_bytes: int = _pop_sent_bytes(_cluster.server)
+	# A fixed three-second authoritative walk, independent of wall time.
+	var player_id: String = c.client_state.local_player_id
+	for tick: int in range(WINDOW_TICKS):
+		var phase: float = float(tick) / float(WINDOW_TICKS - 1)
+		var alpha: float = phase * 2.0 if phase <= 0.5 else (1.0 - phase) * 2.0
+		_world.get_player(player_id).position = CORNER_C.lerp(Vector3.ZERO, alpha)
+		await tree.physics_frame
+	var walking_bytes: int = _pop_sent_bytes(_cluster.server)
+	var zombie_module: ZombieNetModule = _zombie_module(_cluster.server)
+	var peer: ENetMultiplayerPeer = _cluster.server.get("_peer") as ENetMultiplayerPeer
+	var snapshot_period: float = 1.0 / _config.zombie_net.snapshot_rate_hz
+	var started: int = Time.get_ticks_usec()
+	for tick: int in range(MOVE_TICKS):
+		zombie_module.server_physics(snapshot_period)
+		peer.host.flush()
+	var cpu_usec: float = float(Time.get_ticks_usec() - started) / float(MOVE_TICKS)
+	var seconds: float = float(WINDOW_TICKS) / float(Engine.physics_ticks_per_second)
+	var result: Dictionary = {
+		"join_bytes": join_bytes,
+		"standing_bps": float(standing_bytes) / seconds,
+		"walking_bps": float(walking_bytes) / seconds,
+		"cpu_usec": cpu_usec,
+	}
+	print("[measure] PERF-2 %s: join %d wire bytes; standing %.0f B/s; walking %.0f B/s; server snapshot+flush %.1f usec/tick" % [name, join_bytes, result["standing_bps"], result["walking_bps"], cpu_usec])
+	await _cluster.shutdown()
+	_cluster = null
+	return result
+
+
+func test_measure_enet_compression_modes_on_the_interest_scene() -> void:
+	var results: Dictionary[String, Dictionary] = {}
+	for mode: int in NetworkSettings.CompressionMode.values():
+		var result: Dictionary = await _measure_compression_mode(mode)
+		if result.is_empty():
+			return
+		results[NetworkSettings.compression_mode_name(mode)] = result
+	assert_eq(results.size(), 5)
+	assert_true(float(results["RANGE_CODER"]["standing_bps"]) < float(results["NONE"]["standing_bps"]), "small snapshot traffic is compressed")

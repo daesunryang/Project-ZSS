@@ -122,12 +122,13 @@ func test_structure_visuals_follow_add_change_work_and_remove_signals() -> void:
 	var visuals: StructureVisuals = StructureVisuals.new(root, mirror, catalog, ItemCatalog.load_directory(), StructureGrid.new(1.0), ClientPresentationSettings.new())
 	assert_eq(mirror.apply_rows([_row()]), 1)
 	assert_eq(visuals.count(), 1)
-	var node: Node3D = visuals.visual_of(STRUCTURE_ID)
-	assert_not_null(node.get_node_or_null(StructureVisuals.LABEL_NAME))
+	assert_not_null(visuals.label_of(STRUCTURE_ID))
+	assert_eq(visuals.batch_instance_count(), 1)
 	assert_true(mirror.apply_work_change("player_000001", STRUCTURE_ID, true, ""))
-	assert_true((visuals.visual_of(STRUCTURE_ID).get_node(StructureVisuals.LABEL_NAME) as Label3D).text.contains("작업자 1명"))
+	assert_true(visuals.label_of(STRUCTURE_ID).text.contains("작업자 1명"))
 	assert_eq(mirror.apply_rows([_row("dev_wall", Vector2i.ZERO, 0, "completed")]), 1)
-	assert_null(visuals.visual_of(STRUCTURE_ID).get_node_or_null(StructureVisuals.LABEL_NAME))
+	assert_null(visuals.label_of(STRUCTURE_ID))
+	assert_true(visuals.has_visual(STRUCTURE_ID))
 	assert_eq(mirror.apply_removed([STRUCTURE_ID]), 1)
 	assert_eq(visuals.count(), 0)
 	root.free()
@@ -140,13 +141,13 @@ func test_storage_box_visual_uses_its_data_size_and_blueprint_transparency() -> 
 	var visuals: StructureVisuals = StructureVisuals.new(root, mirror, catalog, ItemCatalog.load_directory(), StructureGrid.new(1.0), ClientPresentationSettings.new())
 	assert_eq(mirror.apply_rows([_row(BuildPresentation.STORAGE_BOX_ID)]), 1)
 	var definition: StructureDefinition = catalog.get_definition(BuildPresentation.STORAGE_BOX_ID)
-	var body: MeshInstance3D = visuals.visual_of(STRUCTURE_ID).get_node(StructureVisuals.BODY_NAME) as MeshInstance3D
-	assert_eq((body.mesh as BoxMesh).size, definition.visual_size_m)
-	assert_true((body.material_override as StandardMaterial3D).albedo_color.a < 1.0)
+	var batch: MultiMeshInstance3D = root.get_node(StructureVisuals.BATCH_PREFIX + BuildPresentation.STORAGE_BOX_ID + "_blueprint") as MultiMeshInstance3D
+	assert_eq((batch.multimesh.mesh as BoxMesh).size, definition.visual_size_m)
+	assert_true((batch.material_override as StandardMaterial3D).albedo_color.a < 1.0)
 	assert_eq(mirror.apply_rows([_row(BuildPresentation.STORAGE_BOX_ID, Vector2i.ZERO, 0, "completed")]), 1)
-	body = visuals.visual_of(STRUCTURE_ID).get_node(StructureVisuals.BODY_NAME) as MeshInstance3D
-	assert_eq((body.material_override as StandardMaterial3D).albedo_color.a, 1.0)
-	assert_null(visuals.visual_of(STRUCTURE_ID).get_node_or_null(StructureVisuals.LABEL_NAME))
+	batch = root.get_node(StructureVisuals.BATCH_PREFIX + BuildPresentation.STORAGE_BOX_ID + "_solid") as MultiMeshInstance3D
+	assert_eq((batch.material_override as StandardMaterial3D).albedo_color.a, 1.0)
+	assert_null(visuals.label_of(STRUCTURE_ID))
 	root.free()
 
 
@@ -160,10 +161,10 @@ func test_structure_nodes_are_freed_when_removed_or_dropped_by_a_join() -> void:
 	assert_eq(mirror.apply_rows([_row()]), 1)
 	var shown: Node3D = visuals.visual_of(STRUCTURE_ID)
 	assert_true(is_instance_valid(shown))
-	assert_eq(root.get_child_count(), 1)
+	assert_eq(visuals.batch_instance_count(), 1)
 	assert_eq(mirror.apply_removed([STRUCTURE_ID]), 1)
 	assert_false(is_instance_valid(shown), "the removed structure's node is freed")
-	assert_eq(root.get_child_count(), 0)
+	assert_eq(visuals.batch_instance_count(), 0)
 	# A (re)join replaces the mirror without `structure_removed`: what it
 	# no longer holds is freed as well.
 	assert_eq(mirror.apply_rows([_row()]), 1)
@@ -171,7 +172,7 @@ func test_structure_nodes_are_freed_when_removed_or_dropped_by_a_join() -> void:
 	assert_true(mirror.apply_join({}))
 	assert_false(is_instance_valid(shown), "a structure the join dropped is freed")
 	assert_eq(visuals.count(), 0)
-	assert_eq(root.get_child_count(), 0)
+	assert_eq(visuals.batch_instance_count(), 0)
 	root.free()
 
 

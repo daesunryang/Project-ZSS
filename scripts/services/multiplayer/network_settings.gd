@@ -15,10 +15,22 @@ const CHANNEL_COUNT: int = 3
 ## Extra transport slots so a full server can still answer "server_full".
 const TRANSPORT_HEADROOM: int = 2
 
+## ENet packet compression. This transport setting is part of the connection
+## contract: the server and every client must use the same mode.
+enum CompressionMode {
+	NONE = ENetConnection.COMPRESS_NONE,
+	RANGE_CODER = ENetConnection.COMPRESS_RANGE_CODER,
+	FASTLZ = ENetConnection.COMPRESS_FASTLZ,
+	ZLIB = ENetConnection.COMPRESS_ZLIB,
+	ZSTD = ENetConnection.COMPRESS_ZSTD,
+}
+
 @export_range(1, 65535) var port: int = 24680
 @export var bind_address: String = "*"
 ## Maximum simultaneously joined players (docs/00: 1~4 initial target).
 @export_range(1, 64) var max_players: int = 4
+## FASTLZ gave the best overall wire/CPU trade-off in the PERF-2 scene.
+@export_enum("None:0", "Range coder:1", "FastLZ:2", "Zlib:3", "Zstd:4") var compression_mode: int = CompressionMode.FASTLZ
 ## Seconds a connected peer may take to complete the join handshake.
 @export_range(0.5, 60.0) var handshake_timeout_sec: float = 5.0
 ## Delay before a rejected peer is disconnected (lets the reason arrive).
@@ -45,6 +57,8 @@ func validate() -> PackedStringArray:
 		errors.append("port out of range")
 	if max_players < 1:
 		errors.append("max_players must be >= 1")
+	if not compression_mode in CompressionMode.values():
+		errors.append("compression_mode must be a supported ENet compression mode")
 	if handshake_timeout_sec <= 0.0:
 		errors.append("handshake_timeout_sec must be > 0")
 	if snapshot_rate_hz <= 0.0 or move_intent_rate_per_sec <= 0.0 or pickup_intent_rate_per_sec <= 0.0:
@@ -52,6 +66,23 @@ func validate() -> PackedStringArray:
 	if autosave_interval_sec < 0.0:
 		errors.append("autosave_interval_sec must be >= 0")
 	return errors
+
+
+## Stable log/document name for a configured ENet compression value.
+static func compression_mode_name(mode: int) -> String:
+	match mode:
+		CompressionMode.NONE:
+			return "NONE"
+		CompressionMode.RANGE_CODER:
+			return "RANGE_CODER"
+		CompressionMode.FASTLZ:
+			return "FASTLZ"
+		CompressionMode.ZLIB:
+			return "ZLIB"
+		CompressionMode.ZSTD:
+			return "ZSTD"
+		_:
+			return "INVALID(%d)" % mode
 
 
 static func load_or_default(path: String = DEFAULT_PATH) -> NetworkSettings:

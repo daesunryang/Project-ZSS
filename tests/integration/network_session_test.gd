@@ -54,6 +54,27 @@ func test_two_clients_join_and_see_each_other() -> void:
 	assert_false((_cluster.server.multiplayer as SceneMultiplayer).server_relay, "client-to-client relay is disabled")
 
 
+func test_matching_compression_connects_and_mismatch_logs_the_contract() -> void:
+	_settings.compression_mode = NetworkSettings.CompressionMode.RANGE_CODER
+	assert_eq(_cluster.start_server(_new_world(), null), OK)
+	var matching: NetworkService = await _cluster.join_client("matching")
+	assert_not_null(matching, "the same ENet compression mode joins")
+	var wrong: NetworkSettings = NetworkSettings.new()
+	wrong.autosave_interval_sec = 0.0
+	wrong.compression_mode = NetworkSettings.CompressionMode.NONE
+	var mismatched: NetworkService = _cluster.add_client_with_settings("mismatched", wrong)
+	# A matching local peer joined in the usual bounded frame wait above. Give
+	# this peer the same opportunity; ENet keeps retrying before its eventual
+	# connection_failed signal, so this test does not depend on wall time.
+	await _cluster.wait_frames(120)
+	assert_true(mismatched.client_state.local_player_id.is_empty(), "it never joins")
+	var found: bool = false
+	for line: String in GameLogger.captured_lines():
+		if line.contains("ENet compression must match the server") and line.contains("NONE"):
+			found = true
+	assert_true(found, "the client log names the compression contract and its configured mode")
+
+
 func test_wrong_protocol_and_bad_types_are_rejected() -> void:
 	assert_eq(_cluster.start_server(_new_world(), null), OK)
 	var bad_protocol: NetworkService = _cluster.add_client("mallory", false)

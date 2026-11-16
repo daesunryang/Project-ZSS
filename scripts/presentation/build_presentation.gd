@@ -53,6 +53,7 @@ func _init(root: Node3D, hud: Label, settings: ClientPresentationSettings, build
 
 ## Returns whether this frame's attack and pickup actions were consumed.
 func tick(camera: Camera3D, map: ClientWorldMap) -> Dictionary:
+	_visuals.update_focus(_local_position())
 	if Input.is_action_just_pressed(ClientInputActions.BUILD_MODE):
 		_build_mode = not _build_mode
 	if _build_mode:

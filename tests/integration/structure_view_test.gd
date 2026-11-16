@@ -126,16 +126,14 @@ func test_build_actions_show_blueprint_progress_and_completed_wall() -> void:
 	if not placed:
 		return
 	var structure_id: String = module.client_state.structure_ids()[0]
-	var structures: Node3D = view.get_node("%Structures") as Node3D
-	assert_true(await _wait(func() -> bool: return structures.get_node_or_null("Structure_" + structure_id) != null), "the blueprint has a client node")
-	var visual: Node3D = structures.get_node("Structure_" + structure_id) as Node3D
-	assert_not_null(visual.get_node_or_null(StructureVisuals.LABEL_NAME), "blueprints have progress labels")
+	var build: BuildPresentation = view.get("_build_presentation") as BuildPresentation
+	var visuals: StructureVisuals = build.visuals()
+	assert_true(await _wait(func() -> bool: return visuals.has_visual(structure_id)), "the blueprint has a batched client instance")
+	assert_not_null(visuals.label_of(structure_id), "nearby blueprints have progress labels")
 	await _press(ClientInputActions.BUILD_DELIVER)
 	assert_true(await _wait(func() -> bool: return int(module.client_state.get_structure(structure_id)[ClientStructureState.KEY_DELIVERED].get(WOOD, 0)) == 4 and int(module.client_state.get_structure(structure_id)[ClientStructureState.KEY_DELIVERED].get(NAILS, 0)) == 2), "M delivered carried materials")
 	await _press(ClientInputActions.BUILD_WORK)
 	assert_true(await _wait(func() -> bool: return float(module.client_state.get_structure(structure_id)[ClientStructureState.KEY_PROGRESS]) > 0.0), "comma started work and progress grew")
-	visual = structures.get_node("Structure_" + structure_id) as Node3D
-	assert_true((visual.get_node(StructureVisuals.LABEL_NAME) as Label3D).text.contains("%"), "progress is visible")
+	assert_true(visuals.label_of(structure_id).text.contains("%"), "progress is visible")
 	assert_true(await _wait(func() -> bool: return str(module.client_state.get_structure(structure_id)[ClientStructureState.KEY_STATE]) == "completed"), "the server completed the wall")
-	visual = structures.get_node("Structure_" + structure_id) as Node3D
-	assert_null(visual.get_node_or_null(StructureVisuals.LABEL_NAME), "the completed solid has no blueprint label")
+	assert_null(visuals.label_of(structure_id), "the completed solid has no blueprint label")

@@ -2438,7 +2438,7 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 
 ### 15.7 P3-4b 구조물 표시와 건축 입력
 
-클라이언트 표시 계층만 추가했다. 서버·도메인·프로토콜은 바꾸지 않았다. `StructureVisuals`는 `ClientStructureState`의 `structure_added`, `structure_changed`, `structure_removed`, `work_changed`를 듣고 미러에 있는 구조물마다 노드 하나를 유지한다. 바닥은 납작한 상자, 벽은 변 위의 얇은 상자, 문은 더 얇은 상자이며 열린 문은 90도 돌아간다. `blueprint`와 `constructing`은 반투명 재질과 자재·진행률·작업자 수 `Label3D`, `completed`는 불투명 재질이다. 위치는 `StructureGrid.tile_center`/`slot_anchor`와 미러의 슬롯을 쓴다.
+클라이언트 표시 계층만 추가했다. 서버·도메인·프로토콜은 바꾸지 않았다. PERF-2 전에는 `StructureVisuals`가 미러의 구조물마다 노드 하나를 유지했으나, 이제 payload마다 한 번 오는 `changed`를 듣고 정의·완성 상태별 MultiMesh를 다시 만든다(§16.2). 문만 개별 노드다. 바닥은 납작한 상자, 벽은 변 위의 얇은 상자, 문은 더 얇은 상자이며 열린 문은 90도 돌아간다. `blueprint`와 `constructing`은 반투명 재질과 가까운 범위의 자재·진행률·작업자 수 `Label3D`, `completed`는 불투명 재질이다. 위치는 `StructureGrid.tile_center`/`slot_anchor`와 미러의 슬롯을 쓴다.
 
 `BuildModePolicy`는 노드가 없는 순수 계산이다. 카메라 광선과 바닥 평면의 교점, 타일, 가장 가까운 변, 회전, 맵 경계·미러 슬롯·본인 미러 위치로 추정한 프리뷰 유효성, 카메라가 조준하면서 본인 행동 사거리 안에 있는 구조물 대상을 계산한다. 이 계산은 프리뷰일 뿐이며 배치·자재·작업·취소·철거·문 판정은 모두 서버가 한다. 서버가 모듈 크기를 전송하지 않으므로 `BuildingSettings.load_or_default()`의 `grid_module_m`를 읽는다(PROVISIONAL P3-181).
 
@@ -2446,7 +2446,7 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 
 입력은 `ClientPresentationSettings` Resource와 `ClientInputActions`에 있다: L 건축 모드, 1/2/3 바닥·벽·문(P3-3b §15.8에서 4 보관 상자 추가), `.` 회전, 건축 모드의 왼쪽 클릭 배치(공격 억제), M 자재 넣기, `,` 작업 시작/중지, Delete 청사진 취소/완공 조각 철거다. E는 행동 사거리 안에서 카메라가 조준한 완공 문이 있으면 문을 우선 열고 닫으며, 그런 문이 없으면 기존의 가장 가까운 바닥 아이템 줍기다(P3-189). 문이 E를 가져가는 동안에는 건축 HUD에 "문 열기/닫기 [E] (줍기보다 먼저)" 줄이 붙는다(P3-201). 보관함(P3-3, §15.3)은 E를 쓰지 않고 H/J/K/U/I만 쓴다. 그래서 `ClientPresentationSettings`가 배정하는 키는 P3-3의 22개에 건축 9개를 더해 31개이고, 서로 다른지(`validate`)와 이동·줍기 키와 겹치는지(`keys_shared_with`)를 모두 함께 검사한다.
 
-P3-3과 합친 뒤의 규칙: 건축 HUD(`%BuildLabel`)는 보관함 HUD(`%ContainerLabel`, 오른쪽 위 y 190~420) 아래 y 428~580에 둔다(P3-202). 구조물 노드는 미러에 있는 동안만 산다. 관심 셀을 벗어난 구조물은 서버가 보내는 `removed` 묶음으로 `structure_removed`가 와서 노드를 해제하고, 접속 조각(`apply_join`)이 미러를 통째로 바꿀 때는 `structure_removed` 없이 `changed`만 오므로 `StructureVisuals`가 `changed`에서 미러에 없는 노드를 해제한다(P3-203). 테스트 맵 건물(`MapContentService`, 전용 서버에서만 놓는다)은 서버 규칙으로 놓고 완공한 보통 구조물이라 클라이언트는 따로 다루지 않는다(배치자가 없어 취소·철거는 서버가 `not_owner`로 거부한다, P3-204).
+P3-3과 합친 뒤의 규칙: 건축 HUD(`%BuildLabel`)는 보관함 HUD(`%ContainerLabel`, 오른쪽 위 y 190~420) 아래 y 428~580에 둔다(P3-202). 구조물 배치 인스턴스는 미러에 있는 동안만 산다. 관심 셀을 벗어난 구조물은 서버가 보내는 `removed` 묶음 뒤의 `changed`에서 배치가 다시 만들어지고, 접속 조각(`apply_join`)이 미러를 통째로 바꿀 때도 같은 한 번의 `changed`로 stale instance가 사라진다(P3-203, PERF-2에서 구현 방식 갱신). 테스트 맵 건물(`MapContentService`, 전용 서버에서만 놓는다)은 서버 규칙으로 놓고 완공한 보통 구조물이라 클라이언트는 따로 다루지 않는다(배치자가 없어 취소·철거는 서버가 `not_owner`로 거부한다, P3-204).
 
 헤드리스 테스트는 순수 계산·문구·시그널 기반 노드 생명주기와 실제 `NetTestCluster` 클라이언트에서 L→1→왼쪽 클릭→M→`,` 흐름을 검증했다. 실제 창의 재질·크기·라벨 가독성·HUD 배치는 확인하지 않았다.
 
@@ -2473,3 +2473,13 @@ P3-3과 합친 뒤의 규칙: 건축 HUD(`%BuildLabel`)는 보관함 HUD(`%Conta
 셀 해제는 `PRELOADED → SAVING` 뒤 비동기 완료를 기다린다. 성공한 세대가 그 셀의 최신 상태를 포함한 뒤에만 `UNLOADING → UNLOADED`로 가며, 실패하면 `PRELOADED`로 돌아간다. 저장 중 다시 필요해진 셀도 성공 뒤 메모리에 남는다. 따라서 §15.1의 “저장 성공 전에는 해제하지 않는다” 규칙은 쓰기 스레드가 바뀌어도 그대로다.
 
 전용 서버의 `NetworkService`는 다음 사용자 정의 성능 모니터를 등록하고 종료 때 제거한다: `server/tick_time_ms`, `server/zombie_step_time_ms`, `server/planning_nodes_per_tick`, `server/loaded_cells`, `server/active_cells`, `server/save_build_time_ms`, `server/save_write_time_ms`, `server/saves_coalesced`. 모두 진단값이며 게임 규칙·예산·분기에 쓰지 않는다.
+
+### 16.2 클라이언트 묶음 그리기와 ENet 압축 (PERF-2)
+
+`WorldItemMarkers`는 바닥 아이템 몸체 전체를 `MultiMeshInstance3D` 하나로 그린다. `ContainerMarkers`는 수색 전/후 재질별 두 배치로 나누고, `ClientView`의 좀비는 상태 색별 배치로 나눈다. `StructureVisuals`는 정의와 완성/청사진 재질별로 바닥·벽·보관 상자를 묶으며, 열고 닫을 때 회전하는 문만 개별 노드로 남긴다. 미러가 바뀌면 ID 정렬 순서로 `instance_count`와 변환을 다시 쓰므로 제거된 인스턴스가 뒤에 남지 않는다. 구조물 join의 행별 신호는 듣지 않고 payload당 한 번 오는 `changed`만 들어 370행도 한 번만 재구축한다.
+
+몸체와 라벨의 수명은 분리했다. 몸체는 관심 미러에 있는 한 전부 배치에 남고, `ClientPresentationSettings`의 `world_item_label_distance_m`(12m), `container_label_distance_m`(16m), `structure_label_distance_m`(20m) 안의 항목에만 `Label3D`를 만든다. 플레이어가 0.25m 이상 움직였을 때 라벨 집합만 갱신하며 몸체 MultiMesh는 건드리지 않는다. 기존 표시 내용·위치·색, 좀비 상태별 자세, 청사진 진행 문구와 문 회전은 유지한다.
+
+`NetworkSettings.compression_mode`는 `NONE/RANGE_CODER/FASTLZ/ZLIB/ZSTD`만 허용하고 기본값은 FASTLZ다. `NetworkService`는 서버와 클라이언트 모두 ENet peer 생성 직후 호스트에 같은 모드를 설정한다. 모드가 다르면 handshake 이전에 연결이 실패하므로 클라이언트의 연결 시작 로그가 자기 모드와 공통 설정 조건을 명시하고, 뒤이어 일반 연결 실패 로그가 남는다. 전선 payload는 바뀌지 않아 프로토콜 버전은 15 그대로다.
+
+회귀 테스트는 아이템·보관함·구조물의 배치 개수와 add/move/remove 변환, 거리 제한 라벨, 관심 셀 이동 때 좀비/아이템의 추가·제거, 동일 압축 접속과 다른 압축 미접속을 검사한다. 측정 방법과 값은 docs/15 §16.2에 기록했다.

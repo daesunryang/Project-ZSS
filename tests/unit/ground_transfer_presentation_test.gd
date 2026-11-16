@@ -303,20 +303,13 @@ func test_every_item_lying_in_the_world_gets_a_marker_with_its_name_and_quantity
 	}
 	markers.sync(items)
 	assert_eq(markers.marker_count(), 2, "one marker per item, none for a malformed row")
-	assert_eq(_root.get_child_count(), 2)
-	var marker: Node3D = markers.marker_of("item_000001")
-	assert_not_null(marker)
-	if marker == null:
-		return
-	assert_eq(marker.name, StringName(WorldItemMarkers.MARKER_PREFIX + "item_000001"))
-	assert_eq(marker.position, at, "where the mirror says the item lies")
-	var body: MeshInstance3D = marker.get_node(WorldItemMarkers.BODY_NODE) as MeshInstance3D
-	assert_not_null(body)
-	assert_true(body.mesh is BoxMesh, "a placeholder box")
-	assert_eq((body.mesh as BoxMesh).size, Vector3.ONE * settings.world_item_marker_size_m)
-	assert_true(absf(body.position.y - settings.world_item_marker_size_m * 0.5) < EPSILON, "the box stands on the ground")
-	assert_eq((body.material_override as StandardMaterial3D).albedo_color, settings.world_item_marker_color)
-	var label: Label3D = marker.get_node(WorldItemMarkers.LABEL_NODE) as Label3D
+	assert_eq(markers.body_instance_count(), 2, "both boxes are instances in one batch")
+	assert_eq(markers.transform_of("item_000001").origin, at + Vector3.UP * settings.world_item_marker_size_m * 0.5, "where the mirror says the item lies")
+	var batch: MultiMeshInstance3D = _root.get_node(WorldItemMarkers.BATCH_NODE) as MultiMeshInstance3D
+	assert_true(batch.multimesh.mesh is BoxMesh, "a placeholder box")
+	assert_eq((batch.multimesh.mesh as BoxMesh).size, Vector3.ONE * settings.world_item_marker_size_m)
+	assert_eq((batch.material_override as StandardMaterial3D).albedo_color, settings.world_item_marker_color)
+	var label: Label3D = markers.label_of("item_000001")
 	assert_not_null(label)
 	assert_eq(label.text, "%s x3" % food)
 	assert_eq(label.billboard, BaseMaterial3D.BILLBOARD_ENABLED, "the label faces the camera")
@@ -330,16 +323,36 @@ func test_every_item_lying_in_the_world_gets_a_marker_with_its_name_and_quantity
 	items["item_000003"] = _world_item("item_000003", BANDAGE_ID, 1, Vector3.ZERO)
 	markers.sync(items)
 	assert_eq(markers.marker_count(), 2)
-	assert_eq(markers.marker_of("item_000001"), marker, "the same node, updated")
 	assert_eq(label.text, "%s x2" % food)
-	assert_eq(marker.position, at + Vector3(1.0, 0.0, 0.0))
-	assert_null(markers.marker_of("item_000002"), "an item that was picked up has no marker")
+	assert_eq(markers.transform_of("item_000001").origin, at + Vector3(1.0, settings.world_item_marker_size_m * 0.5, 0.0))
+	assert_false(markers.has_marker("item_000002"), "an item that was picked up has no marker")
 	assert_null(_root.get_node_or_null(WorldItemMarkers.MARKER_PREFIX + "item_000002"), "its node left the tree at once")
-	assert_not_null(markers.marker_of("item_000003"))
+	assert_true(markers.has_marker("item_000003"))
 	# Syncing the same mirror again changes nothing.
 	markers.sync(items)
-	assert_eq(_root.get_child_count(), 2)
+	assert_eq(markers.body_instance_count(), 2)
 	# Everything picked up.
 	markers.sync({})
 	assert_eq(markers.marker_count(), 0)
-	assert_eq(_root.get_child_count(), 0)
+	assert_eq(markers.body_instance_count(), 0)
+	assert_eq(_root.get_child_count(), 1, "the empty batch node is retained")
+
+
+func test_world_item_labels_follow_the_configured_distance_but_all_bodies_remain() -> void:
+	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
+	settings.world_item_label_distance_m = 1.1
+	_root = Node3D.new()
+	tree.root.add_child(_root)
+	var markers := WorldItemMarkers.new(_root, ItemCatalog.load_directory(), settings)
+	var items: Dictionary = {
+		"item_000001": _world_item("item_000001", FOOD_ID, 1, Vector3.ZERO),
+		"item_000002": _world_item("item_000002", FOOD_ID, 1, Vector3.RIGHT),
+		"item_000003": _world_item("item_000003", FOOD_ID, 1, Vector3.RIGHT * 3.0),
+	}
+	markers.sync(items, Vector3.ZERO)
+	assert_eq(markers.body_instance_count(), 3)
+	assert_eq(markers.label_count(), 2)
+	markers.update_focus(Vector3.RIGHT * 3.0)
+	assert_eq(markers.body_instance_count(), 3, "moving label focus never removes bodies")
+	assert_eq(markers.label_count(), 1)
+	assert_not_null(markers.label_of("item_000003"))
