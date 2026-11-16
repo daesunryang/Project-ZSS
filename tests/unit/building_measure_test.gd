@@ -60,6 +60,7 @@ func _config() -> CompositionConfig:
 	config.zombie = ZombieSettings.new()
 	config.zombie.dev_spawn_count = 0
 	config.zombie.max_active_zombies = 10000
+	config.zombie.ai_period_sec = 1000.0
 	config.zombie.wander_pause_min_sec = NEVER
 	config.zombie.wander_pause_max_sec = NEVER
 	config.building = BuildingSettings.new()
@@ -166,11 +167,17 @@ func test_measure_zombies_pressing_against_walls() -> void:
 		alice.position = Vector3(22.5, 0.0, 44.5)
 		if with_walls:
 			assert_eq(_build_wall_mesh(world, MANY_STRUCTURES, Vector2i(0, 0)), MANY_STRUCTURES)
-		# Zombies in the rooms of the mesh, all looking at the player: they
-		# chase and (with walls) press against the wall of their room.
+		# Zombies are put in chase explicitly so the opaque walls added by P3-6
+		# do not turn this movement-cost measurement into an idle-sight test.
 		for index: int in range(ZOMBIES):
 			var position: Vector3 = Vector3(float(index % 8) * 5.0 + 2.5, 0.0, float(index / 8) * 4.0 + 2.5)
-			assert_true(zombies.spawn_zombie(world, position, ZombiePerception.yaw_towards(alice.position - position, 0.0)).ok)
+			var spawned: ActionResult = zombies.spawn_zombie(world, position, ZombiePerception.yaw_towards(alice.position - position, 0.0))
+			assert_true(spawned.ok)
+			var zombie: ZombieState = zombies.get_zombie(str(spawned.event["zombie_id"]))
+			zombie.state = ZombieState.State.CHASE
+			zombie.target_player_id = alice.player_id
+			zombie.target_visible = true
+			zombie.focus_position = alice.position
 		for tick: int in range(60):
 			world.step_systems(TICK)
 		var started: int = Time.get_ticks_usec()

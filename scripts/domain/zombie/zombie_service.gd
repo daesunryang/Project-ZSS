@@ -2,7 +2,8 @@ class_name ZombieService
 extends ServerSystem
 ## Server-authoritative common infected (docs/02 §6). System id "zombie";
 ## registered by ServerComposition after "survival" and "noise", which it
-## uses through `world.get_system(...)`. No networking here.
+## uses through `world.get_system(...)`. Navigation is registered later and
+## queried at movement time through its system id. No networking here.
 ##
 ## Public API:
 ##   spawn_zombie(world, position, yaw = 0.0) -> ActionResult
@@ -152,6 +153,16 @@ var blocked_move_count: int = 0
 ## stood in the way (P3-4a: ServerWorld.resolve_movement). Since the server
 ## started; not saved.
 var obstructed_move_count: int = 0
+## Search slices processed in the last tick, and new searches started since
+## server start. Node/time values are diagnostics and never game decisions.
+var last_plan_count: int = 0
+var total_plan_count: int = 0
+var last_plan_node_count: int = 0
+var last_plan_msec: float = 0.0
+var _plan_counts_by_zombie: Dictionary[String, int] = {}
+var _search_restart_counts_by_zombie: Dictionary[String, int] = {}
+var _search_completion_counts_by_zombie: Dictionary[String, int] = {}
+var _last_completed_search_nodes_by_zombie: Dictionary[String, int] = {}
 
 var _settings: ZombieSettings
 var _ids: EntityIdGenerator
@@ -182,6 +193,32 @@ var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 ## over, so the step never changes the zombie set it is working on.
 var _stepping: bool = false
 var _pending_player_zombies: Array[Dictionary] = []
+## Ephemeral paths, resumable searches and planning deadlines. They are not
+## saved: a loaded zombie plans against structures currently in memory.
+var _navigation_states: Dictionary[String, _NavigationState] = {}
+## FIFO planning requests survive tick boundaries. A dictionary prevents a
+## zombie from occupying more than one queue slot while its goal is updated.
+var _navigation_plan_queue: Array[String] = []
+var _navigation_plan_goals: Dictionary[String, Vector3] = {}
+
+
+class _NavigationState extends RefCounted:
+	var waypoints: Array[Vector3] = []
+	var waypoint_index: int = 0
+	var planned_goal: Vector3 = Vector3.ZERO
+	var expires_at: float = 0.0
+	var next_plan_at: float = 0.0
+	var waiting_for_plan: bool = false
+	var search: GridPathSearch
+	var search_goal: Vector3 = Vector3.ZERO
+	var search_blocking_edge_count: int = 0
+
+	func has_path() -> bool:
+		return waypoint_index < waypoints.size()
+
+	func clear_path() -> void:
+		waypoints.clear()
+		waypoint_index = 0
 
 
 func _init(settings: ZombieSettings, ids: EntityIdGenerator, registry: EntityRegistry, clock: WorldClock) -> void:
@@ -341,6 +378,9 @@ func seed_new_world(world: ServerWorld) -> Error:
 
 func step(world: ServerWorld, action_delta: float, _world_delta: float) -> void:
 	last_ai_update_count = 0
+	last_plan_count = 0
+	last_plan_node_count = 0
+	last_plan_msec = 0.0
 	_stepping = true
 	_step_zombies(world, action_delta)
 	_stepping = false
@@ -409,6 +449,7 @@ func _step_zombies(world: ServerWorld, action_delta: float) -> void:
 	_remove_old_corpses(now)
 	for zombie_id: String in _awake:
 		_move(world, _zombies[zombie_id], action_delta)
+	_drain_navigation_plans(world)
 	for zombie_id: String in _falling_asleep:
 		_sleep(zombie_id)
 	_falling_asleep.clear()
@@ -572,6 +613,7 @@ func release_cell(world: ServerWorld, cell_id: String) -> void:
 	for zombie_id: String in world.cell_index.entities_in_cell(cell_id, ENTITY_KIND_ZOMBIE):
 		_sleep(zombie_id)
 		_zombies.erase(zombie_id)
+		_navigation_states.erase(zombie_id)
 		_zombie_cells.erase(zombie_id)
 		world.cell_index.remove(zombie_id)
 		_registry.release(zombie_id)
@@ -703,6 +745,9 @@ func _on_target_seen(context: _Context, zombie: ZombieState, target_id: String) 
 ## Builds the DamageInput on the server and hands it to survival; the
 ## zombie never writes player health itself.
 func _attack(context: _Context, zombie: ZombieState, target_id: String) -> void:
+	var target: PlayerState = context.world.get_player(target_id)
+	if target == null or context.world.is_line_blocked(zombie.position, target.position):
+		return
 	zombie.attack_ready_at = context.now + _settings.attack_cooldown_sec
 	if context.survival == null:
 		return
@@ -741,6 +786,8 @@ func _visible_target(context: _Context, zombie: ZombieState) -> String:
 			continue
 		var player_position: Vector3 = context.world.get_player(player_id).position
 		if not ZombiePerception.can_see(zombie.position, zombie.yaw, player_position, _sight_range_to(context, zombie, player_id), half_angle):
+			continue
+		if context.world.is_line_blocked(zombie.position, player_position):
 			continue
 		if player_id == zombie.target_player_id:
 			return player_id
@@ -840,9 +887,10 @@ func _set_state(context: _Context, zombie: ZombieState, next: ZombieState.State,
 
 # ------------------------------------------------------------ movement
 
-## Straight-line movement towards the current goal (no navigation mesh yet,
-## docs/15 P2-26; obstacles only stop the step, P3-4a). Runs every tick for
-## living zombies.
+## Movement towards the current goal. An unobstructed move stays bit-for-bit
+## on the old straight-line path. When the segment is blocked, a bounded and
+## budgeted grid path may provide intermediate waypoints; failure falls back
+## to the same blocked straight step used before P3-6.
 func _move(world: ServerWorld, zombie: ZombieState, action_delta: float) -> void:
 	var goal: Vector3
 	var speed: float
@@ -873,27 +921,202 @@ func _move(world: ServerWorld, zombie: ZombieState, action_delta: float) -> void
 	var offset: Vector3 = Vector3(goal.x - zombie.position.x, 0.0, goal.z - zombie.position.z)
 	var distance: float = offset.length()
 	if distance <= maxf(stop_distance, _settings.arrive_radius_m):
+		_cancel_navigation(zombie.zombie_id)
 		if zombie.state == ZombieState.State.IDLE or zombie.state == ZombieState.State.SEARCH:
 			zombie.has_move_target = false
 		elif zombie.state == ZombieState.State.CHASE:
 			_face(zombie, goal)
 		return
-	var direction: Vector3 = offset / distance
-	var travel: float = minf(speed * action_delta, distance - stop_distance)
+	var movement_goal: Vector3 = goal
+	var movement_stop_distance: float = stop_distance
+	var navigation: NavigationService = world.get_system(NavigationService.SYSTEM_ID) as NavigationService
+	var nav_state: _NavigationState = _navigation_states.get(zombie.zombie_id, null)
+	if nav_state != null and nav_state.has_path():
+		_advance_navigation_waypoint(nav_state, zombie.position)
+	var needs_replan: bool = false
+	if nav_state != null and nav_state.has_path() and navigation != null:
+		needs_replan = ZombiePerception.flat_distance(nav_state.planned_goal, goal) > navigation.settings.replan_goal_distance_m
+		if not needs_replan and _clock.action_time_sec >= nav_state.expires_at:
+			# Keep a still-valid detour instead of oscillating between equal wall
+			# ends. If structure removal opened the direct route, drop it now.
+			needs_replan = not world.is_line_blocked(zombie.position, goal)
+			if not needs_replan:
+				nav_state.expires_at = _clock.action_time_sec + navigation.settings.replan_timeout_sec
+		needs_replan = needs_replan or world.is_line_blocked(zombie.position, nav_state.waypoints[nav_state.waypoint_index])
+		if needs_replan:
+			nav_state.clear_path()
+	var known_blocked: bool = nav_state != null and (nav_state.waiting_for_plan or _clock.action_time_sec < nav_state.next_plan_at)
+	var direct_blocked: bool = false
+	if navigation != null and (nav_state == null or not nav_state.has_path()):
+		direct_blocked = known_blocked or world.is_line_blocked(zombie.position, goal)
+	if navigation != null and ((nav_state == null or not nav_state.has_path()) and direct_blocked or needs_replan):
+		_try_plan(navigation, zombie, goal)
+		nav_state = _navigation_states.get(zombie.zombie_id, null)
+	if nav_state != null and nav_state.has_path():
+		_advance_navigation_waypoint(nav_state, zombie.position)
+		if nav_state.has_path():
+			movement_goal = nav_state.waypoints[nav_state.waypoint_index]
+			if nav_state.waypoint_index < nav_state.waypoints.size() - 1:
+				movement_stop_distance = 0.0
+	var movement_offset: Vector3 = Vector3(movement_goal.x - zombie.position.x, 0.0, movement_goal.z - zombie.position.z)
+	var movement_distance: float = movement_offset.length()
+	var waypoint_arrive_distance: float = _settings.arrive_radius_m
+	if nav_state != null and nav_state.has_path() and nav_state.waypoint_index < nav_state.waypoints.size() - 1:
+		# Intermediate tile centres preserve the edge-valid path. The wider
+		# gameplay arrival radius is only safe for the final destination.
+		waypoint_arrive_distance = minf(waypoint_arrive_distance, 0.05)
+	if movement_distance <= maxf(movement_stop_distance, waypoint_arrive_distance):
+		if nav_state != null and nav_state.has_path():
+			nav_state.waypoint_index += 1
+		return
+	var direction: Vector3 = movement_offset / movement_distance
+	var travel: float = minf(speed * action_delta, movement_distance - movement_stop_distance)
 	var previous: Vector3 = zombie.position
 	var wanted: Vector3 = world.clamp_to_world(zombie.position + direction * travel)
-	# P3-4a: a wall or a closed door stops the step. No way around it is
-	# looked for yet (P3-6); a wandering or searching zombie gives the
-	# waypoint up, so it does not push against the obstacle for ever.
 	zombie.position = world.resolve_movement(ENTITY_KIND_ZOMBIE, previous, wanted)
 	if zombie.position != wanted:
 		obstructed_move_count += 1
+		_clear_navigation_path(zombie.zombie_id)
 		if zombie.state == ZombieState.State.IDLE or zombie.state == ZombieState.State.SEARCH:
 			zombie.has_move_target = false
 	zombie.yaw = ZombiePerception.yaw_towards(direction, zombie.yaw)
 	var cell: Vector2i = world.cell_coords_at(zombie.position)
 	if cell != _zombie_cells.get(zombie.zombie_id, cell):
 		_cross_border(world, zombie, previous, cell)
+
+
+func _try_plan(navigation: NavigationService, zombie: ZombieState, goal: Vector3) -> void:
+	var state: _NavigationState = _navigation_states.get(zombie.zombie_id, null)
+	if state == null:
+		state = _NavigationState.new()
+		_navigation_states[zombie.zombie_id] = state
+	if _clock.action_time_sec < state.next_plan_at:
+		return
+	_navigation_plan_goals[zombie.zombie_id] = goal
+	if state.waiting_for_plan:
+		return
+	state.waiting_for_plan = true
+	_navigation_plan_queue.append(zombie.zombie_id)
+
+
+func _drain_navigation_plans(world: ServerWorld) -> void:
+	var navigation: NavigationService = world.get_system(NavigationService.SYSTEM_ID) as NavigationService
+	if navigation == null or _navigation_plan_queue.is_empty():
+		return
+	var started_usec: int = Time.get_ticks_usec()
+	var remaining_nodes: int = navigation.settings.max_planning_nodes_per_tick
+	# Only requests present at tick start receive a turn. Pending searches are
+	# appended to the tail and cannot consume a second slice in this tick.
+	var round_size: int = mini(_navigation_plan_queue.size(), navigation.settings.max_plans_per_tick)
+	var round_turns: int = 0
+	while not _navigation_plan_queue.is_empty() and round_turns < round_size:
+		if remaining_nodes <= 0:
+			break
+		if navigation.settings.max_planning_msec_per_tick > 0.0 and last_plan_count > 0 and float(Time.get_ticks_usec() - started_usec) / 1000.0 >= navigation.settings.max_planning_msec_per_tick:
+			break
+		var zombie_id: String = _navigation_plan_queue.pop_front()
+		round_turns += 1
+		var goal: Vector3 = _navigation_plan_goals.get(zombie_id, Vector3.ZERO)
+		var state: _NavigationState = _navigation_states.get(zombie_id, null)
+		var zombie: ZombieState = _zombies.get(zombie_id, null)
+		if state == null or not state.waiting_for_plan:
+			_navigation_plan_goals.erase(zombie_id)
+			continue
+		if zombie == null or not zombie.is_alive() or not _awake.has(zombie_id):
+			state.waiting_for_plan = false
+			state.search = null
+			_navigation_plan_goals.erase(zombie_id)
+			continue
+		last_plan_count += 1
+		var edge_count: int = navigation.blocking_edge_count()
+		var goal_changed: bool = state.search != null and ZombiePerception.flat_distance(state.search_goal, goal) > navigation.settings.replan_goal_distance_m
+		var blockers_changed: bool = state.search != null and state.search_blocking_edge_count != edge_count
+		if goal_changed or blockers_changed:
+			state.search = null
+			_search_restart_counts_by_zombie[zombie_id] = _search_restart_counts_by_zombie.get(zombie_id, 0) + 1
+		if state.search == null:
+			state.clear_path()
+			state.search = navigation.begin_search(zombie.position, goal)
+			state.search_goal = goal
+			state.search_blocking_edge_count = edge_count
+			total_plan_count += 1
+			_plan_counts_by_zombie[zombie_id] = _plan_counts_by_zombie.get(zombie_id, 0) + 1
+		if state.search == null:
+			state.waiting_for_plan = false
+			_navigation_plan_goals.erase(zombie_id)
+			continue
+		var slice: int = mini(remaining_nodes, navigation.settings.max_search_nodes_per_tick)
+		var result: GridPathResult = state.search.advance(slice)
+		var expanded: int = state.search.last_advance_expanded_nodes
+		last_plan_node_count += expanded
+		remaining_nodes -= expanded
+		if not state.search.is_finished():
+			_navigation_plan_queue.append(zombie_id)
+			continue
+		state.waiting_for_plan = false
+		state.next_plan_at = _clock.action_time_sec + navigation.settings.min_plan_interval_sec
+		state.search = null
+		_navigation_plan_goals.erase(zombie_id)
+		_search_completion_counts_by_zombie[zombie_id] = _search_completion_counts_by_zombie.get(zombie_id, 0) + 1
+		_last_completed_search_nodes_by_zombie[zombie_id] = result.expanded_nodes
+		if not result.found:
+			continue
+		state.waypoints = result.waypoints
+		state.planned_goal = state.search_goal
+		state.expires_at = _clock.action_time_sec + navigation.settings.replan_timeout_sec
+	last_plan_msec = float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+
+## Diagnostic count used by fairness and starvation tests.
+func navigation_plan_count_of(zombie_id: String) -> int:
+	return _plan_counts_by_zombie.get(zombie_id, 0)
+
+
+## Diagnostic count of pending searches invalidated by a moved goal or a
+## changed live blocking-edge count.
+func navigation_search_restart_count_of(zombie_id: String) -> int:
+	return _search_restart_counts_by_zombie.get(zombie_id, 0)
+
+
+func navigation_search_completion_count_of(zombie_id: String) -> int:
+	return _search_completion_counts_by_zombie.get(zombie_id, 0)
+
+
+func navigation_last_completed_search_nodes_of(zombie_id: String) -> int:
+	return _last_completed_search_nodes_by_zombie.get(zombie_id, 0)
+
+
+func navigation_is_waiting_for_plan(zombie_id: String) -> bool:
+	var state: _NavigationState = _navigation_states.get(zombie_id, null)
+	return state != null and state.waiting_for_plan
+
+
+func navigation_search_expanded_nodes_of(zombie_id: String) -> int:
+	var state: _NavigationState = _navigation_states.get(zombie_id, null)
+	return state.search.result.expanded_nodes if state != null and state.search != null else 0
+
+
+func _advance_navigation_waypoint(state: _NavigationState, position: Vector3) -> void:
+	while state.has_path():
+		var arrive_distance: float = _settings.arrive_radius_m if state.waypoint_index == state.waypoints.size() - 1 else minf(_settings.arrive_radius_m, 0.05)
+		if ZombiePerception.flat_distance(position, state.waypoints[state.waypoint_index]) > arrive_distance:
+			break
+		state.waypoint_index += 1
+
+
+func _clear_navigation_path(zombie_id: String) -> void:
+	var state: _NavigationState = _navigation_states.get(zombie_id, null)
+	if state != null:
+		state.clear_path()
+
+
+func _cancel_navigation(zombie_id: String) -> void:
+	var state: _NavigationState = _navigation_states.get(zombie_id, null)
+	if state != null:
+		state.clear_path()
+		state.search = null
+		state.waiting_for_plan = false
+	_navigation_plan_goals.erase(zombie_id)
 
 
 ## Live position of a target that was visible at the last AI decision,
@@ -920,6 +1143,7 @@ func _kill(zombie: ZombieState, source_id: String) -> void:
 	zombie.has_move_target = false
 	zombie.alerted_by = ""
 	_scheduler.remove(zombie.zombie_id)
+	_navigation_states.erase(zombie.zombie_id)
 	_push_event(EVENT_DIED, zombie.zombie_id, {"source_id": source_id})
 
 

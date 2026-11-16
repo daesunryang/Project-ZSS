@@ -403,6 +403,15 @@ func resolve_movement(mover_kind: String, from: Vector3, to: Vector3) -> Vector3
 	return to
 
 
+## True when any registered system blocks the straight segment. This is the
+## narrow geometry seam used by zombie sight and melee; noise is unaffected.
+func is_line_blocked(from: Vector3, to: Vector3) -> bool:
+	for system: ServerSystem in _system_order:
+		if system.is_line_blocked(from, to):
+			return true
+	return false
+
+
 ## Product of every system's movement factor for this player, clamped to
 ## [0, 1]. Invalid values (NaN/inf) stop the player rather than speed it up.
 func player_movement_multiplier(player_id: String) -> float:

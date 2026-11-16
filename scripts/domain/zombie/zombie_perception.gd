@@ -1,8 +1,8 @@
 class_name ZombiePerception
 extends RefCounted
-## Pure sight / facing rules for zombies (docs/02 §6.2). No nodes, no
-## geometry: obstacles and target movement are not modelled yet
-## (docs/15 P2-25). Everything works on the XZ plane.
+## Pure range / cone / facing rules for zombies (docs/02 section 6.2). No
+## nodes and no world dependencies. Structure occlusion is composed by
+## ZombieService through ServerWorld.is_line_blocked after this test.
 ##
 ## Yaw convention (same as the player/camera yaw): yaw 0 faces -Z and the
 ## forward vector is (-sin(yaw), 0, -cos(yaw)), i.e. Node3D.rotation.y.

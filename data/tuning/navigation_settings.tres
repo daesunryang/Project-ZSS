@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="NavigationSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/navigation/navigation_settings.gd" id="1_navigation"]
+
+[resource]
+script = ExtResource("1_navigation")
+max_expanded_nodes = 2048
+max_search_radius_m = 60.0
+max_search_msec = 0.0
+replan_goal_distance_m = 1.0
+replan_timeout_sec = 1.0
+min_plan_interval_sec = 0.25
+max_plans_per_tick = 8
+max_planning_nodes_per_tick = 48
+max_search_nodes_per_tick = 8
+max_planning_msec_per_tick = 0.0

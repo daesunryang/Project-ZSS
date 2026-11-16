@@ -127,6 +127,8 @@ res://
 - 경로 요청은 우선순위와 빈도 제한을 가진다.
 - 경로 실패 시 재시도, 대체 목적지, 행동 중단을 명시한다.
 
+P3-6의 좀비 초기 구현은 아래의 장기 `NavigationServer3D` 방향과 별개로, 이미 확정된 건축 타일/변에 맞춘 순수 GDScript 제한 A*를 사용한다(§15.6). 전체 맵 메시를 만들거나 갱신하지 않으며 탐색이 만난 변만 현재 건축 상태에 조회한다. 일반 NPC와 지형 내비게이션을 이 방식으로 확정한 것은 아니다.
+
 ## 9. 렌더링/성능
 
 - LOD/HLOD, occlusion culling, MultiMesh 검토.
@@ -2403,6 +2405,36 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 6. 미러에는 여전히 누가 놓았는지가 없다: 취소·철거가 되는지는 요청해서 `not_owner`를 받아야 안다(§15.4와 같다).
 7. 사거리는 서버 값이다(자재·작업 2.5m, 취소·철거 4m). 클라이언트 표시는 `CompositionConfig.building`의 같은 리소스에서 읽으면 된다. 기준점은 §15.4의 `slot_anchor`다.
 8. 개발용 정의에는 아직 모델·재질이 없다(§15.4와 같다). 청사진을 반투명으로 그리는 것 등은 표시 쪽이 정한다.
+
+### 15.6 구조물 주위 좀비 내비게이션과 선 차단(P3-6, docs/00 ADR-027, system id `navigation`)
+
+**구성 요소와 의존 방향**
+
+| 구성 요소 | 계약 |
+|---|---|
+| `NavigationSettings` (`data/tuning/navigation_settings.tres`) | 결정적 예산은 `max_expanded_nodes`(검색당 누적 2048), `max_planning_nodes_per_tick`(틱 전체 48), `max_search_nodes_per_tick`(검색 하나당 틱 slice 8), `max_plans_per_tick`(8)이다. `max_search_radius_m`(60m), `replan_goal_distance_m`(1m), `replan_timeout_sec`(1초), `min_plan_interval_sec`(0.25초)를 둔다. `max_search_msec`와 `max_planning_msec_per_tick`은 기본 0(OFF)인 운영자용 비결정적 안전장치다. 전부 `validate()`에서 유한값·양수/0 이상을 검사한다 |
+| `GridPathSearch` / `GridPathFinder` | `GridPathSearch`는 검색마다 열린 heap, g-score, came-from, 닫힌 집합, 조회한 변 메모를 소유하는 8방향 weighted A* 상태 객체다. `advance(node_budget)`가 일부 노드만 확장하고 미완료 상태를 보존한다. `GridPathFinder.begin_search`는 상태를 만들고 `find_path`는 같은 상태 기계를 한 slice로 끝까지 실행하는 호환 API다. 둘은 같은 `GridPathResult(found, bound_hit, expanded_nodes, waypoints)`를 낸다 |
+| `NavigationService` | `ServerSystem` id `navigation`. `ServerComposition`이 `building` 뒤에 등록한다. `BuildingService.grid`, `is_edge_blocked`, `blocking_edge_count`, `resolve_movement_step`의 공개 면만 읽는다. `begin_search`로 독립 검색 객체를 만들며 저장 문서·틱 작업·전역 그래프는 없다 |
+| `ZombieService` | 목표까지의 직선이 막혔을 때 계획 요청을 FIFO에 넣고 검색 객체를 좀비별 임시 상태로 보관한다. 틱마다 각 대기 검색을 최대 한 번 진행한 뒤 미완료 검색을 FIFO 꼬리에 넣는다. 경로·검색·큐·재탐색 시각은 저장하지 않는다. `last_plan_count`, `total_plan_count`, `last_plan_node_count`, `last_plan_msec`와 테스트용 좀비별 진단값을 둔다 |
+
+**경로 규칙**
+
+- 건축 모듈 크기의 XZ 타일을 노드로 삼고 상하좌우 비용 1, 대각선 비용 √2인 8방향 제한 탐색을 쓴다. 대각선은 연속 이동의 모서리 오차를 피하려고 출발 쪽과 도착 쪽 직교 변이 모두 열렸을 때만 허용한다.
+- 시작 타일은 좀비 위치, 목표 타일은 현재 이동 목표다. 결과 waypoint는 시작점을 빼고 중간 타일 중심을 지나 마지막에는 정확한 목표 위치를 쓴다.
+- 검색은 시작점 기준 `max_search_radius_m` 밖으로 나가지 않고 여러 틱의 누적으로 검색당 `max_expanded_nodes`를 넘지 않는다. 틱 예산에 닿았지만 heap이나 검색당 상한이 남았으면 `bound_hit`가 아니라 pending이며 다음 틱에 같은 heap·점수·부모·변 메모에서 계속한다. heap 소진은 확정 경로 없음, 누적 노드/반경/선택적 시간 상한 도달은 `bound_hit`다. `max_search_msec > 0`인 경우만 wall-clock으로 조기 중단하며 기본값 0에서는 노드 수만 결정을 바꾼다. 확정 실패 뒤 좀비는 P3-4a의 직선 걸음을 그대로 시도한다.
+- 직선 경로가 열려 있으면 이전과 비트 단위로 같은 방향·속도 계산을 사용하고 경로 탐색을 하지 않는다. 플레이어 이동은 `ServerWorld.step_movement`와 P3-4a 충돌만 사용하며 이 A*를 사용하지 않는다.
+- pending 중 목표가 최초 검색 목표에서 `replan_goal_distance_m`보다 움직이거나 `BuildingService.blocking_edge_count()`가 바뀌면 부분 검색을 버리고 현재 위치·목표에서 새로 시작한다. 개수가 같은 교체는 이 공개 면만으로 알 수 없으므로, 완성 경로는 따라가기 전에 현재 위치→다음 waypoint 선분을 다시 검사한다. `replan_timeout_sec`에는 목표 직선이 열렸는지 재검사하고 여전히 막힌 유효 우회는 유지한다. 확정 실패 뒤도 `min_plan_interval_sec`보다 자주 새 검색을 요청하지 않는다.
+- 중복 없는 FIFO를 라운드로빈으로 쓴다. 틱 시작 때 있던 요청 중 최대 `max_plans_per_tick`개를 각 한 번만 처리하고, 검색 하나에는 최대 `max_search_nodes_per_tick`만 주며, 미완료 검색은 꼬리로 보낸다. 모든 검색의 합은 `max_planning_nodes_per_tick`을 넘지 않는다. 따라서 긴 검색 하나가 한 틱이나 연속 틱의 선두를 독점하지 않는다. `max_planning_msec_per_tick > 0`인 경우에만 검색 사이 wall-clock 안전장치도 적용한다. ACTIVE 셀 좀비만 이동·탐색한다.
+- 영속 경로/변 캐시는 없다. 같은 검색에서는 틱이 바뀌어도 같은 변을 한 번만 `BuildingService.is_edge_blocked(slot)`으로 읽고, 검색 완료·무효화 때 상태와 함께 폐기한다. 전체 맵이나 셀 그래프를 다시 만들지 않는다.
+
+**시야·공격 선 차단 seam**
+
+- `ServerSystem.is_line_blocked(from, to) -> bool`의 기본값은 false다. `ServerWorld.is_line_blocked`가 등록 순서대로 시스템을 물어 하나라도 막으면 true를 돌려준다.
+- `NavigationService`는 건축 서비스의 현재 막는 변으로 선분을 추적한다. 완공/손상된 벽과 닫힌 문만 막고, 열린 문·바닥·blueprint/constructing/destroyed는 막지 않는다.
+- `ZombieService._visible_target`은 기존 거리·시야각·가시성 배율을 통과한 뒤 이 선을 확인한다. `_attack`도 피해 적용 직전에 다시 확인하므로 같은 판단 사이에 문이 닫혀도 벽 너머 피해를 주지 않는다.
+- 청각(`NoiseService.query_audible`)은 선 차단을 묻지 않는다. 이 티켓에서 소음은 벽을 통과한다. 플레이어의 근접 공격과 줍기·아이템 사용·거래 같은 다른 거리 판정도 범위 밖이다.
+
+**테스트**: `grid_path_finder_test.gd`(기존 경로 규칙·상한, 한 번에 끝낸 검색과 3노드씩 재개한 검색의 경로/확장 수 동일), `zombie_navigation_test.gd`(목표 이동·문 변경 때 부분 검색 폐기, 1노드 slice 12개 라운드로빈 완료, 느린 변 조회에서도 재개 결과 결정성, 기본값 40m 벽 20초 수용, 먼 쪽 문만 열린 건물/닫힌 건물, 청사진·보관 상자는 막지 않음), `map_navigation_test.gd`(테스트 맵을 시드한 월드의 house_a: 바깥 변 전부 막힘, 닫힌 문이면 못 들어가고 문 너머로 보지도 치지도 못함, 연 문으로는 먼 쪽 벽 뒤에서 돌아 들어감), 기존 좀비·건축·셀 테스트, `navigation_measure_test.gd`(검색과 기본 48노드 틱 측정)를 포함한다. scheduling 의존 4ms wall-clock 측정은 `ZSS_RUN_WALL_CLOCK_NAV_MEASURE=1`일 때만 실행한다.
 
 ### 15.7 P3-4b 구조물 표시와 건축 입력
 

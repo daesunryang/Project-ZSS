@@ -61,6 +61,10 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# handling multipliers of this tick it reads.
 	if world.register_system(BuildingService.new(config.building, config.structures, world.ids, world.registry, world.clock)) != OK:
 		return null
+	# P3-6: live structure edge queries for bounded zombie paths and opaque
+	# line checks. It must follow building, whose public grid state it reads.
+	if world.register_system(NavigationService.new(config.navigation)) != OK:
+		return null
 	# Phase 2-C: melee combat (C1). After survival, noise and zombies, which
 	# it uses. It acts on requests (request_melee_attack), not in step().
 	if world.register_system(CombatService.new(config.combat, config.melee_weapons, world.clock)) != OK:

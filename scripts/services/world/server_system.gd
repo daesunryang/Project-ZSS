@@ -83,6 +83,13 @@ func resolve_movement_step(_mover_kind: String, _from: Vector3, to: Vector3) -> 
 	return to
 
 
+## True when this system has an opaque segment between two world positions.
+## ServerWorld aggregates the hook so sensing and attacks do not know which
+## feature owns the obstacle. The default does not block anything.
+func is_line_blocked(_from: Vector3, _to: Vector3) -> bool:
+	return false
+
+
 ## "" when this system lets the player act (pick up, put down, use an item,
 ## attack), otherwise a stable reason code such as "player_dead" or
 ## "player_resting". ServerWorld asks every system before a pickup or a drop

@@ -56,6 +56,8 @@ var interest: InterestSettings
 var building: BuildingSettings
 var structures: StructureCatalog
 var structure_net: StructureNetSettings
+## P3-6 (bounded zombie path finding and structure line blocking).
+var navigation: NavigationSettings
 ## P3-3 (containers, docs/09 §15.3): the container rules, the container
 ## definitions (servers and client mirrors) and the loot tables (servers).
 var containers: ContainerSettings
@@ -97,6 +99,7 @@ static func from_defaults() -> CompositionConfig:
 	config.building = BuildingSettings.load_or_default()
 	config.structures = StructureCatalog.load_directory()
 	config.structure_net = StructureNetSettings.load_or_default()
+	config.navigation = NavigationSettings.load_or_default()
 	config.containers = ContainerSettings.load_or_default()
 	config.container_definitions = ContainerCatalog.load_directory()
 	config.loot_tables = LootTableCatalog.load_directory()
@@ -140,9 +143,13 @@ func validate() -> PackedStringArray:
 	if building == null or structures == null or structure_net == null:
 		errors.append("composition config is incomplete (building)")
 		return errors
+	if navigation == null:
+		errors.append("composition config is incomplete (navigation)")
+		return errors
 	errors.append_array(building.validate())
 	errors.append_array(structures.validate_against(catalog))
 	errors.append_array(structure_net.validate())
+	errors.append_array(navigation.validate())
 	errors.append_array(gameplay.validate())
 	errors.append_array(clock.validate())
 	errors.append_array(dev_seed.validate())

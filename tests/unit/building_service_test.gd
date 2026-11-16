@@ -568,31 +568,29 @@ func test_a_zombie_stops_at_a_wall_and_walks_through_an_open_door() -> void:
 	var zombies: ZombieService = _zombies(world)
 	var alice: PlayerState = world.join("alice")
 	alice.position = Vector3(9.5, 0.0, 5.5)
-	var skin: float = _building_settings.collision_skin_m
 	# A door on the edge x = 6 between the zombie and the player, with walls
-	# beside it. Sight is not blocked by structures yet (P3-6): the zombie sees
-	# the player and runs straight at it.
+	# beside it. P3-6 makes the closed door opaque as well as impassable.
 	var door_id: String = _id(service.place_structure(world, DOOR, Vector2i(6, 5), 3))
 	assert_true(service.place_structure(world, WALL, Vector2i(6, 4), 3).ok)
 	assert_true(service.place_structure(world, WALL, Vector2i(6, 6), 3).ok)
 	var zombie_id: String = _spawn_zombie(world, Vector3(2.5, 0.0, 5.5), Vector3(1.0, 0.0, 0.0))
 	_run(world, 4.0)
 	var zombie: ZombieState = zombies.get_zombie(zombie_id)
-	assert_eq(zombie.state, ZombieState.State.CHASE, "it sees the player through the door")
-	assert_true(absf(zombie.position.x - (6.0 - skin)) < 0.0001, "and stands in front of the closed door: %s" % str(zombie.position))
+	assert_eq(zombie.state, ZombieState.State.IDLE, "it cannot see the player through the closed door")
+	assert_eq(zombie.position, Vector3(2.5, 0.0, 5.5))
 	var blocked_before: int = zombies.obstructed_move_count
-	assert_true(blocked_before > 0)
+	assert_eq(blocked_before, 0, "it does not push against what it cannot see")
 	var logged_before: int = GameLogger.captured_lines().size()
 	var ai_before: int = zombies.total_ai_update_count
 	_run(world, 5.0)
-	assert_true(absf(zombie.position.x - (6.0 - skin)) < 0.0001, "it stays there: %s" % str(zombie.position))
-	assert_true(zombies.obstructed_move_count > blocked_before)
-	assert_eq(GameLogger.captured_lines().size(), logged_before, "a zombie pressing against a door writes no log line")
+	assert_eq(zombie.position, Vector3(2.5, 0.0, 5.5), "it stays there: %s" % str(zombie.position))
+	assert_eq(zombies.obstructed_move_count, blocked_before)
+	assert_eq(GameLogger.captured_lines().size(), logged_before, "an unseen player causes no state log")
 	assert_true(zombies.total_ai_update_count - ai_before <= 11, "and decides no more often than its AI period: %d" % (zombies.total_ai_update_count - ai_before))
 	assert_true(_survival(world).is_alive(alice.player_id))
 	# The door opens: the zombie comes through.
 	assert_true(service.set_door_open(world, door_id, true).ok)
-	_run(world, 1.0)
+	_run(world, 2.0)
 	assert_true(zombie.position.x > 6.0, "through the open door: %s" % str(zombie.position))
 
 
