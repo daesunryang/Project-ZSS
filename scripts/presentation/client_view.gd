@@ -7,6 +7,7 @@ extends Node3D
 @onready var _players_root: Node3D = %Players
 @onready var _zombies_root: Node3D = %Zombies
 @onready var _world_items_root: Node3D = %WorldItems
+@onready var _structures_root: Node3D = %Structures
 @onready var _world_map_root: Node3D = %WorldMap
 @onready var _map_label: Label = %MapLabel
 @onready var _survival_label: Label = %SurvivalLabel
@@ -17,6 +18,7 @@ extends Node3D
 @onready var _trade_label: Label = %TradeLabel
 @onready var _containers_root: Node3D = %Containers
 @onready var _container_label: Label = %ContainerLabel
+@onready var _build_label: Label = %BuildLabel
 @onready var _creation_screen: CharacterCreationScreen = %CharacterCreationScreen
 
 ## Children of a player's visual.
@@ -117,6 +119,8 @@ var _container_selected_id: String = ContainerIntentPolicy.NO_SELECTION
 var _container_selected_index: int = 0
 ## What the container HUD block was last built from.
 var _container_hud_key: String = ""
+## P3-4b is isolated in BuildPresentation so this shared view only wires it.
+var _build_presentation: BuildPresentation = null
 
 
 func _ready() -> void:
@@ -212,6 +216,7 @@ func _physics_process(_delta: float) -> void:
 		_request_container_take()
 	if Input.is_action_just_pressed(ClientInputActions.CONTAINER_PUT):
 		_request_container_put()
+	var build_input: Dictionary = _build_presentation.tick(_camera, _map) if _build_presentation != null else {"attack": false, "pickup": false}
 	# P3-2: the cell overlay, a testing aid (local only).
 	if Input.is_action_just_pressed(ClientInputActions.CELL_OVERLAY):
 		set_cell_overlay_visible(not is_cell_overlay_visible())
@@ -234,7 +239,7 @@ func _physics_process(_delta: float) -> void:
 		_change_trade_offer(_presentation.trade_offer_step)
 	if Input.is_action_just_pressed(ClientInputActions.TRADE_OFFER_REMOVE):
 		_change_trade_offer(-_presentation.trade_offer_step)
-	if Input.is_action_just_pressed(ClientInputActions.ATTACK):
+	if Input.is_action_just_pressed(ClientInputActions.ATTACK) and not bool(build_input["attack"]):
 		_request_melee_attack()
 	for action: StringName in ClientInputActions.USE_ACTION_KINDS:
 		if Input.is_action_just_pressed(action):
@@ -254,7 +259,7 @@ func _physics_process(_delta: float) -> void:
 	var now_sec: float = float(Time.get_ticks_msec()) / 1000.0
 	if _intent_sender.should_send(world_intent, _yaw, now_sec):
 		_network.send_move_intent(world_intent, _yaw)
-	if Input.is_action_just_pressed(ClientInputActions.PICKUP):
+	if Input.is_action_just_pressed(ClientInputActions.PICKUP) and not bool(build_input["pickup"]):
 		_request_nearest_pickup()
 
 
@@ -349,6 +354,9 @@ func _bind_network() -> void:
 			_container_state.session_closed.connect(_on_container_closed)
 		if not _container_module.container_result.is_connected(_on_container_result):
 			_container_module.container_result.connect(_on_container_result)
+	var structure_module: StructureNetModule = _network.get_module(StructureNetModule.MODULE_NAME) as StructureNetModule
+	if structure_module != null:
+		_build_presentation = BuildPresentation.new(_structures_root, _build_label, _presentation, BuildingSettings.load_or_default(), StructureCatalog.load_directory(), _item_catalog, structure_module, _state)
 	_on_map_changed()
 	_sync_creation_screen()
 	_sync_player_visuals()

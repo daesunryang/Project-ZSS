@@ -183,6 +183,39 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(1, 256) var container_label_font_size: int = 36
 @export var container_label_color: Color = Color(0.85, 0.95, 1.0, 1.0)
 
+## Building presentation (P3-4b). These values affect only input mapping,
+## placeholder geometry and client-side preview estimates; the server owns
+## every building rule.
+@export var build_mode_key: Key = KEY_L
+@export var build_floor_key: Key = KEY_1
+@export var build_wall_key: Key = KEY_2
+@export var build_door_key: Key = KEY_3
+@export var build_rotate_key: Key = KEY_PERIOD
+@export var build_deliver_key: Key = KEY_M
+@export var build_work_key: Key = KEY_COMMA
+@export var build_remove_key: Key = KEY_DELETE
+@export_range(0.1, 1000.0) var build_ray_length_m: float = 100.0
+@export_range(0.01, 5.0) var structure_target_radius_m: float = 0.8
+@export_range(0.1, 100.0) var build_preview_range_m: float = 4.0
+@export_range(0.1, 100.0) var structure_deliver_target_range_m: float = 2.5
+@export_range(0.1, 100.0) var structure_work_target_range_m: float = 2.5
+@export_range(0.1, 100.0) var structure_remove_target_range_m: float = 4.0
+@export_range(0.1, 100.0) var structure_door_target_range_m: float = 2.5
+@export_range(0.1, 2.0) var structure_floor_scale: float = 0.94
+@export_range(0.01, 1.0) var structure_floor_height_m: float = 0.12
+@export_range(0.1, 2.0) var structure_edge_scale: float = 0.94
+@export_range(0.1, 10.0) var structure_wall_height_m: float = 2.2
+@export_range(0.01, 1.0) var structure_wall_thickness_m: float = 0.16
+@export_range(0.01, 1.0) var structure_door_thickness_m: float = 0.10
+@export var structure_completed_color: Color = Color(0.48, 0.38, 0.25, 1.0)
+@export var structure_blueprint_color: Color = Color(0.35, 0.75, 1.0, 0.42)
+@export var build_preview_valid_color: Color = Color(0.25, 0.95, 0.45, 0.50)
+@export var build_preview_invalid_color: Color = Color(1.0, 0.22, 0.18, 0.50)
+@export_range(0.0, 5.0) var structure_label_margin_m: float = 0.25
+@export_range(0.0001, 0.1) var structure_label_pixel_size: float = 0.005
+@export_range(1, 256) var structure_label_font_size: int = 28
+@export var structure_label_color: Color = Color(0.85, 0.95, 1.0, 1.0)
+
 
 func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
@@ -272,8 +305,18 @@ func validate() -> PackedStringArray:
 		errors.append("hud_container_line_count must be > 0")
 	if container_marker_size_m <= 0.0 or container_label_margin_m < 0.0 or container_label_pixel_size <= 0.0 or container_label_font_size < 1:
 		errors.append("container marker size and label pixel size must be > 0, label margin >= 0 and font size >= 1")
+	var build_keys: Dictionary[String, Key] = {"build_mode_key": build_mode_key, "build_floor_key": build_floor_key, "build_wall_key": build_wall_key, "build_door_key": build_door_key, "build_rotate_key": build_rotate_key, "build_deliver_key": build_deliver_key, "build_work_key": build_work_key, "build_remove_key": build_remove_key}
+	for key_name: String in build_keys:
+		if build_keys[key_name] == KEY_NONE:
+			errors.append("%s must not be KEY_NONE" % key_name)
+	if build_ray_length_m <= 0.0 or structure_target_radius_m <= 0.0 or build_preview_range_m <= 0.0 or structure_deliver_target_range_m <= 0.0 or structure_work_target_range_m <= 0.0 or structure_remove_target_range_m <= 0.0 or structure_door_target_range_m <= 0.0:
+		errors.append("building ray length, preview and target ranges must be > 0")
+	if structure_floor_scale <= 0.0 or structure_floor_height_m <= 0.0 or structure_edge_scale <= 0.0 or structure_wall_height_m <= 0.0 or structure_wall_thickness_m <= 0.0 or structure_door_thickness_m <= 0.0:
+		errors.append("structure placeholder dimensions must be > 0")
+	if structure_label_margin_m < 0.0 or structure_label_pixel_size <= 0.0 or structure_label_font_size < 1:
+		errors.append("structure label margin must be >= 0, pixel size > 0 and font size >= 1")
 	if not _are_distinct(assigned_keys().values()):
-		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier, the trade keys, the cell overlay key and the container keys must be different keys")
+		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier, the trade keys, the cell overlay key, the container keys and the building keys must be different keys")
 	return errors
 
 
@@ -302,6 +345,14 @@ func assigned_keys() -> Dictionary[String, Key]:
 		"container_next_key": container_next_key,
 		"container_take_key": container_take_key,
 		"container_put_key": container_put_key,
+		"build_mode_key": build_mode_key,
+		"build_floor_key": build_floor_key,
+		"build_wall_key": build_wall_key,
+		"build_door_key": build_door_key,
+		"build_rotate_key": build_rotate_key,
+		"build_deliver_key": build_deliver_key,
+		"build_work_key": build_work_key,
+		"build_remove_key": build_remove_key,
 	}
 
 
