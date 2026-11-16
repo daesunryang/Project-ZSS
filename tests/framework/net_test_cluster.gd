@@ -6,12 +6,29 @@ extends RefCounted
 ## Every service gets the production NetModules from
 ## ServerComposition.install_net_modules(); tests may add test-only modules
 ## via `extra_module_factories` (Callables returning a new NetModule).
+##
+## Timing (docs/12 §1.1): while a cluster runs, the engine does at most one
+## physics tick per frame (`Engine.max_physics_steps_per_frame = 1`). The
+## server steps in physics ticks, the network is polled once per frame. With
+## the engine default (8) a slow frame is caught up with a burst of server
+## ticks and no poll in between, so on a loaded machine a client sees the
+## server several ticks later than on an idle one and anything a test steers
+## by the client's mirrors (walking up to a zombie, stopping) goes further.
+## With one tick per frame a slow machine runs the simulation more slowly
+## instead, and every tick is followed by a poll. Restored when the last
+## cluster is shut down (a cluster never shut down leaves it at 1).
 
 const HOST: String = "127.0.0.1"
 const PORT_BASE: int = 25000
 const PORT_SPAN: int = 10000
 const PORT_ATTEMPTS: int = 8
 const DEFAULT_WAIT_FRAMES: int = 600
+const NO_SAVED_STEPS: int = -1
+
+## The engine's steps per frame before the first cluster changed it, and
+## how many clusters were made and not shut down yet.
+static var _saved_physics_steps: int = NO_SAVED_STEPS
+static var _live_clusters: int = 0
 
 var tree: SceneTree
 var settings: NetworkSettings
@@ -22,12 +39,17 @@ var server: NetworkService = null
 var clients: Array[NetworkService] = []
 var _roots: Array[Node] = []
 var _counter: int = 0
+var _live: bool = true
 
 
 func _init(scene_tree: SceneTree, network_settings: NetworkSettings, composition: CompositionConfig = null) -> void:
 	tree = scene_tree
 	settings = network_settings
 	config = composition if composition != null else CompositionConfig.from_defaults()
+	if _live_clusters == 0:
+		_saved_physics_steps = Engine.max_physics_steps_per_frame
+	_live_clusters += 1
+	Engine.max_physics_steps_per_frame = 1
 
 
 ## Starts the server on a free random port.
@@ -66,6 +88,25 @@ func wait_until(condition: Callable, max_frames: int = DEFAULT_WAIT_FRAMES) -> b
 	return bool(condition.call())
 
 
+## Polls `condition` once per frame; true when it held before `max_ticks`
+## server (physics) ticks passed. The limit is simulated time, so a slow
+## machine does not shorten it; use this when the condition waits for
+## something the simulation does (a timer, a cooldown, a corpse removal).
+func wait_ticks_until(condition: Callable, max_ticks: int) -> bool:
+	var last_tick: int = Engine.get_physics_frames() + max_ticks
+	while Engine.get_physics_frames() < last_tick:
+		if condition.call():
+			return true
+		await tree.process_frame
+	return bool(condition.call())
+
+
+## Waits exactly `count` server (physics) ticks: a window of simulated time.
+func wait_ticks(count: int) -> void:
+	for tick: int in range(count):
+		await tree.physics_frame
+
+
 func wait_frames(count: int) -> void:
 	for frame: int in range(count):
 		await tree.process_frame
@@ -88,6 +129,12 @@ func shutdown() -> void:
 	for client: NetworkService in clients.duplicate():
 		remove_client(client)
 	remove_server()
+	if _live:
+		_live = false
+		_live_clusters -= 1
+		if _live_clusters == 0 and _saved_physics_steps != NO_SAVED_STEPS:
+			Engine.max_physics_steps_per_frame = _saved_physics_steps
+			_saved_physics_steps = NO_SAVED_STEPS
 	await tree.process_frame
 
 

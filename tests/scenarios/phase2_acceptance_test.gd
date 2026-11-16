@@ -88,7 +88,8 @@ const STOP_INTENTS: int = 3
 const SETTLE_TICKS: int = 20
 ## How often a fighting client asks for a swing. Faster than the weapon
 ## cooldown on purpose: cooldown refusals are normal play (docs/15 P2-65).
-const SWING_INTERVAL_MSEC: int = 300
+## Counted in server ticks (0.3 s at 60 Hz), not in real time (docs/12 §1.1).
+const SWING_INTERVAL_TICKS: int = 18
 const FIGHT_MAX_SEC: float = 30.0
 const FLOOD_REQUESTS: int = 10
 const FORGED_REQUEST_ID: int = 900
@@ -167,10 +168,11 @@ func _join_two() -> Array[NetworkService]:
 	return joined
 
 
-## Polls `condition` once per frame for up to `timeout_sec` of real time.
+## Polls `condition` once per frame for up to `timeout_sec` of simulated
+## time (server ticks), so a slow machine does not shorten the wait.
 func _eventually(condition: Callable, timeout_sec: float = WAIT_SEC) -> bool:
-	var deadline: int = Time.get_ticks_msec() + int(timeout_sec * 1000.0)
-	while Time.get_ticks_msec() < deadline:
+	var last_tick: int = Engine.get_physics_frames() + ceili(timeout_sec * float(Engine.physics_ticks_per_second))
+	while Engine.get_physics_frames() < last_tick:
 		if condition.call():
 			return true
 		await tree.process_frame
@@ -282,13 +284,14 @@ func _yaw_of(direction: Vector2, fallback: float = YAW_MINUS_Z) -> float:
 ## `done.call()` holds (true), then stops. Gives up (false) once the client
 ## has asked for `max_distance_m` of walking (a distance limit, counted in
 ## server ticks so that a stalled frame cannot change how far the player
-## gets) or after WAIT_SEC of real time.
+## gets). `done` reads the client's mirrors: how many ticks they lag behind
+## the server must not depend on the machine's speed, which NetTestCluster
+## ensures with one server tick per frame (docs/12 §1.1).
 func _walk(client: NetworkService, direction: Callable, done: Callable, max_distance_m: float) -> bool:
-	var deadline: int = Time.get_ticks_msec() + int(WAIT_SEC * 1000.0)
 	var ticks_left: int = ceili(max_distance_m * float(Engine.physics_ticks_per_second) / _config.gameplay.move_speed_mps)
 	var reached: bool = false
 	var yaw: float = YAW_MINUS_Z
-	while ticks_left > 0 and Time.get_ticks_msec() < deadline:
+	while ticks_left > 0:
 		if done.call():
 			reached = true
 			break
@@ -712,22 +715,19 @@ func test_two_clients_fight_one_zombie_agree_on_the_result_and_it_survives_a_res
 	# --- item 3: both clients fight the zombie until it dies ------------------
 	var sent_a: int = 0
 	var sent_b: int = watch_b.melee_results.size()
-	var next_a: int = Time.get_ticks_msec()
-	var next_b: int = Time.get_ticks_msec() + SWING_INTERVAL_MSEC
-	var fight_deadline: int = Time.get_ticks_msec() + int(FIGHT_MAX_SEC * 1000.0)
-	while Time.get_ticks_msec() < fight_deadline:
+	# Both swing every SWING_INTERVAL_TICKS server ticks; alice starts at
+	# once, bob one interval later.
+	for tick: int in range(ceili(FIGHT_MAX_SEC * float(Engine.physics_ticks_per_second))):
 		if watch_a.zombie_state(zombie_id) == "dead" and watch_b.zombie_state(zombie_id) == "dead":
 			break
-		var now: int = Time.get_ticks_msec()
-		if now >= next_a:
+		var swing_tick: bool = tick % SWING_INTERVAL_TICKS == 0
+		if swing_tick:
 			if watch_a.combat.request_melee_attack(watch_a.aim_at_zombie(zombie_id)) != CombatNetModule.NO_REQUEST:
 				sent_a += 1
-			next_a = now + SWING_INTERVAL_MSEC
-		if now >= next_b:
+		if swing_tick and tick >= SWING_INTERVAL_TICKS:
 			if watch_b.combat.request_melee_attack(watch_b.aim_at_zombie(zombie_id)) != CombatNetModule.NO_REQUEST:
 				sent_b += 1
-			next_b = now + SWING_INTERVAL_MSEC
-		await tree.process_frame
+		await tree.physics_frame
 	assert_eq([watch_a.zombie_state(zombie_id), watch_b.zombie_state(zombie_id)], ["dead", "dead"], "both mirrors show the zombie dead")
 	assert_false(_zombies(world).get_zombie(zombie_id) == null or _zombies(world).get_zombie(zombie_id).is_alive(), "the server's zombie is dead")
 	var answered: bool = await _eventually(func() -> bool: return watch_a.melee_results.size() == sent_a and watch_b.melee_results.size() == sent_b)

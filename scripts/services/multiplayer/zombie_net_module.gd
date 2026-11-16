@@ -69,6 +69,9 @@ var client_state: ClientZombieState
 ## each counted once per receiving peer.
 var sent_snapshot_message_count: int = 0
 var sent_snapshot_row_count: int = 0
+## Server diagnostics: snapshot rows sent to each connected peer (what the
+## server sent, not what arrived: snapshots travel unreliably).
+var _sent_rows_by_peer: Dictionary[int, int] = {}
 var sent_event_count: int = 0
 var unsendable_event_count: int = 0
 ## Server diagnostics: zombies a peer had to be told about because an event
@@ -118,6 +121,13 @@ func on_server_started(world: ServerWorld) -> void:
 
 func on_player_left(peer_id: int, _player_id: String) -> void:
 	_streams.erase(peer_id)
+	_sent_rows_by_peer.erase(peer_id)
+
+
+## Server diagnostics: snapshot rows sent to `peer_id` since it joined (0
+## for a peer that is not connected).
+func sent_snapshot_rows_to(peer_id: int) -> int:
+	return _sent_rows_by_peer.get(peer_id, 0)
 
 
 func server_physics(delta: float) -> void:
@@ -352,6 +362,7 @@ func _send_snapshots(rows_by_peer: Dictionary[int, Array]) -> void:
 			_rpc_zombie_snapshot.rpc_id(peer_id, _tick, chunk)
 			sent_snapshot_message_count += 1
 			sent_snapshot_row_count += chunk.size()
+			_sent_rows_by_peer[peer_id] = _sent_rows_by_peer.get(peer_id, 0) + chunk.size()
 			offset += chunk.size()
 
 

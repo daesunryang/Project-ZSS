@@ -21,9 +21,15 @@ const ITEMS: int = 300
 const ZOMBIES: int = 100
 const SCENE_SEED: int = 20261116
 const SPREAD_M: float = 240.0
-const WAIT_MSEC: int = 10000
+## Safety limit of a wait, in server ticks (10 s at 60 Hz).
+const WAIT_TICKS: int = 600
 const SETTLE_TICKS: int = 30
-const WINDOW_SEC: float = 3.0
+## Server ticks for which the cells nobody wants may leave memory (1 s).
+const CELL_SETTLE_TICKS: int = 60
+## The standing-still window, in server ticks (3 s at 60 Hz). Counted in
+## ticks, not real time: on a loaded machine the same window then holds the
+## same snapshots (docs/12 §1.1).
+const WINDOW_TICKS: int = 180
 const USEC_PER_MSEC: float = 1000.0
 const CORNER_A: Vector3 = Vector3(-200.0, 0.0, -200.0)
 const CORNER_B: Vector3 = Vector3(200.0, 0.0, 200.0)
@@ -57,13 +63,8 @@ func after_each() -> void:
 
 # ------------------------------------------------------------ helpers
 
-func _wait(condition: Callable, timeout_msec: int = WAIT_MSEC) -> bool:
-	var deadline: int = Time.get_ticks_msec() + timeout_msec
-	while Time.get_ticks_msec() < deadline:
-		if condition.call():
-			return true
-		await tree.process_frame
-	return bool(condition.call())
+func _wait(condition: Callable, max_ticks: int = WAIT_TICKS) -> bool:
+	return await _cluster.wait_ticks_until(condition, max_ticks)
 
 
 func _settle() -> void:
@@ -174,7 +175,7 @@ func _run_scene(label: String, radius_cells: int, margin_cells: int) -> Dictiona
 	await _place(b, CORNER_B)
 	await _place(c, CORNER_C)
 	# Let the cells nobody wants any more leave the server's memory.
-	await tree.create_timer(1.0).timeout
+	await _cluster.wait_ticks(CELL_SETTLE_TICKS)
 	await _settle()
 	var zombies: ZombieService = _world.get_system(ZombieService.SYSTEM_ID) as ZombieService
 	var result: Dictionary = {
@@ -186,11 +187,17 @@ func _run_scene(label: String, radius_cells: int, margin_cells: int) -> Dictiona
 	print("[measure] %s: the far client mirrors %d items and %d zombies; the server has %d items and %d zombies in memory, %d and %d in the world" % [label, result["mirror_items"], result["mirror_zombies"], result["memory_items"], result["memory_zombies"], ITEMS, ZOMBIES])
 
 	# --- standing still for a while ---
+	# Snapshots travel unreliably, so what arrives also depends on the
+	# machine; what the server sent to this peer in the window does not.
+	var c_peer: int = c.multiplayer.get_unique_id()
+	var server_zombies: ZombieNetModule = _zombie_module(_cluster.server)
+	var sent_before: int = server_zombies.sent_snapshot_rows_to(c_peer)
 	var before: Dictionary = _received(c)
-	await tree.create_timer(WINDOW_SEC).timeout
+	await _cluster.wait_ticks(WINDOW_TICKS)
 	var standing: Dictionary = _delta(before, _received(c))
+	standing["sent_rows"] = server_zombies.sent_snapshot_rows_to(c_peer) - sent_before
 	result["standing"] = standing
-	print("[measure] %s: standing still for %.1f s the far client received %d zombie snapshot messages with %d rows (about %d bytes of rows), %d zombie events and %d world item messages" % [label, WINDOW_SEC, standing["snapshot_messages"], standing["snapshot_rows"], int(standing["snapshot_rows"]) * _row_bytes(), standing["zombie_events"], standing["item_messages"]])
+	print("[measure] %s: standing still for %.1f s (%d server ticks) the server sent the far client %d zombie snapshot rows; it received %d snapshot messages with %d rows (about %d bytes of rows), %d zombie events and %d world item messages" % [label, float(WINDOW_TICKS) / float(Engine.physics_ticks_per_second), WINDOW_TICKS, standing["sent_rows"], standing["snapshot_messages"], standing["snapshot_rows"], int(standing["snapshot_rows"]) * _row_bytes(), standing["zombie_events"], standing["item_messages"]])
 
 	# --- walking to the middle of the map, to the opposite side and back,
 	# while the client in the first corner stands still ---
@@ -198,7 +205,7 @@ func _run_scene(label: String, radius_cells: int, margin_cells: int) -> Dictiona
 	var bystander_before: Dictionary = _received(a)
 	for waypoint: Vector3 in WALK:
 		await _place(c, waypoint)
-	await tree.create_timer(1.0).timeout
+	await _cluster.wait_ticks(CELL_SETTLE_TICKS)
 	await _settle()
 	var walking: Dictionary = _delta(before, _received(c))
 	var bystander: Dictionary = _delta(bystander_before, _received(a))
@@ -235,7 +242,7 @@ func test_measure_what_a_far_client_is_sent_before_and_after_scope() -> void:
 	assert_eq(before["mirror_zombies"], before["memory_zombies"])
 	assert_true(int(after["mirror_items"]) < int(before["mirror_items"]), "with scope the far client mirrors fewer items")
 	assert_true(int(after["mirror_zombies"]) < int(before["mirror_zombies"]), "and fewer zombies")
-	assert_true(int((after["standing"] as Dictionary)["snapshot_rows"]) < int((before["standing"] as Dictionary)["snapshot_rows"]), "and is sent fewer snapshot rows")
+	assert_true(int((after["standing"] as Dictionary)["sent_rows"]) < int((before["standing"] as Dictionary)["sent_rows"]), "and is sent fewer snapshot rows in the same number of server ticks")
 	assert_true(int(after["join_items"]) < int(before["join_items"]) and int(after["join_zombies"]) < int(before["join_zombies"]), "its join data is smaller")
 	# A client that walked to a place still keeps a ring of cells it passed
 	# (hysteresis); one that joins there starts with the plain square.
@@ -334,7 +341,7 @@ func _measure_zombie_tick(label: String, radius_cells: int, margin_cells: int) -
 	for index: int in range(PEERS):
 		_world.get_player(player_ids[index]).position = Vector3(-210.0 + 60.0 * float(index), 0.0, 0.0)
 	# The cells settle: what nobody wants leaves the server's memory.
-	await tree.create_timer(1.0).timeout
+	await _cluster.wait_ticks(CELL_SETTLE_TICKS)
 	await _settle()
 	var zombie_module: ZombieNetModule = _zombie_module(_cluster.server)
 	var zombies: ZombieService = _world.get_system(ZombieService.SYSTEM_ID) as ZombieService
