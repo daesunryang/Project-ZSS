@@ -457,6 +457,9 @@ func try_demolish(world: ServerWorld, player_id: String, structure_id: String) -
 		return ActionResult.failure(REASON_NOT_OWNER)
 	if StructureGrid.flat_distance(world.get_player(player_id).position, grid.slot_anchor(_slot_of(structure))) > _settings.demolish_range_m:
 		return ActionResult.failure(REASON_TOO_FAR)
+	var container_reason: String = _linked_container_removal_reason(world, structure)
+	if not container_reason.is_empty():
+		return ActionResult.failure(container_reason)
 	var definition: StructureDefinition = _catalog.get_definition(structure.definition_id)
 	return _remove(world, structure, player_id, definition.demolish_refund_percent if definition != null else 0, CAUSE_DEMOLISHED)
 
@@ -513,6 +516,9 @@ func complete_structure(world: ServerWorld, structure_id: String) -> ActionResul
 	var definition: StructureDefinition = _catalog.get_definition(structure.definition_id)
 	if _blocks_when_standing(structure, definition) and _is_entity_in_the_way(world, _slot_of(structure)):
 		return ActionResult.failure(REASON_BLOCKED_BY_ENTITY)
+	var linked: ActionResult = _create_linked_container(world, structure, definition)
+	if not linked.ok:
+		return linked
 	_release_crew(structure_id, STOP_FINISHED)
 	return ActionResult.success(_complete(structure, definition))
 
@@ -861,6 +867,13 @@ func _place(world: ServerWorld, definition: StructureDefinition, tile: Vector2i,
 	structure.door_open = door_open
 	_structures[structure_id] = structure
 	_index(world, structure, definition)
+	if _settings.instant_completion:
+		var linked: ActionResult = _create_linked_container(world, structure, definition)
+		if not linked.ok:
+			_forget(structure)
+			world.cell_index.remove(structure_id)
+			_registry.remove(structure_id)
+			return ActionResult.failure(linked.reason)
 	GameLogger.info("building", "structure placed", {"entity_id": structure_id, "definition_id": definition.definition_id, "player_id": placed_by, "cell_id": structure.cell_id, "x": tile.x, "z": tile.y, "rotation": rotation})
 	return ActionResult.success(_push_event(EVENT_PLACED, structure, placed_by, {}))
 
@@ -870,6 +883,9 @@ func _place(world: ServerWorld, definition: StructureDefinition, tile: Vector2i,
 ## inside the structure's own cell, which is in memory). The refund is made
 ## first: when it fails, nothing has changed.
 func _remove(world: ServerWorld, structure: StructureInstance, player_id: String, refund_percent: int, cause: String) -> ActionResult:
+	var container_reason: String = _linked_container_removal_reason(world, structure)
+	if not container_reason.is_empty():
+		return ActionResult.failure(container_reason)
 	var refund: Dictionary[String, int] = StructureDefinition.refund_of(structure.delivered_materials, refund_percent)
 	var refund_ids: Array = []
 	if not refund.is_empty():
@@ -878,6 +894,12 @@ func _remove(world: ServerWorld, structure: StructureInstance, player_id: String
 			GameLogger.error("building", "materials could not be returned", {"entity_id": structure.structure_id, "player_id": player_id, "reason": placed.reason, "operation": "remove"})
 			return ActionResult.failure(REASON_REFUND_FAILED)
 		refund_ids = placed.event["item_instance_ids"]
+	if not structure.container_id.is_empty():
+		var containers: ContainerService = world.get_system(ContainerService.SYSTEM_ID) as ContainerService
+		var removed_container: ActionResult = containers.remove_empty_container(world, structure.container_id, structure.structure_id)
+		if not removed_container.ok:
+			GameLogger.error("building", "linked container could not be removed after preflight", {"entity_id": structure.structure_id, "container_id": structure.container_id, "reason": removed_container.reason, "operation": "remove"})
+			return ActionResult.failure(removed_container.reason)
 	_release_crew(structure.structure_id, STOP_REMOVED)
 	_forget(structure)
 	world.cell_index.remove(structure.structure_id)
@@ -1145,8 +1167,43 @@ func _finish(world: ServerWorld, structure: StructureInstance, definition: Struc
 			GameLogger.info("building", "a finished structure waits for a clear edge", {"entity_id": structure.structure_id, "definition_id": structure.definition_id})
 			_push_event(EVENT_CHANGED, structure, "", {"cause": CAUSE_PROGRESS})
 		return false
+	var linked: ActionResult = _create_linked_container(world, structure, definition)
+	if not linked.ok:
+		if not _awaiting.has(structure.structure_id):
+			_awaiting[structure.structure_id] = true
+			GameLogger.warning("building", "a finished structure waits for its container", {"entity_id": structure.structure_id, "definition_id": structure.definition_id, "reason": linked.reason})
+			_push_event(EVENT_CHANGED, structure, "", {"cause": CAUSE_PROGRESS})
+		return false
 	_complete(structure, definition)
 	return true
+
+
+## Creates the definition-linked container exactly once. The structure owns
+## the link and the container stores a backlink for save validation/debugging.
+func _create_linked_container(world: ServerWorld, structure: StructureInstance, definition: StructureDefinition) -> ActionResult:
+	if definition == null or definition.container_definition_id.is_empty():
+		return ActionResult.success()
+	var containers: ContainerService = world.get_system(ContainerService.SYSTEM_ID) as ContainerService
+	if containers == null:
+		return ActionResult.failure(ContainerService.REASON_UNAVAILABLE)
+	if not structure.container_id.is_empty():
+		var existing: ContainerInstance = containers.get_container(structure.container_id)
+		if existing != null and existing.structure_id == structure.structure_id:
+			return ActionResult.success()
+		return ActionResult.failure(ContainerService.REASON_UNKNOWN_CONTAINER)
+	var created: ActionResult = containers.create_container(world, definition.container_definition_id, grid.slot_home(_slot_of(structure)), "", "structure/%s" % structure.structure_id, structure.structure_id)
+	if created.ok:
+		structure.container_id = str(created.event.get(ContainerService.KEY_CONTAINER_ID, ""))
+	return created
+
+
+func _linked_container_removal_reason(world: ServerWorld, structure: StructureInstance) -> String:
+	if structure.container_id.is_empty():
+		return ""
+	var containers: ContainerService = world.get_system(ContainerService.SYSTEM_ID) as ContainerService
+	if containers == null:
+		return ContainerService.REASON_UNAVAILABLE
+	return containers.empty_removal_reason(world, structure.container_id, structure.structure_id)
 
 
 ## Makes an unfinished structure a completed one. Returns the event.

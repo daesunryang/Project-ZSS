@@ -20,6 +20,8 @@ const KEY_SEARCHED: String = "searched"
 const KEY_SOURCE_KEY: String = "source_key"
 const KEY_CREATED_AT: String = "created_at"
 const KEY_LOOT_SEED: String = "loot_seed"
+const KEY_STRUCTURE_ID: String = "structure_id"
+const CONTAINER_ID_PATTERN: String = "^container_[0-9]+$"
 ## Largest loot seed a save can carry exactly: saves are JSON, whose numbers
 ## are doubles (2^53 - 1).
 const MAX_LOOT_SEED: int = 9007199254740991
@@ -41,8 +43,9 @@ var loot_table_id: String = ""
 ## true once the loot was rolled (or there never was any to roll). It never
 ## becomes false again: a container is filled at most once.
 var searched: bool = false
-## What placed it, for a container of the map content ("<map>/<building>/
-## <index>"); "" for any other. At most one container per key exists.
+## What placed it: map content uses "<map>/<building>/<index>" and a built
+## storage box uses "structure/<structure id>"; "" for an unkeyed server
+## rule. At most one container per key exists.
 var source_key: String = ""
 ## Calendar world time at which it was created.
 var created_at: float = 0.0
@@ -51,6 +54,9 @@ var created_at: float = 0.0
 ## id (LootRoller.seed_for), so changing the setting later never changes what
 ## a container that exists already holds. 0..MAX_LOOT_SEED.
 var loot_seed: int = 0
+## Backlink to the structure whose lifecycle owns this container. Empty for
+## seeded / map containers.
+var structure_id: String = ""
 
 
 func to_dict() -> Dictionary:
@@ -66,6 +72,7 @@ func to_dict() -> Dictionary:
 		KEY_SOURCE_KEY: source_key,
 		KEY_CREATED_AT: created_at,
 		KEY_LOOT_SEED: loot_seed,
+		KEY_STRUCTURE_ID: structure_id,
 	}
 
 
@@ -79,6 +86,9 @@ static func from_dict(data: Dictionary) -> ContainerInstance:
 	if str(data[KEY_CONTAINER_ID]).is_empty() or str(data[KEY_INVENTORY_ID]).is_empty():
 		return null
 	if not ItemInstance.is_valid_definition_id(str(data[KEY_DEFINITION_ID])):
+		return null
+	var linked_structure: Variant = data.get(KEY_STRUCTURE_ID, "")
+	if typeof(linked_structure) != TYPE_STRING or (not str(linked_structure).is_empty() and not StructureInstance.is_valid_structure_id(str(linked_structure))):
 		return null
 	var raw_position: Variant = data.get(KEY_POSITION, null)
 	if typeof(raw_position) != TYPE_ARRAY or (raw_position as Array).size() != 3:
@@ -106,7 +116,12 @@ static func from_dict(data: Dictionary) -> ContainerInstance:
 	container.source_key = str(data[KEY_SOURCE_KEY])
 	container.created_at = float(data[KEY_CREATED_AT])
 	container.loot_seed = int(data[KEY_LOOT_SEED])
+	container.structure_id = str(linked_structure)
 	return container
+
+
+static func is_valid_container_id(value: String) -> bool:
+	return RegEx.create_from_string(CONTAINER_ID_PATTERN).search(value) != null
 
 
 ## True when `value` can be a loot seed: a save carries it exactly.

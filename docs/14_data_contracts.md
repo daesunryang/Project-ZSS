@@ -64,6 +64,7 @@ P3-4a 임시안(docs/00 ADR-024, docs/09 §15.4): 구현된 구조물 문서(`St
 | `last_modified_at` | 숫자 | 마지막으로 바뀐 달력 월드 시간(§2) |
 | `placed_by` | 문자열 | 배치한 플레이어의 `player_id`, 서버 규칙이 놓았으면 `""` |
 | `door_open` | bool | 문만 true가 될 수 있다 |
+| `container_id` | 문자열 `container_<번호>` 또는 `""` | P3-3b: 완공 때 이 구조물이 만든 보관함. 구조물이 링크의 수명 주인이다. 청사진과 보통 구조물은 `""` |
 
 `systems.building` 문서는 `{schema_version: 1, structures: [...]}`다. 구조물이 없으면 문서 자체가 없다. Node 참조·RID는 들어가지 않는다.
 
@@ -75,6 +76,8 @@ P3-5 임시안(docs/00 ADR-025, docs/09 §15.5): `systems.building` 문서의 �
 | `delivered_materials` | `{아이템 정의 ID: 수량(1 이상)}` | 플레이어가 그 조각에 넣은 자재. 키는 `inventory_costs`의 키 중 일부이고 수량은 그 값 이하다. 넣은 것이 없으면 `{}`. 취소·철거의 환급은 이 값의 일부다. 자재는 아이템 인스턴스가 아니라 수량으로만 남는다(넣은 아이템의 ID는 은퇴한다) |
 
 스키마 1 문서(P3-4a)는 그대로 읽는다: 필드가 없는 구조물은 서 있으면 `construction_progress` 1, 아니면 0, `delivered_materials`는 `{}`로 올린다(`StructureInstance.upgrade_v1_entry`). 다음 저장부터 스키마 2로 쓴다. 스키마 2 문서에 두 필드가 없으면 깨진 문서로 보고 그 셀을 로딩하지 않는다. 상태·진행률·자재가 서로 맞지 않는 구조물(작업이 된 청사진, 진행률 0인 `constructing`, 진행률이 1이 아닌 서 있는 조각, 자재 비율보다 큰 진행률)이 든 문서도 같다. 누가 작업 중인지는 저장하지 않는다.
+
+P3-3b의 `container_id`는 기존 스키마 2 문서와 호환되는 선택 필드다. 없으면 `""`로 읽고 다음 저장부터 쓴다. 전선 구조물 행에는 넣지 않는다.
 
 ### ContainerInstance (보관함, P3-3 임시안)
 docs/00 ADR-026, docs/09 §15.3. 보관함 하나(셀 문서와 world_state의 `systems.containers.containers[]` 항목):
@@ -89,12 +92,15 @@ docs/00 ADR-026, docs/09 §15.3. 보관함 하나(셀 문서와 world_state의 `
 | `slot_count` | 1 이상의 정수 | 묶음 칸 수(만들 때의 정의 값) |
 | `loot_table_id` | 문자열 | 첫 수색 때 굴릴 `LootTable`의 ID, `""` = 없음 |
 | `searched` | bool | 한 번 루팅이 굴려졌으면(또는 테이블이 없으면) true. 다시 false가 되지 않는다 |
-| `source_key` | 문자열 | 맵 콘텐츠가 놓았으면 `"<map_id>/<building_id>/<번호>"`, 아니면 `""` |
+| `source_key` | 문자열 | 맵 콘텐츠가 놓았으면 `"<map_id>/<building_id>/<번호>"`, P3-3b 구조물이 만들었으면 `"structure/<structure_id>"`, 키 없는 서버 규칙이면 `""` |
 | `created_at` | 숫자 | 만든 달력 월드 시간(§2) |
 | `loot_seed` | 0 ~ 2^53-1 정수 | 만들 때의 월드 루팅 시드. 내용물은 이 값과 `container_id`로 정한다 |
+| `structure_id` | 문자열 `structure_<번호>` 또는 `""` | P3-3b: 이 보관함을 만든 구조물의 역참조. 테스트 맵의 시드 보관함은 `""` |
 | `items` | `ItemInstance` 배열 | 안에 든 아이템(칸 순서). 각 아이템의 `location_type`은 `inventory`, `location_id`는 위의 `inventory_id`, `slot_id`는 `slot_<0..slot_count-1>` |
 
 `systems.containers` 문서는 `{schema_version: 1, containers: [...]}`다(셀 문서와 world_state가 같은 모양). 보관함이 없으면 문서 자체가 없다. 수색 중·열림 같은 세션 상태는 저장하지 않는다. 보관함 안의 아이템은 world_state의 `inventory` 스냅샷에 들어가지 않는다(한 아이템은 저장의 한 곳에만 있다).
+
+P3-3b의 `structure_id`는 기존 스키마 1 문서와 호환되는 선택 필드다. 없으면 `""`로 읽고 다음 저장부터 쓴다. 공개 보관함 행에는 넣지 않는다.
 
 맵 시드 기록(world_state `systems.map_content`): `{schema_version: 1, maps: {<map_id>: {content_version: 정수, buildings: [놓은 building_id...], complete: bool}}}`. 시드한 적이 없으면 문서가 없다.
 

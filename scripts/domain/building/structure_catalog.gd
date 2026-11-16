@@ -45,12 +45,15 @@ func size() -> int:
 ## Errors of the catalog against the item catalog: every build cost must
 ## name an item that exists. (Each definition was validated when it was
 ## added.)
-func validate_against(items: ItemCatalog) -> PackedStringArray:
+func validate_against(items: ItemCatalog, containers: ContainerCatalog = null) -> PackedStringArray:
 	var errors: PackedStringArray = []
 	for definition_id: String in definition_ids():
 		for item_id: String in _definitions[definition_id].build_costs:
 			if items == null or not items.has(item_id):
 				errors.append("structure %s: build cost names unknown item %s" % [definition_id, item_id])
+		var container_id: String = _definitions[definition_id].container_definition_id
+		if containers != null and not container_id.is_empty() and not containers.has(container_id):
+			errors.append("structure %s: container definition %s does not exist" % [definition_id, container_id])
 	return errors
 
 

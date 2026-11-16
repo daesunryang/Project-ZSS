@@ -89,8 +89,8 @@ func test_trade_keys_are_actions_driven_by_settings_and_clash_with_no_other_key(
 	var own: Dictionary[String, Key] = defaults.assigned_keys()
 	# 17 since the cell overlay key (P3-2, world_map_presentation_test.gd), 22
 	# since the five container keys (P3-3, container_presentation_test.gd), 30
-	# since the eight building keys (P3-4b, build_presentation_test.gd).
-	assert_eq(own.size(), 30, "every key of the presentation settings is in the list: %s" % ", ".join(PackedStringArray(own.keys())))
+	# since the nine building keys (P3-3b/P3-4b, build_presentation_test.gd).
+	assert_eq(own.size(), 31, "every key of the presentation settings is in the list: %s" % ", ".join(PackedStringArray(own.keys())))
 	for changed: String in trade_keys:
 		assert_true(own.has(changed), changed)
 		for other: String in own:

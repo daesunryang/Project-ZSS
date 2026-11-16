@@ -33,6 +33,13 @@ const FULL_PERCENT: int = 100
 @export var blocks_movement: bool = false
 ## True when players can open and close the piece (edge pieces only).
 @export var is_door: bool = false
+## Optional placeholder mesh size in metres. Vector3.ZERO uses the standard
+## tile / edge dimensions from ClientPresentationSettings. This keeps
+## furniture-like tile pieces data-driven without changing network rows.
+@export var visual_size_m: Vector3 = Vector3.ZERO
+## ContainerDefinition created when this piece completes. Empty means the
+## structure never becomes a container.
+@export var container_definition_id: String = ""
 ## Health of the completed piece. Nothing damages structures yet (P3-4a).
 @export_range(1.0, 1000000.0) var max_health: float = 100.0
 ## What building one piece costs (docs/04 §5: a blueprint defines the
@@ -69,6 +76,10 @@ func validate() -> PackedStringArray:
 		errors.append("%s: only edge pieces can block movement" % definition_id)
 	if is_door and placement != Placement.EDGE:
 		errors.append("%s: a door must be an edge piece" % definition_id)
+	if not visual_size_m.is_finite() or visual_size_m.x < 0.0 or visual_size_m.y < 0.0 or visual_size_m.z < 0.0 or (visual_size_m != Vector3.ZERO and (visual_size_m.x <= 0.0 or visual_size_m.y <= 0.0 or visual_size_m.z <= 0.0)):
+		errors.append("%s: visual_size_m must be zero or positive on every axis" % definition_id)
+	if not container_definition_id.is_empty() and not ItemInstance.is_valid_definition_id(container_definition_id):
+		errors.append("%s: container_definition_id must be snake_case or empty" % definition_id)
 	if not is_finite(max_health) or max_health <= 0.0:
 		errors.append("%s: max_health must be > 0" % definition_id)
 	if build_costs.size() > MAX_COST_KINDS:

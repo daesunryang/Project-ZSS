@@ -6,6 +6,7 @@ extends RefCounted
 const FLOOR_ID: String = "dev_floor"
 const WALL_ID: String = "dev_wall"
 const DOOR_ID: String = "dev_door"
+const STORAGE_BOX_ID: String = "dev_storage_box"
 
 var _root: Node3D
 var _hud: Label
@@ -61,6 +62,8 @@ func tick(camera: Camera3D, map: ClientWorldMap) -> Dictionary:
 			_select(WALL_ID)
 		if Input.is_action_just_pressed(ClientInputActions.BUILD_DOOR):
 			_select(DOOR_ID)
+		if Input.is_action_just_pressed(ClientInputActions.BUILD_STORAGE_BOX):
+			_select(STORAGE_BOX_ID)
 		if Input.is_action_just_pressed(ClientInputActions.BUILD_ROTATE):
 			_rotation_steps = posmod(_rotation_steps + 1, StructureGrid.ROTATION_COUNT)
 	_update_target(camera)
@@ -147,7 +150,10 @@ func _build_ghost(definition: StructureDefinition, slot: Vector3i, valid: bool) 
 	_ghost_key = key
 	var mesh: BoxMesh = BoxMesh.new()
 	_ghost.rotation = Vector3.ZERO
-	if definition.placement == StructureDefinition.Placement.TILE:
+	if definition.visual_size_m != Vector3.ZERO:
+		mesh.size = definition.visual_size_m
+		_ghost.position.y = definition.visual_size_m.y * 0.5
+	elif definition.placement == StructureDefinition.Placement.TILE:
 		mesh.size = Vector3(_grid.module_m * _settings.structure_floor_scale, _settings.structure_floor_height_m, _grid.module_m * _settings.structure_floor_scale)
 		_ghost.position.y = _settings.structure_floor_height_m * 0.5
 	else:
@@ -191,7 +197,7 @@ func _refresh_hud() -> void:
 	var entry: Dictionary = _mirror.get_structure(_target_id) if not _target_id.is_empty() else {}
 	var shown_rotation: int = int(_candidate.get("rotation", _rotation_steps)) if _build_mode else _rotation_steps
 	var lines: PackedStringArray = PackedStringArray([
-		"건축 모드 [L]: %s | %s [1/2/3] | 회전 %d [.]" % [mode, piece, shown_rotation],
+		"건축 모드 [L]: %s | %s [1/2/3/4] | 회전 %d [.]" % [mode, piece, shown_rotation],
 		"비용: %s" % cost,
 		StructurePresentationFormatter.structure_summary(entry, _mirror.workers_of(_target_id).size(), _items),
 	])

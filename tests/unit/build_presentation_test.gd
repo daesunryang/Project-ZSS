@@ -46,12 +46,13 @@ func test_build_keys_ranges_and_actions_come_from_the_presentation_resource() ->
 		ClientInputActions.BUILD_FLOOR: shipped.build_floor_key,
 		ClientInputActions.BUILD_WALL: shipped.build_wall_key,
 		ClientInputActions.BUILD_DOOR: shipped.build_door_key,
+		ClientInputActions.BUILD_STORAGE_BOX: shipped.build_storage_box_key,
 		ClientInputActions.BUILD_ROTATE: shipped.build_rotate_key,
 		ClientInputActions.BUILD_DELIVER: shipped.build_deliver_key,
 		ClientInputActions.BUILD_WORK: shipped.build_work_key,
 		ClientInputActions.BUILD_REMOVE: shipped.build_remove_key,
 	}
-	assert_eq(keys.values(), [KEY_L, KEY_1, KEY_2, KEY_3, KEY_PERIOD, KEY_M, KEY_COMMA, KEY_DELETE])
+	assert_eq(keys.values(), [KEY_L, KEY_1, KEY_2, KEY_3, KEY_4, KEY_PERIOD, KEY_M, KEY_COMMA, KEY_DELETE])
 	ClientInputActions.register(CameraSettings.new(), shipped)
 	for action: StringName in keys:
 		var events: Array[InputEvent] = InputMap.action_get_events(action)
@@ -62,6 +63,28 @@ func test_build_keys_ranges_and_actions_come_from_the_presentation_resource() ->
 	var invalid: ClientPresentationSettings = ClientPresentationSettings.new()
 	invalid.build_mode_key = invalid.build_floor_key
 	assert_eq(invalid.validate().size(), 1, "; ".join(invalid.validate()))
+
+
+func test_key_four_selects_the_storage_box_as_the_fourth_build_piece() -> void:
+	var root: Node3D = Node3D.new()
+	(Engine.get_main_loop() as SceneTree).root.add_child(root)
+	var camera: Camera3D = Camera3D.new()
+	root.add_child(camera)
+	var settings: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
+	ClientInputActions.register(CameraSettings.new(), settings)
+	var catalog: StructureCatalog = _catalog()
+	var module: StructureNetModule = StructureNetModule.new(StructureNetSettings.new(), catalog)
+	var world: ClientWorldState = ClientWorldState.new()
+	var hud: Label = Label.new()
+	var presentation: BuildPresentation = BuildPresentation.new(root, hud, settings, BuildingSettings.load_or_default(), catalog, ItemCatalog.load_directory(), module, world)
+	# The preceding test proves BUILD_STORAGE_BOX is registered on KEY_4;
+	# this checks that the presentation offers the matching fourth piece.
+	presentation.call("_select", BuildPresentation.STORAGE_BOX_ID)
+	assert_eq(presentation.selected_definition_id(), BuildPresentation.STORAGE_BOX_ID)
+	assert_eq(catalog.get_definition(BuildPresentation.STORAGE_BOX_ID).placement, StructureDefinition.Placement.TILE)
+	hud.free()
+	module.free()
+	root.free()
 
 
 func test_camera_target_requires_both_aim_and_local_reach() -> void:
@@ -85,7 +108,7 @@ func test_material_progress_and_every_building_reason_have_korean_text() -> void
 	assert_true(summary.contains("35%"))
 	assert_true(summary.contains("작업자 2명"))
 	var reasons: PackedStringArray = PackedStringArray([
-		"unknown_structure_definition", "bad_rotation", "out_of_bounds", "too_far", "cell_not_loaded", "slot_occupied", "blocked_by_entity", "structure_limit", "structure_id_failed", "unknown_structure", "not_owner", "not_a_door", "structure_not_usable", "door_already_in_state", "building_unavailable", "structure_not_under_construction", "structure_under_construction", "materials_complete", "material_not_needed", "no_materials_carried", "item_not_in_inventory", "unknown_inventory", "nothing_to_move", "bad_offer", "duplicate_item", "unknown_item", "materials_missing", "already_working", "not_working", "too_many_workers", "refund_failed",
+		"unknown_structure_definition", "bad_rotation", "out_of_bounds", "too_far", "cell_not_loaded", "slot_occupied", "blocked_by_entity", "structure_limit", "structure_id_failed", "unknown_structure", "not_owner", "not_a_door", "structure_not_usable", "door_already_in_state", "building_unavailable", "structure_not_under_construction", "structure_under_construction", "materials_complete", "material_not_needed", "no_materials_carried", "item_not_in_inventory", "unknown_inventory", "nothing_to_move", "bad_offer", "duplicate_item", "unknown_item", "materials_missing", "already_working", "not_working", "too_many_workers", "refund_failed", "container_not_empty",
 	])
 	for reason: String in reasons:
 		assert_true(StructurePresentationFormatter.REASONS.has(reason), reason)
@@ -107,6 +130,23 @@ func test_structure_visuals_follow_add_change_work_and_remove_signals() -> void:
 	assert_null(visuals.visual_of(STRUCTURE_ID).get_node_or_null(StructureVisuals.LABEL_NAME))
 	assert_eq(mirror.apply_removed([STRUCTURE_ID]), 1)
 	assert_eq(visuals.count(), 0)
+	root.free()
+
+
+func test_storage_box_visual_uses_its_data_size_and_blueprint_transparency() -> void:
+	var root: Node3D = Node3D.new()
+	var catalog: StructureCatalog = _catalog()
+	var mirror: ClientStructureState = ClientStructureState.new(StructureNetSettings.new(), catalog)
+	var visuals: StructureVisuals = StructureVisuals.new(root, mirror, catalog, ItemCatalog.load_directory(), StructureGrid.new(1.0), ClientPresentationSettings.new())
+	assert_eq(mirror.apply_rows([_row(BuildPresentation.STORAGE_BOX_ID)]), 1)
+	var definition: StructureDefinition = catalog.get_definition(BuildPresentation.STORAGE_BOX_ID)
+	var body: MeshInstance3D = visuals.visual_of(STRUCTURE_ID).get_node(StructureVisuals.BODY_NAME) as MeshInstance3D
+	assert_eq((body.mesh as BoxMesh).size, definition.visual_size_m)
+	assert_true((body.material_override as StandardMaterial3D).albedo_color.a < 1.0)
+	assert_eq(mirror.apply_rows([_row(BuildPresentation.STORAGE_BOX_ID, Vector2i.ZERO, 0, "completed")]), 1)
+	body = visuals.visual_of(STRUCTURE_ID).get_node(StructureVisuals.BODY_NAME) as MeshInstance3D
+	assert_eq((body.material_override as StandardMaterial3D).albedo_color.a, 1.0)
+	assert_null(visuals.visual_of(STRUCTURE_ID).get_node_or_null(StructureVisuals.LABEL_NAME))
 	root.free()
 
 

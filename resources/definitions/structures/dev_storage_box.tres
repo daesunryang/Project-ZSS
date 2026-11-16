@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="StructureDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/building/structure_definition.gd" id="1_structure"]
+
+[resource]
+script = ExtResource("1_structure")
+definition_id = "dev_storage_box"
+display_name = "Development Storage Box"
+placement = 0
+blocks_movement = false
+is_door = false
+visual_size_m = Vector3(0.8, 0.65, 0.55)
+container_definition_id = "dev_storage_box_container"
+max_health = 80.0
+build_costs = Dictionary[String, int]({
+"dev_nails": 2,
+"dev_wood": 4
+})
+build_work_sec = 6.0
+cancel_refund_percent = 100
+demolish_refund_percent = 50

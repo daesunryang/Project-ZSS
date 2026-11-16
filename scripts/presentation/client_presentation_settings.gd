@@ -190,6 +190,7 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export var build_floor_key: Key = KEY_1
 @export var build_wall_key: Key = KEY_2
 @export var build_door_key: Key = KEY_3
+@export var build_storage_box_key: Key = KEY_4
 @export var build_rotate_key: Key = KEY_PERIOD
 @export var build_deliver_key: Key = KEY_M
 @export var build_work_key: Key = KEY_COMMA
@@ -305,7 +306,7 @@ func validate() -> PackedStringArray:
 		errors.append("hud_container_line_count must be > 0")
 	if container_marker_size_m <= 0.0 or container_label_margin_m < 0.0 or container_label_pixel_size <= 0.0 or container_label_font_size < 1:
 		errors.append("container marker size and label pixel size must be > 0, label margin >= 0 and font size >= 1")
-	var build_keys: Dictionary[String, Key] = {"build_mode_key": build_mode_key, "build_floor_key": build_floor_key, "build_wall_key": build_wall_key, "build_door_key": build_door_key, "build_rotate_key": build_rotate_key, "build_deliver_key": build_deliver_key, "build_work_key": build_work_key, "build_remove_key": build_remove_key}
+	var build_keys: Dictionary[String, Key] = {"build_mode_key": build_mode_key, "build_floor_key": build_floor_key, "build_wall_key": build_wall_key, "build_door_key": build_door_key, "build_storage_box_key": build_storage_box_key, "build_rotate_key": build_rotate_key, "build_deliver_key": build_deliver_key, "build_work_key": build_work_key, "build_remove_key": build_remove_key}
 	for key_name: String in build_keys:
 		if build_keys[key_name] == KEY_NONE:
 			errors.append("%s must not be KEY_NONE" % key_name)
@@ -349,6 +350,7 @@ func assigned_keys() -> Dictionary[String, Key]:
 		"build_floor_key": build_floor_key,
 		"build_wall_key": build_wall_key,
 		"build_door_key": build_door_key,
+		"build_storage_box_key": build_storage_box_key,
 		"build_rotate_key": build_rotate_key,
 		"build_deliver_key": build_deliver_key,
 		"build_work_key": build_work_key,

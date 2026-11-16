@@ -49,6 +49,7 @@ const KEY_TILE: String = "tile"
 const KEY_ROTATION: String = "rotation"
 const KEY_PROGRESS: String = "construction_progress"
 const KEY_DELIVERED: String = "delivered_materials"
+const KEY_CONTAINER_ID: String = "container_id"
 const NO_PROGRESS: float = 0.0
 const FULL_PROGRESS: float = 1.0
 
@@ -68,6 +69,10 @@ var placed_by: String = ""
 var door_open: bool = false
 var construction_progress: float = NO_PROGRESS
 var delivered_materials: Dictionary[String, int] = {}
+## Container created for this structure when it completed. The structure
+## owns the lifecycle link; empty while it is a blueprint or for ordinary
+## structures.
+var container_id: String = ""
 
 
 ## True while the piece stands in the world as built: completed or damaged.
@@ -147,6 +152,7 @@ func to_dict() -> Dictionary:
 		"door_open": door_open,
 		KEY_PROGRESS: construction_progress,
 		KEY_DELIVERED: delivered,
+		KEY_CONTAINER_ID: container_id,
 	}
 
 
@@ -164,6 +170,8 @@ static func upgrade_v1_entry(data: Dictionary) -> Dictionary:
 		upgraded[KEY_PROGRESS] = FULL_PROGRESS if standing else NO_PROGRESS
 	if not upgraded.has(KEY_DELIVERED):
 		upgraded[KEY_DELIVERED] = {}
+	if not upgraded.has(KEY_CONTAINER_ID):
+		upgraded[KEY_CONTAINER_ID] = ""
 	return upgraded
 
 
@@ -214,6 +222,9 @@ static func from_dict(data: Dictionary) -> StructureInstance:
 	var delivered: Variant = data.get(KEY_DELIVERED, null)
 	if typeof(delivered) != TYPE_DICTIONARY:
 		return null
+	var linked_container: Variant = data.get(KEY_CONTAINER_ID, "")
+	if typeof(linked_container) != TYPE_STRING or (not str(linked_container).is_empty() and not ContainerInstance.is_valid_container_id(str(linked_container))):
+		return null
 	var structure: StructureInstance = StructureInstance.new()
 	for item_id: Variant in (costs as Dictionary):
 		var quantity: Variant = (costs as Dictionary)[item_id]
@@ -244,4 +255,5 @@ static func from_dict(data: Dictionary) -> StructureInstance:
 	structure.last_modified_at = float(data["last_modified_at"])
 	structure.placed_by = str(data["placed_by"])
 	structure.door_open = bool(data["door_open"])
+	structure.container_id = str(linked_container)
 	return structure

@@ -382,11 +382,22 @@ func _flush_events() -> void:
 			continue
 		# A session or a content message follows the rows recorded before it.
 		_send_pending_rows(pending_rows)
-		if event_type == ContainerService.EVENT_SESSION:
+		if event_type == ContainerService.EVENT_REMOVED:
+			_send_removed_to_interest(str(event.get("cell_id", "")), str(event.get(ContainerService.KEY_CONTAINER_ID, "")))
+		elif event_type == ContainerService.EVENT_SESSION:
 			_send_session(event)
 		elif event_type == ContainerService.EVENT_CONTENTS:
 			_send_contents(event)
 	_send_pending_rows(pending_rows)
+
+
+func _send_removed_to_interest(cell_id: String, container_id: String) -> void:
+	if container_id.is_empty():
+		return
+	for peer_id: int in network.peers_interested_in(cell_id):
+		if network.can_send_to(peer_id):
+			sent_removed_message_count += 1
+			_rpc_containers_removed.rpc_id(peer_id, [container_id])
 
 
 func _send_pending_rows(pending_rows: Dictionary[int, Array]) -> void:

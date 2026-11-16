@@ -42,6 +42,7 @@ const REASONS: Dictionary[String, String] = {
 	"not_working": "현재 작업 중이 아닙니다",
 	"too_many_workers": "이 구조물의 작업자가 너무 많습니다",
 	"refund_failed": "자재를 돌려놓지 못했습니다",
+	"container_not_empty": "보관 상자 안에 물건이 남아 있습니다",
 	"player_dead": "사망한 상태에서는 할 수 없습니다",
 	"player_resting": "쉬는 중에는 할 수 없습니다",
 	"not_online": "플레이어가 월드에 없습니다",

@@ -57,9 +57,15 @@ func _upsert(structure_id: String) -> void:
 	var body: MeshInstance3D = MeshInstance3D.new()
 	body.name = BODY_NAME
 	var mesh: BoxMesh = BoxMesh.new()
-	if definition.placement == StructureDefinition.Placement.TILE:
+	var visual_height: float = _settings.structure_wall_height_m
+	if definition.visual_size_m != Vector3.ZERO:
+		mesh.size = definition.visual_size_m
+		body.position.y = definition.visual_size_m.y * 0.5
+		visual_height = definition.visual_size_m.y
+	elif definition.placement == StructureDefinition.Placement.TILE:
 		mesh.size = Vector3(_grid.module_m * _settings.structure_floor_scale, _settings.structure_floor_height_m, _grid.module_m * _settings.structure_floor_scale)
 		body.position.y = _settings.structure_floor_height_m * 0.5
+		visual_height = _settings.structure_floor_height_m
 	else:
 		mesh.size = Vector3(_grid.module_m * _settings.structure_edge_scale, _settings.structure_wall_height_m, _settings.structure_wall_thickness_m if not definition.is_door else _settings.structure_door_thickness_m)
 		body.position.y = _settings.structure_wall_height_m * 0.5
@@ -79,7 +85,7 @@ func _upsert(structure_id: String) -> void:
 		var label: Label3D = Label3D.new()
 		label.name = LABEL_NAME
 		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		label.position.y = _settings.structure_wall_height_m + _settings.structure_label_margin_m
+		label.position.y = visual_height + _settings.structure_label_margin_m
 		label.pixel_size = _settings.structure_label_pixel_size
 		label.font_size = _settings.structure_label_font_size
 		label.modulate = _settings.structure_label_color

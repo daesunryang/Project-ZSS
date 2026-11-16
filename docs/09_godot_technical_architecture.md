@@ -2156,7 +2156,7 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 
 **`ContainerService`(`scripts/domain/containers/container_service.gd`, `ServerSystem`)**: `ServerComposition`이 전투 뒤에 등록하고(생존·자세가 그 틱에 한 일을 `step()`이 본다), `SurvivalService.player_damaged`(새 시그널: `apply_damage`가 피해를 줄 때마다, 죽이는 한 대 포함, 출혈·허기 등 지속 피해 제외)를 `on_player_damaged`에 잇는다.
 
-- 플레이어 요청: `try_open(world, player_id, container_id)`, `try_close(...)`, `try_take(world, player_id, container_id, item_instance_id, quantity)`, `try_put(...)`. `quantity`는 1~묶음 수량 또는 `InventoryService.WHOLE_STACK`(0, 묶음 전체). 서버 규칙: `create_container(world, definition_id, position, loot_table_id = "", source_key = "") -> ActionResult`(행위자·사거리 없음. 메모리에 있는 셀의 어느 위치에나, 언제든. P3-3b의 상자가 이것을 쓴다).
+- 플레이어 요청: `try_open(world, player_id, container_id)`, `try_close(...)`, `try_take(world, player_id, container_id, item_instance_id, quantity)`, `try_put(...)`. `quantity`는 1~묶음 수량 또는 `InventoryService.WHOLE_STACK`(0, 묶음 전체). 서버 규칙: `create_container(world, definition_id, position, loot_table_id = "", source_key = "", structure_id = "") -> ActionResult`(행위자·사거리 없음. 메모리에 있는 셀의 어느 위치에나, 언제든. P3-3b의 상자가 마지막 인수에 역참조를 넣는다).
 - 검사 순서(먼저 걸린 것이 사유, 거부되면 아무것도 바뀌지 않는다): `not_online` → `player_dead`/`player_resting`(`ServerWorld.player_action_block_reason`) → `unknown_container`(메모리에 없음) → 열기: `too_far`(플레이어의 **서버 위치**에서 보관함 위치까지 3D 거리) → `container_already_open`/`container_searching`(이미 이 보관함을 열었거나 수색 중) / 닫기: `container_not_open` / 꺼내기·넣기: `container_not_open` → `container_searching` → `too_far` → `item_not_in_container`(꺼내기: 그 아이템이 이 보관함에 없음) 또는 `item_not_in_inventory`(넣기: 들고 있지 않음) → `bad_quantity`(1 미만이거나 묶음보다 많음) → `inventory_full`(꺼내기) / `container_full`(넣기). 닫기는 행동이 막힌 플레이어도 할 수 있다. 같은 단위를 둘이 꺼내면 먼저 처리된 쪽만 성공하고 다른 쪽은 `item_not_in_container`(묶음이 통째로 갔을 때) 또는 `bad_quantity`(남은 수량이 모자랄 때)다.
 - `create_container` 실패: `unknown_container_definition`, `bad_position`(유한하지 않거나 플레이 영역 밖), `unknown_loot_table`, `cell_not_loaded`, `container_source_exists`, `container_limit`, `container_id_failed`. 루팅 테이블이 없는 보관함은 만들 때부터 `searched`다.
 - 세션: 플레이어당 하나(다른 보관함을 열면 앞의 것이 `switched`로 닫힌다), 한 보관함에 여럿. 단계는 `searching` → `open`. `step()`이 틱마다 세션을 보고 닫는다: 보관함이 메모리에 없음(`container_unavailable`), 행동이 막힘(`player_dead`, `player_resting`), 사거리 밖(`too_far`). 수색 중 피격은 `interrupted`(설정). 접속 종료는 말없이 지우고(`on_player_offline`), 새 캐릭터 시작은 닫는다.
@@ -2216,7 +2216,7 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 
 **테스트**: `tests/unit/container_service_test.gd`(생성·거부, 한 번만의 루팅, 시드·ID 결정성, 수색 시간·동시 수색·중단(떠남·피격·눕기), 넣기·꺼내기의 전부·일부·합치기, 가득 찬 보관함·소지품, 모든 거부 사유, 두 사람이 같은 단위, A가 넣고 B가 꺼냄, 무작위 넣기·꺼내기 보존, 세션 종료), `container_cell_test.gd`(셀 해제 → 재로딩 동일성, 재로딩이 굴리지 않음, 만들 때의 루팅 시드 유지, 월드 문서 왕복, 저장소 없는 월드, 오래된 셀 문서, 문서 검증, 격자 변경, 무작위 넣기·꺼내기·해제·복구 보존), `loot_roll_test.gd`, `map_content_test.gd`(테스트 맵 데이터, 건물 계획, 검증, 조립 입력 기본값, 새 월드 한 번, 시드 구조물이 completed이고 막음, 셀 로딩·해제, 이전 월드, 측정), `container_net_state_test.gd`(미러 검증), `container_presentation_test.gd`(정책·문구·키), `container_measure_test.gd`(측정), `tests/integration/container_net_test.gd`(실제 ENet, 클라이언트 셋: A가 넣고 B가 꺼냄, 내용물은 연 사람에게만, 셀 얻음·잃음·늦은 접속, 위조 요청, 빈도, 수색), `container_persistence_test.gd`(실제 파일: 일부 루팅된 보관함과 넣은 아이템의 재시작, 수색 시점과 무관한 내용물, 서버 월드의 테스트 맵 한 번, 이전 저장의 시드, 재시작 뒤 꺼내기), `container_view_test.gd`(실제 클라이언트 세션의 키·표시).
 
-**P3-3b(지을 수 있는 보관 상자)가 알아야 할 것**: (1) 서버 쪽 자리는 `ContainerService.create_container(world, definition_id, position)`이다. 루팅 테이블이 없는 정의(`loot_table_id = ""`)는 만들 때부터 `searched`라서 빈 채로 열린다. 플레이어 요청(배치 의도, 비용 차감)과 철거 시 내용물 처리(바닥에 떨어뜨릴지)는 없다. (2) 상자를 구조물로 할지(`StructureInstance`와 보관함 ID를 잇기) 보관함만으로 할지 정해야 한다. 지금 보관함은 이동을 막지 않고 격자에 묶이지 않는다(위치는 임의의 Vector3). (3) 플레이어가 만든 상자도 같은 셀 저장·복제·공개 규칙을 그대로 받는다. 소유권·잠금이 생기면 `ContainerService._use_block_reason`에 검사를 더하고 사유 코드를 늘린다. (4) `max_containers_per_cell`(500)은 플레이어 상자에도 적용된다.
+**P3-3b로 이어진 경계**: 서버 진입점은 `ContainerService.create_container`이고, 루팅 테이블이 없는 정의는 만들 때부터 `searched`라 빈 채로 열린다. P3-3b는 이 경계에 구조물 링크·완공·철거를 붙였으며 자세한 현재 계약은 §15.8이다. 플레이어가 만든 상자도 같은 셀 저장·복제·공개 규칙과 `max_containers_per_cell`(500)을 그대로 받는다. 소유권·잠금은 여전히 없고, 생기면 `ContainerService._use_block_reason`에 검사를 더한다.
 
 **구조물 표시 티켓(P3-4b)이 알아야 할 것**: 테스트 맵 건물(구조물 370개)은 서버에 있고 `StructureNet`으로 복제되지만 아직 화면에 그려지지 않는다: 지금 클라이언트에서는 보관함 상자만 허공에 보이고 벽은 보이지 않는데 서버는 막는다(플레이어가 보이지 않는 벽에 부딪힌다). 보관함 위치는 타일 중심(`StructureGrid.tile_center`)이므로 바닥 메시 위에 그대로 놓인다.
 
@@ -2412,8 +2412,20 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 
 `BuildPresentation`은 표시와 입력 연결부다. `StructureNetModule.client_state`, `work_of`, `workers_of`를 읽고 `request_place`, `request_deliver`, `request_work`, `request_cancel`, `request_demolish`, `request_door`만 호출한다. 모든 답은 기존 `structure_result`에서 받아 `StructurePresentationFormatter`의 한국어 문구로 HUD에 표시한다. 로컬 작업 중지는 `work_changed`의 사유도 표시한다. `ClientView`에는 이 객체의 생성과 프레임 호출만 붙였다.
 
-입력은 `ClientPresentationSettings` Resource와 `ClientInputActions`에 있다: L 건축 모드, 1/2/3 바닥·벽·문, `.` 회전, 건축 모드의 왼쪽 클릭 배치(공격 억제), M 자재 넣기, `,` 작업 시작/중지, Delete 청사진 취소/완공 조각 철거다. E는 행동 사거리 안에서 카메라가 조준한 완공 문이 있으면 문을 우선 열고 닫으며, 그런 문이 없으면 기존의 가장 가까운 바닥 아이템 줍기다(P3-189). 문이 E를 가져가는 동안에는 건축 HUD에 "문 열기/닫기 [E] (줍기보다 먼저)" 줄이 붙는다(P3-201). 보관함(P3-3, §15.3)은 E를 쓰지 않고 H/J/K/U/I만 쓴다. 그래서 `ClientPresentationSettings`가 배정하는 키는 P3-3의 22개에 건축 8개를 더해 30개이고, 서로 다른지(`validate`)와 이동·줍기 키와 겹치는지(`keys_shared_with`)를 모두 함께 검사한다.
+입력은 `ClientPresentationSettings` Resource와 `ClientInputActions`에 있다: L 건축 모드, 1/2/3 바닥·벽·문(P3-3b §15.8에서 4 보관 상자 추가), `.` 회전, 건축 모드의 왼쪽 클릭 배치(공격 억제), M 자재 넣기, `,` 작업 시작/중지, Delete 청사진 취소/완공 조각 철거다. E는 행동 사거리 안에서 카메라가 조준한 완공 문이 있으면 문을 우선 열고 닫으며, 그런 문이 없으면 기존의 가장 가까운 바닥 아이템 줍기다(P3-189). 문이 E를 가져가는 동안에는 건축 HUD에 "문 열기/닫기 [E] (줍기보다 먼저)" 줄이 붙는다(P3-201). 보관함(P3-3, §15.3)은 E를 쓰지 않고 H/J/K/U/I만 쓴다. 그래서 `ClientPresentationSettings`가 배정하는 키는 P3-3의 22개에 건축 9개를 더해 31개이고, 서로 다른지(`validate`)와 이동·줍기 키와 겹치는지(`keys_shared_with`)를 모두 함께 검사한다.
 
 P3-3과 합친 뒤의 규칙: 건축 HUD(`%BuildLabel`)는 보관함 HUD(`%ContainerLabel`, 오른쪽 위 y 190~420) 아래 y 428~580에 둔다(P3-202). 구조물 노드는 미러에 있는 동안만 산다. 관심 셀을 벗어난 구조물은 서버가 보내는 `removed` 묶음으로 `structure_removed`가 와서 노드를 해제하고, 접속 조각(`apply_join`)이 미러를 통째로 바꿀 때는 `structure_removed` 없이 `changed`만 오므로 `StructureVisuals`가 `changed`에서 미러에 없는 노드를 해제한다(P3-203). 테스트 맵 건물(`MapContentService`, 전용 서버에서만 놓는다)은 서버 규칙으로 놓고 완공한 보통 구조물이라 클라이언트는 따로 다루지 않는다(배치자가 없어 취소·철거는 서버가 `not_owner`로 거부한다, P3-204).
 
 헤드리스 테스트는 순수 계산·문구·시그널 기반 노드 생명주기와 실제 `NetTestCluster` 클라이언트에서 L→1→왼쪽 클릭→M→`,` 흐름을 검증했다. 실제 창의 재질·크기·라벨 가독성·HUD 배치는 확인하지 않았다.
+
+### 15.8 지을 수 있는 보관 상자(P3-3b)
+
+`StructureDefinition.container_definition_id`가 완공 뒤 만들 보관함 정의를 데이터로 가리킨다. 개발용 `dev_storage_box`는 이동을 막지 않는 타일 조각이며 목재 4·못 2, 작업 6초, 전용 시각 크기를 정의에 둔다. `dev_storage_box_container`는 16칸이고 `loot_table_id = ""`라서 빈 상태로 바로 열린다. ID를 코드에 분기해 넣지 않는다.
+
+링크의 수명 주인은 구조물이다. 청사진의 `StructureInstance.container_id`는 비어 있다. 완공 직전에 `ContainerService.create_container(world, definition_id, tile_center, "", source_key, structure_id)`를 호출하고 성공한 ID를 구조물에 기록하며, `ContainerInstance.structure_id`에는 역참조를 기록한다. 컨테이너 생성에 실패하면 구조물은 진행률 100%의 미완공 상태로 남아 기존 완공 재시도 주기에 다시 시도한다. `source_key = "structure/<structure_id>"`도 중복 생성을 막는다. 두 필드는 셀 문서와 world_state에 함께 저장되어 셀 해제·복구와 서버 재시작 뒤에도 같은 ID와 내용물을 유지한다. 기존 테스트 맵 보관함은 `structure_id = ""`이고 변경되지 않는다.
+
+완공 상자 철거는 먼저 링크와 내용물을 검사한다. 내용물이 하나라도 있으면 `container_not_empty`로 아무 변화 없이 거부한다. 비어 있으면 보관함 세션을 닫고 보관함·전용 인벤토리를 제거한 뒤 구조물을 제거하며, 구조물의 기존 `demolish_refund_percent`(개발용 50%, 종류별 내림)를 그대로 적용한다. 취소는 청사진만 없애고 보관함을 만들지 않는다.
+
+새 RPC나 기존 행 필드는 없다. 구조물과 보관함은 각각 기존 `StructureNet`·`ContainerNet` 관심 셀 복제를 쓰고, 내용물은 연 플레이어에게만 간다. 철거 때 기존 `_rpc_containers_removed`를 이용하므로 `BuildInfo.PROTOCOL_VERSION`은 15 그대로다. 클라이언트는 키 4로 상자를 선택하고 `StructureVisuals`가 정의의 `visual_size_m`으로 그린다. 청사진은 다른 조각처럼 반투명이고 완공 뒤 기존 보관함 마커와 H/J/K/U/I HUD가 붙는다.
+
+검증은 `tests/unit/storage_box_test.gd`(청사진·완공·취소·철거·정확한 수량·셀 왕복·저장 재시작)와 `tests/integration/construction_net_test.gd`의 P3-3b 사례(A가 짓고 B가 넣고 A가 꺼냄, 원거리 비공개, 내용물 철거 거부와 빈 상자 철거), `build_presentation_test.gd`·`trade_presentation_test.gd`의 키 충돌 검사에 있다. 임시 수치와 미확인 항목은 docs/15 §15.8이다.

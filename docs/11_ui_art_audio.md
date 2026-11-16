@@ -209,7 +209,7 @@
 | 동작 | 키 | 설정 |
 |---|---|---|
 | 건축 모드 켜기/끄기 | L | `build_mode_key` |
-| 바닥 / 벽 / 문 선택 | 1 / 2 / 3 | `build_floor_key`, `build_wall_key`, `build_door_key` |
+| 바닥 / 벽 / 문 / 보관 상자 선택 | 1 / 2 / 3 / 4 | `build_floor_key`, `build_wall_key`, `build_door_key`, `build_storage_box_key` |
 | 프리뷰 회전 | `.` | `build_rotate_key` |
 | 선택 조각 배치(건축 모드에서 공격하지 않음) | 마우스 왼쪽 | `attack_mouse_button` |
 | 조준한 청사진에 들고 있는 필요한 자재 넣기 | M | `build_deliver_key` |
@@ -217,7 +217,7 @@
 | 청사진 취소 / 완공 조각 철거 | Delete | `build_remove_key` |
 | 조준한 문 열기/닫기, 문이 없으면 기존 줍기 | E | `CameraSettings.pickup_key` |
 
-`ClientPresentationSettings`가 직접 배정하는 키는 P3-4b에서 서른 개가 됐고(P3-3의 스물두 개 + 건축 여덟 개) 모두 서로 다른지 검사한다. 이동·줍기 키와의 충돌 검사도 그대로다. E는 새 키를 하나 더 배정하지 않고 문 우선 규칙으로 공유한다: 조준한 문 → 바닥 아이템 줍기 순서이고, 보관함(H)에는 쓰지 않는다. 실제 창에서 프리뷰 조작감, 색·크기·한글 라벨·HUD 겹침은 확인하지 못했다(docs/15 §15.7).
+`ClientPresentationSettings`가 직접 배정하는 키는 P3-3b에서 서른한 개가 됐고(P3-3의 스물두 개 + 건축 아홉 개) 모두 서로 다른지 검사한다. 이동·줍기 키와의 충돌 검사도 그대로다. E는 새 키를 하나 더 배정하지 않고 문 우선 규칙으로 공유한다: 조준한 문 → 바닥 아이템 줍기 순서이고, 보관함(H)에는 쓰지 않는다. 완공된 보관 상자는 기존 보관함과 같은 H/J/K/U/I를 쓴다. 실제 창에서 프리뷰 조작감, 색·크기·한글 라벨·HUD 겹침은 확인하지 못했다(docs/15 §15.8).
 
 ## 3. UI 원칙
 

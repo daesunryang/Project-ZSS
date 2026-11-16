@@ -77,6 +77,7 @@ build_mode_key = 76
 build_floor_key = 49
 build_wall_key = 50
 build_door_key = 51
+build_storage_box_key = 52
 build_rotate_key = 46
 build_deliver_key = 77
 build_work_key = 44

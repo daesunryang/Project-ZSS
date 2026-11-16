@@ -118,7 +118,8 @@ func _spawn_zombie(world: ServerWorld, position: Vector3, facing: Vector3) -> St
 
 func test_default_definitions_and_settings_load_and_are_composed() -> void:
 	var catalog: StructureCatalog = StructureCatalog.load_directory()
-	assert_eq(catalog.definition_ids(), PackedStringArray([DOOR, FLOOR, WALL]))
+	# P3-3b added the buildable storage box to the shipped definitions.
+	assert_eq(catalog.definition_ids(), PackedStringArray([DOOR, FLOOR, "dev_storage_box", WALL]))
 	var floor_definition: StructureDefinition = catalog.get_definition(FLOOR)
 	var wall: StructureDefinition = catalog.get_definition(WALL)
 	var door: StructureDefinition = catalog.get_definition(DOOR)

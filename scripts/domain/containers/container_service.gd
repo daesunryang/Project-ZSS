@@ -107,6 +107,7 @@ const KEY_CONTAINERS: String = "containers"
 const KEY_ITEMS: String = "items"
 
 const EVENT_ADDED: String = "container_added"
+const EVENT_REMOVED: String = "container_removed"
 const EVENT_CHANGED: String = "container_changed"
 const EVENT_SESSION: String = "container_session"
 const EVENT_CONTENTS: String = "container_contents"
@@ -135,6 +136,7 @@ const REASON_SEARCHING: String = "container_searching"
 const REASON_ITEM_NOT_INSIDE: String = "item_not_in_container"
 const REASON_ITEM_NOT_CARRIED: String = InventoryService.REASON_NOT_IN_INVENTORY
 const REASON_CONTAINER_FULL: String = "container_full"
+const REASON_CONTAINER_NOT_EMPTY: String = "container_not_empty"
 ## The world has no container system (ContainerNetModule answers with it).
 const REASON_UNAVAILABLE: String = "containers_unavailable"
 ## Why a session was closed, besides too_far and what blocks the player's
@@ -218,7 +220,7 @@ func get_system_id() -> String:
 ## finite, or outside the play area), unknown_loot_table, cell_not_loaded,
 ## container_source_exists, container_limit, container_id_failed. Success
 ## event: container_added.
-func create_container(world: ServerWorld, definition_id: String, position: Vector3, loot_table_id: String = "", source_key: String = "") -> ActionResult:
+func create_container(world: ServerWorld, definition_id: String, position: Vector3, loot_table_id: String = "", source_key: String = "", structure_id: String = "") -> ActionResult:
 	if world == null:
 		return ActionResult.failure(REASON_UNAVAILABLE)
 	var definition: ContainerDefinition = _definitions.get_definition(definition_id)
@@ -256,9 +258,43 @@ func create_container(world: ServerWorld, definition_id: String, position: Vecto
 	container.source_key = source_key
 	container.created_at = _clock.world_time_sec
 	container.loot_seed = _settings.loot_seed
+	container.structure_id = structure_id
 	_remember(world, container)
 	GameLogger.info("containers", "container created", {"entity_id": container_id, "definition_id": definition_id, "cell_id": container.cell_id, "inventory_id": inventory_id, "loot_table_id": table_id, "source": source_key})
 	return ActionResult.success(_push_row_event(EVENT_ADDED, container))
+
+
+## Removes an empty container as a server rule. Player-built storage uses
+## this when its owning structure is demolished. Seeded containers have no
+## owning structure and are never passed here by the building system.
+func remove_empty_container(world: ServerWorld, container_id: String, structure_id: String = "") -> ActionResult:
+	var reason: String = empty_removal_reason(world, container_id, structure_id)
+	if not reason.is_empty():
+		return ActionResult.failure(reason)
+	var container: ContainerInstance = _containers.get(container_id, null)
+	for player_id: String in _sessions.keys():
+		if _sessions[player_id].container_id == container_id:
+			_close(_sessions[player_id], REASON_CONTAINER_GONE)
+	var event: Dictionary = _push_row_event(EVENT_REMOVED, container)
+	world.inventory.release_detached_inventory(container.inventory_id)
+	_sources.erase(container.source_key)
+	_containers.erase(container_id)
+	world.cell_index.remove(container_id)
+	_registry.remove(container_id)
+	GameLogger.info("containers", "container removed", {"entity_id": container_id, "structure_id": structure_id, "operation": "remove_empty_container"})
+	return ActionResult.success(event)
+
+
+## Pure preflight for remove_empty_container. Empty means removal is safe.
+func empty_removal_reason(world: ServerWorld, container_id: String, structure_id: String = "") -> String:
+	var container: ContainerInstance = _containers.get(container_id, null)
+	if world == null or container == null:
+		return REASON_UNKNOWN_CONTAINER
+	if not structure_id.is_empty() and container.structure_id != structure_id:
+		return REASON_UNKNOWN_CONTAINER
+	if not world.inventory.items_in_inventory(container.inventory_id).is_empty():
+		return REASON_CONTAINER_NOT_EMPTY
+	return ""
 
 
 # ------------------------------------------------------------ player requests

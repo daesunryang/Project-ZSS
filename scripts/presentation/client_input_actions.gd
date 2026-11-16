@@ -52,6 +52,7 @@ const BUILD_MODE: StringName = &"toggle_build_mode"
 const BUILD_FLOOR: StringName = &"build_floor"
 const BUILD_WALL: StringName = &"build_wall"
 const BUILD_DOOR: StringName = &"build_door"
+const BUILD_STORAGE_BOX: StringName = &"build_storage_box"
 const BUILD_ROTATE: StringName = &"build_rotate"
 const BUILD_DELIVER: StringName = &"build_deliver"
 const BUILD_WORK: StringName = &"build_work"
@@ -99,6 +100,7 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 		_add_key_action(BUILD_FLOOR, presentation.build_floor_key, settings.input_deadzone)
 		_add_key_action(BUILD_WALL, presentation.build_wall_key, settings.input_deadzone)
 		_add_key_action(BUILD_DOOR, presentation.build_door_key, settings.input_deadzone)
+		_add_key_action(BUILD_STORAGE_BOX, presentation.build_storage_box_key, settings.input_deadzone)
 		_add_key_action(BUILD_ROTATE, presentation.build_rotate_key, settings.input_deadzone)
 		_add_key_action(BUILD_DELIVER, presentation.build_deliver_key, settings.input_deadzone)
 		_add_key_action(BUILD_WORK, presentation.build_work_key, settings.input_deadzone)

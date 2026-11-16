@@ -22,6 +22,8 @@ const PLANK: String = ConstructionTestKit.PLANK
 const NAIL: String = ConstructionTestKit.NAIL
 const WALL: String = ConstructionTestKit.WALL
 const FLOOR: String = ConstructionTestKit.FLOOR
+const STORAGE_BOX: String = "test_storage_box"
+const STORAGE_CONTAINER: String = "test_storage_box_container"
 const FREE_WALL: String = ConstructionTestKit.FREE_WALL
 const ENDLESS_WALL: String = ConstructionTestKit.ENDLESS_WALL
 const LOW_X: int = StructureGrid.Layer.EDGE_LOW_X
@@ -70,6 +72,19 @@ func before_each() -> void:
 	_config.structures = ConstructionTestKit.structures()
 	_config.structures.get_definition(WALL).build_work_sec = WALL_WORK_SEC
 	_config.structures.get_definition(FLOOR).build_work_sec = WALL_WORK_SEC
+	var storage: StructureDefinition = StructureDefinition.new()
+	storage.definition_id = STORAGE_BOX
+	storage.display_name = STORAGE_BOX
+	storage.placement = StructureDefinition.Placement.TILE
+	storage.build_costs = {PLANK: 2}
+	storage.build_work_sec = 0.3
+	storage.container_definition_id = STORAGE_CONTAINER
+	_config.structures.add(storage)
+	_config.container_definitions = ContainerCatalog.new()
+	var storage_container: ContainerDefinition = ContainerDefinition.new()
+	storage_container.definition_id = STORAGE_CONTAINER
+	storage_container.slot_count = 4
+	_config.container_definitions.add(storage_container)
 	# The shipped rule: a placement is a blueprint.
 	_config.building = BuildingSettings.new()
 	_config.structure_net = StructureNetSettings.new()
@@ -147,6 +162,23 @@ func _net(service: NetworkService) -> StructureNetModule:
 
 func _inventory_net(service: NetworkService) -> InventoryNetModule:
 	return service.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule
+
+
+func _container_net(service: NetworkService) -> ContainerNetModule:
+	return service.get_module(ContainerNetModule.MODULE_NAME) as ContainerNetModule
+
+
+func _container_answer(client: NetworkService, send: Callable) -> Array:
+	var rows: Array[Array] = []
+	var module: ContainerNetModule = _container_net(client)
+	var listener: Callable = func(request_id: int, ok: bool, reason: String) -> void: rows.append([request_id, ok, reason])
+	module.container_result.connect(listener)
+	var request_id: int = send.call()
+	if not await _eventually(func() -> bool: return not rows.is_empty()):
+		module.container_result.disconnect(listener)
+		return [false, "no_answer"]
+	module.container_result.disconnect(listener)
+	return [rows[0][1], rows[0][2]] if rows[0][0] == request_id else [false, "wrong_request_id"]
 
 
 func _mirror(service: NetworkService) -> ClientStructureState:
@@ -890,6 +922,51 @@ func test_returned_materials_appear_as_world_items_for_the_clients_that_see_the_
 	_player(c).position = SPAWN
 	assert_true(await _eventually(func() -> bool: return c.client_state.world_items.size() == 1), "carol sees the nails that are left when she comes")
 	assert_eq(c.client_state.world_items, b.client_state.world_items, "the same as bob, who stood there all along")
+	_clean([a, b, c])
+
+
+# ------------------------------------------------------------ built storage box
+
+func test_built_storage_box_supports_put_take_interest_and_safe_demolition() -> void:
+	assert_true(_start(), "server started")
+	var build_material: String = _lay(PLANK, 2)
+	var stored_item: String = _lay(PLANK, 1)
+	var clients: Array[NetworkService] = await _join_two()
+	if clients.is_empty():
+		return
+	var a: NetworkService = clients[0]
+	var b: NetworkService = clients[1]
+	var c: NetworkService = await _cluster.join_client("carol")
+	assert_not_null(c)
+	_player(c).position = FAR_SPOT
+	assert_true(await _eventually(func() -> bool: return c.client_state.position_of(_id(c)).distance_to(FAR_SPOT) < 0.01))
+	await _pick_up(a, [build_material])
+	await _pick_up(b, [stored_item])
+
+	var structure_id: String = str((await _place(a, STORAGE_BOX, NORTH))[2])
+	assert_eq(await _deliver(a, structure_id), [true, "", structure_id])
+	assert_eq(await _work(a, structure_id, true), [true, "", structure_id])
+	assert_true(await _eventually(func() -> bool: return _building().get_structure(structure_id).construction_state == StructureInstance.State.COMPLETED))
+	var container_id: String = _building().get_structure(structure_id).container_id
+	assert_false(container_id.is_empty())
+	assert_true(await _eventually(func() -> bool: return _container_net(a).client_state.has_container(container_id) and _container_net(b).client_state.has_container(container_id)))
+	assert_false(_container_net(c).client_state.has_container(container_id), "a far client never receives the container row")
+
+	assert_eq(await _container_answer(b, func() -> int: return _container_net(b).request_open(container_id)), [true, ""])
+	assert_eq(await _container_answer(b, func() -> int: return _container_net(b).request_put(container_id, stored_item, 1)), [true, ""])
+	assert_true(await _eventually(func() -> bool: return _container_net(b).client_state.contents().size() == 1))
+	assert_eq(_container_net(c).client_state.contents().size(), 0, "contents are sent only to an opener, never to the far client")
+	assert_eq(await _demolish(a, structure_id), [false, ContainerService.REASON_CONTAINER_NOT_EMPTY, ""])
+
+	assert_eq(await _container_answer(a, func() -> int: return _container_net(a).request_open(container_id)), [true, ""])
+	assert_true(await _eventually(func() -> bool: return _container_net(a).client_state.contents().size() == 1))
+	var inside_id: String = str(_container_net(a).client_state.contents()[0][ClientContainerState.KEY_ITEM_ID])
+	assert_eq(await _container_answer(a, func() -> int: return _container_net(a).request_take(container_id, inside_id, 1)), [true, ""])
+	assert_true(await _eventually(func() -> bool: return _container_net(a).client_state.contents().is_empty()))
+	assert_eq(await _demolish(a, structure_id), [true, "", structure_id])
+	assert_true(await _eventually(func() -> bool: return not _mirror(a).has_structure(structure_id) and not _container_net(a).client_state.has_container(container_id)))
+	assert_false(_building().has_structure(structure_id))
+	assert_false((_world.get_system(ContainerService.SYSTEM_ID) as ContainerService).has_container(container_id))
 	_clean([a, b, c])
 
 
