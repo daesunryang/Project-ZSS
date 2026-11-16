@@ -189,3 +189,80 @@ Phase 2는 단일 조정자(Opus)가 티켓을 쪼개고 병합한다. 설계 �
 | P3-5 | 청사진·자재·완공: 청사진 상태, 자재 투입, 작업 진행, 완공, 취소·철거 환급 (지을 수 있는 보관 상자는 보관함이 생기는 P3-3으로 옮겼다) | `scripts/domain/building/`, `scripts/domain/inventory/inventory_service.gd`(트랜잭션 둘), `scripts/services/multiplayer/structure_net_*.gd`·`client_structure_state.gd` | Fable·Opus | 서버·네트워크 완료. 계약 docs/09 §15.5, 임시 가정 docs/15 §15.5. `PROTOCOL_VERSION` 14. 구조물·작업자도 P3-2의 관심 셀로 거른다(docs/15 P3-056 해소, P3-057~P3-060). 클라이언트 표시·입력은 P3-4b |
 | P3-6 | 내비게이션 갱신: 구조물·문 변화가 좀비 경로와 시야에 반영(영향 영역만 갱신) | `scripts/domain/navigation/`, `scripts/domain/zombie/` | Fable·Codex·Opus | 완료 — 서버 전용(프로토콜·저장 변경 없음). 전역 메시 없는 격자 경로 탐색(`NavigationService`, `building` 뒤 등록), 재개 가능한 검색과 결정적 노드 예산(검색당 2048, 틱당 48, 검색별 8, FIFO 라운드로빈), 완공 벽·닫힌 문이 좀비 경로·시야·근접 공격을 막음(청사진·열린 문·보관 상자는 막지 않음, 소음은 통과), 테스트 맵 건물에서 문으로 드나듦을 확인. 계약 docs/09 §15.6, 결정 기록 docs/00 ADR-027, 임시 가정·측정값 docs/15 §15.6 |
 | P3-Z | Phase 3 수용 시나리오: 셀 이동·저장·복구, 두 플레이어가 같은 구조물을 봄. `tests/scenarios/phase3_acceptance_test.gd`(테스트 6개, 전용 서버와 같은 조립: 실제 파일·개발용 시드·테스트 맵): 셀 경계를 넘는 이동과 셀 활성·해제·재로딩, 청사진→자재→작업→완공을 두 클라이언트가 단계마다 같게 봄과 벽이 두 사람의 이동을 막음, 테스트 맵 문, 보관함 넣기·꺼내기와 정보 공개 범위, 닫힌 문 밖 좀비, 일부 셀이 내려간 채 저장 → 서버 재시작 → 복구(수량 보존·맵 재시드 없음·루팅 재굴림 없음), 조작된 요청. 수용 항목 대응표는 docs/12 §7, 검증하지 못한 항목은 docs/15 §15.9. 게임 코드 변경 없음 | `tests/scenarios/` | Fable | 완료 |
+
+## 16. Phase 4 티켓 계획 (2026-11-17 초안)
+
+사용자 지시: "지금부터 쭉 작업을 진행하고 마지막에 수치랑 규칙 조정을 하자", "에이전트들 활용많이해서 빠르게 해". 그래서 Phase 4는 아래 "결정이 필요한 것"의 **임시 기본값으로 바로 시작**하고, 수치·규칙은 Phase 4가 끝난 뒤 한꺼번에 조정한다. 진행 방식은 §14·§15와 같다(한 티켓 한 핵심 목표, `tools/check.sh` 통과 후 main 병합, 공유 조립 파일과 문서는 조정자가 병합 때 정리). 근거 문서: docs/05 전체, docs/16, docs/09 §7·§8·§14.5·§15.1·§15.2·§15.6, docs/14 §3·§6, docs/00 ADR-003·005·009·023·027. 계약은 docs/09 새 절(§17 예정), 임시 가정은 docs/15 새 절(번호 `P4-xxx`)에 티켓마다 적는다.
+
+Phase 4의 완료 기준(§6): NPC 5명이 자율적으로 먹고 마시고 쉬고 일하며, 저장 → 서버 재시작 → 복구 뒤 같은 상태로 이어 간다. 사회 행동(대화·도움·갈등·연애·범죄)은 Phase 5다. Phase 4는 감정·기억·관계를 **데이터 구조와 저장**까지만 만든다.
+
+### 16.1 티켓
+
+| 티켓 | 핵심 목표 | 소유 영역 | 담당 | 상태 |
+|---|---|---|---|---|
+| P4-1 | NPC 정체성·정적 정의·고유 ID·셀 저장. `NpcDefinition`(Resource: 이름, 외형 선택지 ID, 나이대, 배경 태그, 성격 11축(docs/05 §3, 0~1), 능력(docs/05 §2.2), 업무 역할, 집·작업 지점 참조), 런타임 `NpcState`(`npc_<번호>`, `definition_id`, 위치·방향, `simulation_tier`, NPC별 RNG seed/state, 구성 요소 문서 슬롯), 새 ServerSystem `npc`(`NpcService`: 생성·조회·제거, `cell_index` 종류 `npc`, 셀 훅 다섯과 셀 문서 `systems.npc`, 떠돌이·월드 문서, 고유 ID 은퇴 규칙), 구성 요소 계약 `NpcComponent`(`component_id`, `to_document`/`restore_document`, `schema_version`: 뒤 티켓이 `NpcState`를 고치지 않고 파일을 더하는 자리), 개발용 NPC 5명 명단(`resources/definitions/npcs/`)과 월드마다 한 번 배치(맵 콘텐츠처럼 world_state에 기록, 테스트 조립 기본은 없음), NPC 시드 = 월드 시드 + NPC ID(엔진 전역 난수 금지). 아직 생각하지도 움직이지도 않는다 | `scripts/domain/npc/`(`npc_definition.gd`·`npc_state.gd`·`npc_service.gd`·`npc_component.gd`·`npc_settings.gd`), `resources/definitions/npcs/`, `data/tuning/npc_settings.tres`, `scripts/core/server_composition.gd`·`composition_config.gd`(등록 한 줄씩), `tests/unit/npc_state_test.gd`·`npc_cell_persistence_test.gd` | Opus(Fable 권장이나 11-18 23:00 전 착수) | 계획 |
+| P4-2 | 욕구 모델: hunger·thirst·fatigue 세 욕구의 달력 시간(ADR-006) 증가와 범주(정상/주의/위험), 활동별 변화율(쉬는 중 fatigue 감소, 일하는 중 증가 가속), 성격·능력 modifier 자리(기본 1.0), **구간 적분**(`SurvivalService`와 같은 방식: 갱신 주기가 1초든 10초든 같은 결과, 다음 범주 경계 시각을 계산해 돌려줌), 욕구 감소 API(`satisfy(kind, amount, source)`), 구성 요소 `needs` 저장. 나머지 욕구(warmth, hygiene, 사회·자율 욕구)는 정의 데이터에만 있고 변화율 0(docs/16 B에서 확정) | `scripts/domain/npc/needs/`, `data/tuning/npc_need_settings.tres`, `tests/unit/npc_needs_test.gd` | Codex | 계획 |
+| P4-3 | AI 스케줄러: 갱신 종류별 주기 분리(CLAUDE.md §6, docs/09 §7) — 욕구 평가·행동 재평가·경로 계획·이동·복제를 서로 다른 주기와 예산으로. 기존 `BucketScheduler`로 결정 버킷(근거리·원거리 두 단계), 틱당 결정 상한, 이벤트 인터럽트 큐(긴급 사건은 주기를 기다리지 않음, 한 NPC당 틱 1회), NPC LOD 단계 판정(가까운 플레이어와의 거리, ACTIVE 셀만 시뮬레이션), **다음 결정 시각·버킷 위상을 저장**(P2-31 좀비와 달리 저장을 사이에 둔 연속 실행과 복구 실행이 같게), 진단값(틱당 결정 수, 인터럽트 수, 단계별 NPC 수, NPC 단계 처리 시간). 결정 함수 자체는 주입받는다(P4-4 전에는 "결정 없음") | `scripts/domain/npc/scheduling/`, `data/tuning/npc_schedule_settings.tres`, `tests/unit/npc_scheduler_test.gd` | Opus → Fable 권장(11-18 23:00 뒤 검토) | 계획 |
+| P4-4 | 행동 선택: 하드 인터럽트 + 정규화된 Utility + 제한된 상태 머신(docs/05 §9·§10). 후보 행동 정의(Resource: 선행조건, 기본 우선순위, 욕구·성격·환경 항 가중치), 항마다 범위 [0,1] 고정과 합산식, 동점 해소(점수 → 고정 우선순위 → 행동 ID, RNG 흔들림은 NPC RNG만), 반복·진동 방지(현재 행동 유지 보너스와 최소 지속 시간), 무행동 대체(Idle 배회), 상태 Idle/Evaluate/Plan/Navigate/Perform/Interrupt/Recover와 허용 전이, 실패 사유 코드와 Recover 쿨다운, 첫 하드 인터럽트 "보이는 좀비로부터 도주"(좀비 시야와 같은 선 차단 훅 `ServerWorld.is_line_blocked`), **결정 기록 링 버퍼**(상위 후보와 항별 점수, 고른 행동, 실패 사유: 디버그 오버레이와 테스트의 근거). 관계·기억 항(`relationship_context`, `memory_context`)은 0으로 두고 자리만 둔다(Phase 5) | `scripts/domain/npc/decision/`, `resources/definitions/npc_actions/`, `data/tuning/npc_decision_settings.tres`, `tests/unit/npc_decision_test.gd` | **Fable 권장** | 계획 |
+| P4-5a | 행동 실행 계층: 이동 실행기(기존 `NavigationService.begin_search` 재사용, NPC 전용 FIFO와 틱 노드 예산, 경로 waypoint, 한 걸음마다 `ServerWorld.resolve_movement`), 닫힌 문 처리(경로 탐색 옵션 "문은 지나갈 수 있음"을 `GridPathSearch`에 추가하고, 문 앞에서 서버 규칙 `BuildingService.set_door_open`으로 열고 지나간 뒤 닫음), 지점 예약(침대·작업 지점·급수 지점: 한 지점 한 NPC, 예약 해제 규칙), 경로 실패·대상 사라짐·예약 충돌의 사유 코드. 진행 중 행동과 남은 waypoint는 저장(재계획 없이 이어 가기) | `scripts/domain/npc/behaviours/npc_executor.gd`·`npc_reservations.gd`, `scripts/domain/navigation/grid_path_search.gd`·`grid_path_finder.gd`(옵션 하나), `tests/unit/npc_executor_test.gd` | **Fable 권장**(경로·문·예약의 경계 사례) | 계획 |
+| P4-5b | 기본 행동 다섯: 먹기(지정 보관함에서 음식 한 단위를 자기 인벤토리로 `transfer_item` → 소비로 hunger 감소, 기존 아이템 정의의 소비 효과 재사용), 마시기(급수 지점 데이터, 무한), 쉬기(침대 지점 또는 제자리, 달력 시간으로 fatigue 감소, 위험하면 깸), 일하기(업무 역할·작업 지점·일과 시간대, 행동 시간 누적과 "한 일" 기록. 생산·건축 기여는 Phase 6), 이동·배회. NPC 전용 인벤토리(보관함과 같은 detached inventory, 칸 수 설정), 행동마다 시작·완료·실패 도메인 이벤트 | `scripts/domain/npc/behaviours/`(실행기 제외), `resources/definitions/npc_actions/`(P4-4와 파일 단위로 나눔), `resources/definitions/npc_spots/` 또는 맵 콘텐츠의 NPC 지점, `tests/unit/npc_behaviour_test.gd` | Codex(P4-4·P4-5a 계약 뒤) | 계획 |
+| P4-6 | 감정·기억·관계 데이터 구조(행동은 없음): `NpcEmotions`(docs/05 §5의 13축, 시간 감쇠 반감기 설정, 지연 계산), `NpcMemoryStore`(docs/05 §6 필드: `memory_id`, `event_id`, `event_type`, 참여자와 역할, 장소·달력 시각, 관찰 신뢰도 직접/목격/전언, 중요도, 감정 강도, 반복 횟수, 해석 태그, 강도와 감쇠. NPC당 상한과 중요도 기반 축출, 장기 보호 표시, 같은 `event_id` 통합), `scripts/domain/relationships/`의 `RelationshipState`(docs/14 §3 필드, 방향성: A→B와 B→A 별도 레코드, 대상은 NPC ID 또는 `player_id`)와 `RelationshipStore`(소유 NPC 기준 저장, `status`는 저장만 하고 점수로 자동 변경하지 않음). P4-5b의 이벤트 몇 개(배고픔 해소, 도주)를 작은 기억·감정 변화로 기록해 저장 경로를 실제로 쓴다. 사건 원장(WorldEvent)은 Phase 5: P4는 `event_<번호>` ID만 발급 | `scripts/domain/npc/mind/`, `scripts/domain/relationships/`, `data/tuning/npc_mind_settings.tres`, `tests/unit/npc_mind_test.gd`·`relationship_store_test.gd` | Codex | 계획 |
+| P4-7 | NPC 복제·관심 범위·정보 공개: NetModule `NpcNet`(docs/09 §15.2의 "셀을 옮겨 다니는 엔티티" 방식 = 좀비처럼 접속자별 흐름과 주기적 대조, `npc_entered`/`npc_left`), 공개 행 = ID·이름·외형·위치·방향·**관찰 가능한 행동 라벨**(걷기·먹기·자기·일하기·도주)·자세. 욕구·감정·기억·관계·성격·능력·목표는 보내지 않는다(ADR-009를 NPC에 그대로 적용), 위치 스냅샷 ch2, 이벤트 ch0, 접속 조각, 클라이언트 미러 `ClientNpcState`, 임시 캡슐 표시와 이름표(묶음 그리기, §16.2 방식), `PROTOCOL_VERSION` 올림 | `scripts/services/multiplayer/npc_net_*.gd`·`client_npc_state.gd`, `scripts/presentation/npc_*.gd`, `scripts/core/build_info.gd`, `tests/integration/npc_net_test.gd` | Codex(패턴 확정, Opus 검토) | 계획 |
+| P4-8 | AI 디버그 오버레이(docs/05 §17): 서버 쪽 조회(`NpcDebugQuery`: 상태·목표·행동, 상위 후보와 항별 점수, 욕구·감정·관계 수치, 마지막 기억, 취소·실패 사유, 현재 경로와 목적지, LOD 단계, seed와 리플레이 식별자), **개발용 서버 설정이 켜졌을 때만** 허용된 접속자에게만 보내는 디버그 구독 RPC(기본 꺼짐: 전용 서버에서는 꺼짐, 테스트·개발 조립에서 켬. 꺼져 있으면 조회 자체를 하지 않음), 클라이언트 패널(F-키, 바라보는 NPC 선택)과 월드 위 경로선, 헤드리스 텍스트 덤프(테스트·soak 로그용) | `scripts/domain/npc/debug/`, `scripts/services/multiplayer/npc_debug_net_*.gd`, `scripts/presentation/npc_debug_*.gd`, `scenes/main/client_view.tscn`, `tests/unit/npc_debug_query_test.gd`, `tests/integration/npc_debug_net_test.gd` | Codex(서버 조회·RPC) + Antigravity/Codex(패널 UI) | 계획 |
+| P4-Z | Phase 4 수용 시나리오: 전용 서버와 같은 조립(테스트 맵·개발용 NPC 5명·고정 seed)에서 NPC 5명이 **달력 3일**(24배속 = 실제 3시간, 헤드리스 고정 틱으로 가속) 동안 지시 없이 먹고 마시고 쉬고 일함(욕구가 위험 범주에 머무는 시간 상한, 행동 정체 없음: 같은 실패 반복 상한), 좀비를 보면 업무 중단·도주, 같은 seed 두 번 실행의 결정 기록 일치, 1.5일째 저장 → 서버 재시작 → 복구 → 이어 간 실행과 끊지 않은 실행의 최종 상태 해시 일치, 셀 해제 → 재로딩 왕복, 두 클라이언트가 같은 NPC 행을 보고 비공개 값이 전선에 없음, 측정 테스트(NPC 5/25/50명, 100명은 환경 변수로만). 장시간 soak(달력 10일)은 환경 변수로만 | `tests/scenarios/phase4_acceptance_test.gd`, `tests/unit/npc_measure_test.gd`, 시나리오에서 찾은 결함 수정만 | Fable(11-18 23:00 뒤) | 계획 |
+
+### 16.2 병렬 계획과 담당
+
+파일 소유가 겹치지 않도록 NPC 도메인을 하위 폴더로 나눈다(`npc/` 루트 = P4-1, `needs/` = P4-2, `scheduling/` = P4-3, `decision/` = P4-4, `behaviours/` = P4-5a·P4-5b(파일 단위), `mind/`·`relationships/` = P4-6, `debug/` = P4-8). `NpcState`·`NpcService`는 P4-1만 고치고, 뒤 티켓은 `NpcComponent`와 `NpcService`가 받는 주입 지점(욕구 모델, 스케줄러, 결정 함수, 실행기)에 **파일을 더한다**. `server_composition.gd`·`composition_config.gd`·`build_info.gd`와 문서는 조정자가 병합 때 정리한다(§14 병렬 규칙).
+
+| 단계 | 동시에 진행 | 선행 조건 |
+|---|---|---|
+| 1 | P4-1 | 없음. 첫날 `NpcState`·`NpcComponent`·`NpcService` 주입 지점의 계약(docs/09 초안)만 먼저 병합하면 2단계가 바로 시작된다 |
+| 2 | P4-2, P4-3, P4-6, P4-7 | P4-1 계약. P4-7은 행동 라벨을 "idle" 고정으로 시작하고 P4-4 뒤 값만 채운다 |
+| 3 | P4-4, P4-5a | P4-2(욕구 범주·경계 시각), P4-3(주기·인터럽트). P4-5a는 P4-3만 있으면 되고 P4-4와 동시에 간다 |
+| 4 | P4-5b, P4-8 | P4-4의 후보 행동 계약과 P4-5a의 실행기. P4-8의 패널 UI는 P4-4 결정 기록 형식만 정해지면 가짜 데이터로 먼저 만든다 |
+| 5 | P4-Z | 전부 |
+
+모델 배정(사용자 규칙: 설계가 무거운 일은 Fable, Fable은 2026-11-18 23:00부터 다시 사용 가능):
+
+- **Fable 권장**: P4-4(행동 선택 수식·상태 머신·결정론), P4-5a(경로·문·예약의 경계 사례), P4-3 검토(주기·저장 위상), P4-Z. Fable이 돌아오기 전에는 P4-4의 후보 행동 표와 정규화 규칙 초안만 Opus가 docs/09에 쓰고, 구현은 Fable에 넘긴다.
+- **11-18 23:00 전에 진행**: P4-1(Opus), P4-2·P4-6·P4-7(Codex, 각자 계약이 docs/05·docs/14·docs/09 §15.2에 이미 있다), P4-3(Opus 구현, 뒤에 Fable 검토).
+- **Codex 단독 가능**(계약이 정해져 있고 파일이 닫혀 있음): P4-2, P4-6, P4-7, P4-5b, P4-8 서버 쪽. P4-8 패널은 UI 담당(Antigravity) 가능.
+
+### 16.3 결정이 필요한 것 (임시 기본값으로 시작)
+
+아래는 문서가 열어 둔 것 중 Phase 4를 막거나 모양을 바꾸는 것이다. 사용자 지시대로 기본값으로 진행하고, 끝난 뒤 수치·규칙 조정 때 한꺼번에 묻는다. 티켓 착수 때 docs/15 `P4-xxx` 항목으로 옮긴다. NPC AI 심화 영역과의 대응은 docs/16 §6.
+
+| # | 질문 | 임시 기본값 | 바꾸면 영향받는 티켓 |
+|---|---|---|---|
+| D1 | 서버당 NPC 수(docs/00 §8 "NPC 최대 인구") | 기능 목표 5명, 예산 설계 기준 25명, 설정 상한 50명(넘는 스폰은 거부·로그). 100명은 측정만 | P4-1, P4-3, P4-Z |
+| D2 | NPC가 아이템을 줍거나 소유하는가 | 소유한다: NPC마다 작은 전용 인벤토리(보관함과 같은 detached inventory). 먹을 것은 **지정된 보관함**에서 `transfer_item`으로 가져와 바로 소비한다. 바닥 아이템 줍기·남의 것 가져가기·플레이어와의 거래는 없음(절도는 Phase 5) | P4-5b, P4-6 |
+| D3 | NPC가 죽거나 감염·좀비화하는가 | Phase 4에서는 **죽지 않는다**: 좀비는 NPC를 목표로 삼지 않고(좀비 코드 변경 없음), 욕구가 최대여도 체력 피해 없이 행동 페널티(업무 거부)만 생긴다. NPC는 보이는 좀비로부터 도주한다(인터럽트 경로 검증용). 부상·감염·사망·좀비화는 별도 티켓(Phase 5 또는 7) | P4-4, P4-5b |
+| D4 | 원거리·오프라인 시뮬레이션(CLAUDE.md §6, docs/16 K) | ACTIVE 셀의 NPC만 시뮬레이션하고 나머지는 좀비처럼 그대로 멈춘다(ADR-023과 같다). `last_simulated_world_time`을 저장해 두고 요약 따라잡기는 docs/16 K 설계 뒤 별도 티켓. 접속자 0명이면 시계가 멈춘다(기존) | P4-1, P4-3 |
+| D5 | NPC는 어디서 오는가 | 개발용 명단 5명을 월드마다 한 번, 테스트 맵 건물 안 지점에 배치(맵 콘텐츠와 같은 방식, world_state에 기록). 모집·이주·출생 없음 | P4-1 |
+| D6 | 플레이어가 NPC에게 업무를 지시하는가 | Phase 4에서는 없다. 업무 역할·작업 지점·일과는 정의 데이터. 지시 의도(`AssignNpcJob`, docs/14 §5)는 쉘터와 함께 Phase 6 | P4-5b |
+| D7 | 쉘터가 없는데 "집·식량 창고·작업장"은 무엇인가 | 맵 콘텐츠 데이터에 NPC 지점(침대, 작업, 급수)과 식량 보관함 ID를 둔다. 소유권·배급 규칙 없음 | P4-1, P4-5a, P4-5b |
+| D8 | NPC가 문을 여닫는가 | 연다: 경로 탐색은 문을 지나갈 수 있는 변으로 보고, 문 앞에서 서버 규칙으로 열고 지나간 뒤 닫는다(좀비 차단 유지). 문 상태 변화는 플레이어가 연 것과 같이 공개 | P4-5a |
+| D9 | 다른 플레이어에게 보이는 NPC 정보 | ADR-009를 NPC에 그대로: 이름·외형·위치·자세·관찰 가능한 행동 라벨만. 욕구·감정·기억·관계·성격은 아무에게도 보내지 않고, 디버그 오버레이는 개발 설정이 켜진 서버의 허용된 접속자에게만 | P4-7, P4-8 |
+| D10 | NPC 시간 기준 | ADR-006대로: 욕구 변화·수면 회복·일과 시간대는 달력 시간(하루 = 실제 1시간), 걷기·먹는 동작·작업 진행·재계획 간격은 행동 시간(실제 초) | P4-2, P4-3, P4-5b |
+| D11 | "저장 후 복구가 같다"의 강도 | 강한 동일성: 다음 결정 시각, 진행 중 행동, 남은 waypoint, 예약, NPC RNG 상태를 저장해 "끊지 않은 실행"과 "1.5일째 저장 → 재시작 → 이어 간 실행"의 최종 상태가 같다. 진행 중이던 경로 **검색**만은 저장하지 않으므로, 저장 시점에 검색 중이던 NPC는 복구 뒤 새로 검색한다(같은 입력이면 같은 결과라 상태는 같다) | P4-3, P4-5a, P4-Z |
+| D12 | NPC와 몸 충돌 | 지금의 플레이어·좀비와 같이 점으로 움직이고 서로 통과한다. 구조물 충돌만 적용 | P4-5a |
+| D13 | 욕구 목록 | hunger·thirst·fatigue만 변화. 안전은 저장하지 않는 파생 값(보이는 위협). 나머지 욕구는 데이터에만 있고 변화율 0 | P4-2, P4-4 |
+
+### 16.4 성능 예산 제안 (측정 전 목표, 보장값 아님)
+
+기준: 서버 물리 틱 60Hz(16.7ms). 지금 측정된 비용(docs/15 §15.6·§16): 40m 벽 앞 추격 좀비 100마리의 서버 틱 전체 중앙값 3.6ms·최악 6.1ms(경로 계획 1.7ms, 틱 48노드), 좀비 복제는 스냅샷 틱(10Hz)마다 1.5ms, 관심 셀 갱신은 틱의 0.2%, 저장 요청의 메인 스레드 문서 생성 22~27ms(구조물 370개). 즉 좀비 100마리 기준으로 틱의 절반 이상이 남아 있다. NPC는 다음 안에 들어오게 만든다.
+
+| 항목 | 주기/예산(설정값) | 근거 |
+|---|---|---|
+| NPC 단계 전체 | NPC 25명에서 틱당 중앙값 ≤ 1.0ms, 최악 ≤ 2.0ms. 5명에서 중앙값 ≤ 0.3ms | 좀비 100마리 최악 6.1ms + 좀비 복제 1.5ms + NPC 2ms가 틱의 60% 안 |
+| 이동 | 매 틱, waypoint가 있는 NPC만. 걸음마다 `resolve_movement` 한 번 | 좀비와 같은 비용(걸음당 수 µs) |
+| 욕구 평가 | 매 틱 하지 않는다. 결정 틱에 구간 적분으로 따라잡고, 다음 범주 경계 시각을 인터럽트 큐에 예약 | 주기와 무관한 결과(P4-2), 빈 틱 비용 0 |
+| 행동 재평가 | 근거리(가장 가까운 플레이어 30m 이내) 2초, 원거리 10초, 버킷 10개, 틱당 결정 상한 2. 현재 행동 완료·실패·인터럽트 때는 다음 틱에 즉시(상한 안에서) | docs/05 §11의 1~3초 / 5~15초 |
+| 경로 계획 | NPC 전용 FIFO, 틱 전체 24노드, 검색별 틱 8노드, 틱당 계획 4개, 검색당 누적 2048노드·반경 60m(좀비 설정 재사용), NPC별 최소 재계획 간격 1초 | 좀비 48노드와 합쳐 72노드: 측정된 48노드 ≈ 1.7ms 비율로 계획 합계 ≈ 2.6ms 이하 |
+| 감정·기억 감쇠 | 저장된 시각에서 지연 계산(조회·결정 때만). 기억 NPC당 64개 상한 | 매 틱 비용 0 |
+| 복제 | NPC 위치 스냅샷 5Hz(ch2), 행동 라벨 변화는 이벤트(ch0), 관심 셀 대조는 스냅샷 틱에만 | 좀비 10Hz의 절반. NPC는 좀비보다 느리고 적다 |
+| 디버그 오버레이 | 꺼져 있으면 0. 켜져 있으면 구독한 NPC 하나를 2Hz | 개발 전용 |
+| 저장 | 25명의 NPC 문서 생성 ≤ 2ms(메인 스레드), 파일 쓰기는 PERF-1 워커 | 현재 저장 요청 22~27ms에 10% 이하 추가 |
+
+측정은 P4-Z의 `npc_measure_test.gd`(5/25/50명, 같은 맵, 25회 중앙값/최악)와 진단값(`last_npc_step_msec`, 틱당 결정 수, 계획 노드 수)으로 한다. 전용 서버 성능 모니터(`server/npc_step_time_ms`)를 더하려면 `network_service.gd`의 모니터 등록을 고쳐야 하므로(PERF-1) 조정자가 P4-Z 때 결정한다. 예산을 넘으면 먼저 원거리 재평가 주기와 틱당 결정 상한을 늘리고, 그래도 넘으면 docs/16 L로 올린다.
