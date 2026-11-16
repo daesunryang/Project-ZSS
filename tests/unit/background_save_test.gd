@@ -196,7 +196,7 @@ func test_background_request_measures_only_the_main_thread_build_cost() -> void:
 	persistence.request_save(world)
 	var request_msec: float = float(Time.get_ticks_usec() - started_usec) / 1000.0
 	print("[measure] background_save_request_main_thread_ms=%.3f build_ms=%.3f" % [request_msec, persistence.last_save_build_msec])
-	assert_true(request_msec < 100.0, "370-structure test map, generous regression bound: %.3f ms" % request_msec)
+	assert_time_bound(request_msec, 100.0, "370-structure test map save request on the main thread")
 	assert_true(persistence.last_save_build_msec <= request_msec + 1.0)
 	writer.gate.post()
 	assert_true(await _wait_until(func() -> bool: return not persistence.is_save_in_flight()))

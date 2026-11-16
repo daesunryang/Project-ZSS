@@ -50,8 +50,8 @@ func test_measure_open_area_and_long_wall_searches() -> void:
 	var open_median: float = _median(open_samples)
 	var wall_median: float = _median(wall_samples)
 	print("[measure] P3-6d one-slice search: open 60x60 %.3f -> %.3f ms median; around 40 m wall %.3f -> %.3f ms median, %.3f ms worst (%d runs each)" % [BEFORE_OPEN_MEDIAN_MS, open_median, BEFORE_WALL_MEDIAN_MS, wall_median, _maximum(wall_samples), RUNS])
-	assert_true(open_median < 10.0, "generous regression bound: %.3f ms" % open_median)
-	assert_true(wall_median < 25.0, "generous regression bound: %.3f ms" % wall_median)
+	assert_time_bound(open_median, 10.0, "open 60x60 search median")
+	assert_time_bound(wall_median, 25.0, "40 m wall search median")
 
 
 func test_measure_optional_search_time_safety_valve() -> void:
@@ -125,4 +125,4 @@ func test_measure_tick_with_one_hundred_chasers_at_a_wall() -> void:
 	var tick_median: float = _median(samples)
 	print("[measure] P3-6d 100-chaser wall tick with default %d-node budget: %.3f ms median, %.3f ms worst; planning %.3f ms median, %.3f ms worst, %.0f nodes median (%d ticks, %d planning ticks, %d searches; pre-P3-6b %.3f ms)" % [config.navigation.max_planning_nodes_per_tick, tick_median, _maximum(samples), _median(planning_samples), _maximum(planning_samples), _median(node_samples), RUNS, planned_ticks, zombies.total_plan_count, BEFORE_TICK_MS])
 	assert_true(planned_ticks > 0 and zombies.total_plan_count > 0)
-	assert_true(tick_median < 40.0, "generous regression bound: %.3f ms" % tick_median)
+	assert_time_bound(tick_median, 40.0, "100-chaser wall tick median")

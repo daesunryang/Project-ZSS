@@ -35,6 +35,19 @@ func assert_true(condition: bool, message: String = "") -> void:
 		_fail("expected true", message)
 
 
+## Upper bound on a REAL-TIME measurement (milliseconds). Real time depends on
+## the machine and on everything else it runs, so by default this only warns
+## (docs/12 §1.1); set ZSS_STRICT_TIMING=1 to make it a failing assertion,
+## e.g. on a quiet machine before recording numbers in docs/15.
+func assert_time_bound(value_ms: float, bound_ms: float, message: String = "") -> void:
+	if OS.get_environment("ZSS_STRICT_TIMING") == "1":
+		assert_true(value_ms < bound_ms, "%s: %.3f ms (bound %.3f ms)" % [message, value_ms, bound_ms])
+		return
+	_assertion_count += 1
+	if value_ms >= bound_ms:
+		print("[timing] WARNING over bound (not failing; ZSS_STRICT_TIMING=1 makes it fail): %s: %.3f ms (bound %.3f ms)" % [message, value_ms, bound_ms])
+
+
 func assert_false(condition: bool, message: String = "") -> void:
 	_assertion_count += 1
 	if condition:
