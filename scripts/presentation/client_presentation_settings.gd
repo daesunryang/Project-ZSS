@@ -145,6 +145,44 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.0001, 1.0) var cell_overlay_label_pixel_size: float = 0.02
 @export_range(1, 256) var cell_overlay_label_font_size: int = 48
 
+## Containers (P3-3, docs/00 ADR-021, ADR-026; docs/15 P3-083..P3-086). The
+## open key asks the server to open the nearest container in reach, or to
+## close the one that is open (or being searched).
+@export var container_open_key: Key = KEY_H
+## The cursor on the stacks inside the open container: previous / next
+## (local only, nothing is sent).
+@export var container_previous_key: Key = KEY_J
+@export var container_next_key: Key = KEY_K
+## Takes `container_transfer_quantity` units of the stack under the container
+## cursor into the inventory.
+@export var container_take_key: Key = KEY_U
+## Puts `container_transfer_quantity` units of the stack under the INVENTORY
+## cursor (select_previous_key / select_next_key) into the open container.
+## Held with `drop_stack_modifier_key`, both keys move the whole stack.
+@export var container_put_key: Key = KEY_I
+@export_range(1, 10000) var container_transfer_quantity: int = 1
+## Local flood guard between two container requests of any kind (the server
+## has its own).
+@export_range(0.01, 5.0) var container_min_interval_sec: float = 0.2
+## The container named in the HUD and by the open key: the nearest one
+## within this distance of the local player, in the mirror. Only a
+## suggestion: the server checks its own positions and range
+## (ContainerSettings.interact_range_m).
+@export_range(0.1, 50.0) var container_candidate_range_m: float = 2.5
+## Stacks of the open container listed in the HUD; the rest is counted.
+@export_range(1, 50) var hud_container_line_count: int = 6
+## Placeholder of a container: a box with a billboard label (its name, and
+## "수색 전" until somebody searched it). Edge length of the box, its colour
+## before and after the search, distance of the label above it, world size of
+## one font pixel, font size and colour of the label.
+@export_range(0.01, 5.0) var container_marker_size_m: float = 0.7
+@export var container_marker_color: Color = Color(0.55, 0.38, 0.20, 1.0)
+@export var container_searched_marker_color: Color = Color(0.34, 0.32, 0.30, 1.0)
+@export_range(0.0, 5.0) var container_label_margin_m: float = 0.25
+@export_range(0.0001, 0.1) var container_label_pixel_size: float = 0.006
+@export_range(1, 256) var container_label_font_size: int = 36
+@export var container_label_color: Color = Color(0.85, 0.95, 1.0, 1.0)
+
 
 func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
@@ -220,8 +258,22 @@ func validate() -> PackedStringArray:
 		errors.append("cell_overlay_radius_cells must be >= 0")
 	if not is_finite(cell_overlay_height_m) or cell_overlay_height_m <= 0.0 or not is_finite(cell_overlay_label_height_m) or cell_overlay_label_height_m < 0.0 or cell_overlay_label_pixel_size <= 0.0 or cell_overlay_label_font_size < 1:
 		errors.append("cell overlay height and label pixel size must be > 0, label height >= 0 and font size >= 1")
+	var container_keys: Dictionary[String, Key] = {"container_open_key": container_open_key, "container_previous_key": container_previous_key, "container_next_key": container_next_key, "container_take_key": container_take_key, "container_put_key": container_put_key}
+	for key_name: String in container_keys:
+		if container_keys[key_name] == KEY_NONE:
+			errors.append("%s must not be KEY_NONE" % key_name)
+	if container_transfer_quantity < 1:
+		errors.append("container_transfer_quantity must be >= 1")
+	if container_min_interval_sec <= 0.0:
+		errors.append("container_min_interval_sec must be > 0")
+	if not is_finite(container_candidate_range_m) or container_candidate_range_m <= 0.0:
+		errors.append("container_candidate_range_m must be > 0")
+	if hud_container_line_count <= 0:
+		errors.append("hud_container_line_count must be > 0")
+	if container_marker_size_m <= 0.0 or container_label_margin_m < 0.0 or container_label_pixel_size <= 0.0 or container_label_font_size < 1:
+		errors.append("container marker size and label pixel size must be > 0, label margin >= 0 and font size >= 1")
 	if not _are_distinct(assigned_keys().values()):
-		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier, the trade keys and the cell overlay key must be different keys")
+		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier, the trade keys, the cell overlay key and the container keys must be different keys")
 	return errors
 
 
@@ -245,6 +297,11 @@ func assigned_keys() -> Dictionary[String, Key]:
 		"trade_offer_add_key": trade_offer_add_key,
 		"trade_offer_remove_key": trade_offer_remove_key,
 		"cell_overlay_key": cell_overlay_key,
+		"container_open_key": container_open_key,
+		"container_previous_key": container_previous_key,
+		"container_next_key": container_next_key,
+		"container_take_key": container_take_key,
+		"container_put_key": container_put_key,
 	}
 
 

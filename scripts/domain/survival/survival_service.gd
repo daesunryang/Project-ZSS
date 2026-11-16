@@ -111,6 +111,13 @@ signal player_died(world: ServerWorld, player_id: String, cause: String, infecti
 ## (the player left, a new character started).
 signal rest_changed(player_id: String, resting: bool)
 
+## A player was hit: apply_damage dealt damage to it (P3-3). Server-side hook
+## for other systems, connected by ServerComposition (the container system
+## interrupts a search). Emitted synchronously at the end of apply_damage,
+## also for the hit that kills. Not emitted for damage over time (bleeding,
+## hunger, thirst, infection).
+signal player_damaged(player_id: String)
+
 const SYSTEM_ID: String = "survival"
 const ENTITY_KIND_WOUND: String = "wound"
 
@@ -384,6 +391,7 @@ func apply_damage(player_id: String, damage: DamageInput) -> ActionResult:
 		"body_part": BodyPart.to_name(wound.body_part), "wound_type": Wound.type_name(wound.wound_type),
 		"damage": damage.amount, "health": vitals.health, "died": died,
 	})
+	player_damaged.emit(player_id)
 	return ActionResult.success(event)
 
 

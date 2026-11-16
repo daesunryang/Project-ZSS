@@ -65,6 +65,19 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# it uses. It acts on requests (request_melee_attack), not in step().
 	if world.register_system(CombatService.new(config.combat, config.melee_weapons, world.clock)) != OK:
 		return null
+	# P3-3 (docs/09 §15.3): containers. After survival and posture, which can
+	# stop a player from acting, so its step sees what this tick did to
+	# whoever has a container open (a death, a rest, a move). A hit interrupts
+	# a search: survival only announces hits; it does not know this system.
+	var containers: ContainerService = ContainerService.new(config.containers, config.container_definitions, config.loot_tables, world.ids, world.registry, world.clock)
+	if world.register_system(containers) != OK:
+		return null
+	survival.player_damaged.connect(containers.on_player_damaged)
+	# P3-3: the map content (buildings and the containers inside), placed once
+	# per world through the building and the container system, after both.
+	# Without content (config.map_content null: tests, tools) it places nothing.
+	if world.register_system(MapContentService.new(config.map_content, config.structures)) != OK:
+		return null
 	# P2-T16: trades between two players. Last, so its step sees what this
 	# tick did to its parties (a death, a rest, a move). It is told about
 	# every inventory transaction, to keep offers backed by what is carried.
@@ -147,4 +160,12 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	if trade_net_error != OK:
 		trade_net.free()
 		return trade_net_error
+	# P3-3 (docs/09 §15.3): container intents, containers to the peers that
+	# are told about their cell, contents to whoever has one open. After the
+	# inventory module, whose pending save it flushes for a take or a put.
+	var container_net: ContainerNetModule = ContainerNetModule.new(config.container_net, config.container_definitions)
+	var container_net_error: Error = service.register_module(container_net)
+	if container_net_error != OK:
+		container_net.free()
+		return container_net_error
 	return OK

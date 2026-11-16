@@ -38,6 +38,15 @@ const TRADE_OFFER_REMOVE: StringName = &"trade_offer_remove"
 ## Show / hide the borders of the world cells around the player (P3-2; a
 ## testing aid, local only).
 const CELL_OVERLAY: StringName = &"toggle_cell_overlay"
+## Containers (P3-3): open the nearest container / close the open one; the
+## cursor on the stacks inside; take the stack under that cursor; put the
+## stack under the inventory cursor in. DROP_STACK held with take or put
+## moves the whole stack.
+const CONTAINER_OPEN: StringName = &"container_open"
+const CONTAINER_PREVIOUS: StringName = &"container_previous_item"
+const CONTAINER_NEXT: StringName = &"container_next_item"
+const CONTAINER_TAKE: StringName = &"container_take"
+const CONTAINER_PUT: StringName = &"container_put"
 ## Use action -> the kind of item its key asks the server to use.
 const USE_ACTION_KINDS: Dictionary[StringName, ConsumeIntentPolicy.Kind] = {
 	CONSUME: ConsumeIntentPolicy.Kind.FOOD,
@@ -72,6 +81,11 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 		_add_key_action(TRADE_OFFER_ADD, presentation.trade_offer_add_key, settings.input_deadzone)
 		_add_key_action(TRADE_OFFER_REMOVE, presentation.trade_offer_remove_key, settings.input_deadzone)
 		_add_key_action(CELL_OVERLAY, presentation.cell_overlay_key, settings.input_deadzone)
+		_add_key_action(CONTAINER_OPEN, presentation.container_open_key, settings.input_deadzone)
+		_add_key_action(CONTAINER_PREVIOUS, presentation.container_previous_key, settings.input_deadzone)
+		_add_key_action(CONTAINER_NEXT, presentation.container_next_key, settings.input_deadzone)
+		_add_key_action(CONTAINER_TAKE, presentation.container_take_key, settings.input_deadzone)
+		_add_key_action(CONTAINER_PUT, presentation.container_put_key, settings.input_deadzone)
 
 
 static func _add_key_action(action: StringName, key: Key, deadzone: float) -> void:

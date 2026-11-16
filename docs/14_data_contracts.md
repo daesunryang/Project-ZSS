@@ -76,13 +76,35 @@ P3-5 임시안(docs/00 ADR-025, docs/09 §15.5): `systems.building` 문서의 �
 
 스키마 1 문서(P3-4a)는 그대로 읽는다: 필드가 없는 구조물은 서 있으면 `construction_progress` 1, 아니면 0, `delivered_materials`는 `{}`로 올린다(`StructureInstance.upgrade_v1_entry`). 다음 저장부터 스키마 2로 쓴다. 스키마 2 문서에 두 필드가 없으면 깨진 문서로 보고 그 셀을 로딩하지 않는다. 상태·진행률·자재가 서로 맞지 않는 구조물(작업이 된 청사진, 진행률 0인 `constructing`, 진행률이 1이 아닌 서 있는 조각, 자재 비율보다 큰 진행률)이 든 문서도 같다. 누가 작업 중인지는 저장하지 않는다.
 
+### ContainerInstance (보관함, P3-3 임시안)
+docs/00 ADR-026, docs/09 §15.3. 보관함 하나(셀 문서와 world_state의 `systems.containers.containers[]` 항목):
+
+| 필드 | 타입 | 뜻 |
+|---|---|---|
+| `container_id` | 문자열 `container_<번호>` | 월드에서 유일하고 재사용하지 않는 ID |
+| `definition_id` | snake_case 문자열 | `ContainerDefinition`의 ID. 저장에 정의 Resource는 들어가지 않는다 |
+| `cell_id` | 문자열 | 저장할 때의 월드 셀. 읽을 때는 참고만 하고 위치로 다시 정한다 |
+| `position` | `[x, y, z]` 유한한 숫자 | 월드 좌표(미터) |
+| `inventory_id` | 문자열 `inventory_<번호>` | 내용물이 든 보관함 전용 인벤토리의 ID(플레이어 인벤토리 목록에는 없다) |
+| `slot_count` | 1 이상의 정수 | 묶음 칸 수(만들 때의 정의 값) |
+| `loot_table_id` | 문자열 | 첫 수색 때 굴릴 `LootTable`의 ID, `""` = 없음 |
+| `searched` | bool | 한 번 루팅이 굴려졌으면(또는 테이블이 없으면) true. 다시 false가 되지 않는다 |
+| `source_key` | 문자열 | 맵 콘텐츠가 놓았으면 `"<map_id>/<building_id>/<번호>"`, 아니면 `""` |
+| `created_at` | 숫자 | 만든 달력 월드 시간(§2) |
+| `loot_seed` | 0 ~ 2^53-1 정수 | 만들 때의 월드 루팅 시드. 내용물은 이 값과 `container_id`로 정한다 |
+| `items` | `ItemInstance` 배열 | 안에 든 아이템(칸 순서). 각 아이템의 `location_type`은 `inventory`, `location_id`는 위의 `inventory_id`, `slot_id`는 `slot_<0..slot_count-1>` |
+
+`systems.containers` 문서는 `{schema_version: 1, containers: [...]}`다(셀 문서와 world_state가 같은 모양). 보관함이 없으면 문서 자체가 없다. 수색 중·열림 같은 세션 상태는 저장하지 않는다. 보관함 안의 아이템은 world_state의 `inventory` 스냅샷에 들어가지 않는다(한 아이템은 저장의 한 곳에만 있다).
+
+맵 시드 기록(world_state `systems.map_content`): `{schema_version: 1, maps: {<map_id>: {content_version: 정수, buildings: [놓은 building_id...], complete: bool}}}`. 시드한 적이 없으면 문서가 없다.
+
 ### ItemInstance
 `item_instance_id`, `definition_id`, `quantity`, `condition`, `quality`, `freshness`, `location_type`, `location_id`, `slot_id`.
 
 P3-1 임시안: `location_type`이 `world`인 아이템의 `location_id`는 그 아이템이 놓인 위치의 `cell_id`다(P3-1 전에는 모든 아이템이 `cell_0_0`이었고, 그런 저장은 읽을 때 위치로 다시 정한다). 월드 아이템은 world_state.json이 아니라 그 셀의 문서에 저장된다.
 
 ### WorldCellDocument (cells/<cell_id>.json, P3-1 임시안)
-`schema_version`(1), `cell_id`, `world_items`(`items`: 그 셀에 놓인 ItemInstance 배열, `world_item_positions`: `{item_instance_id: [x, y, z]}`. 없으면 `{}`), `systems`(`{system_id: 그 시스템의 셀 문서}`. 지금은 `zombie`: `{schema_version: 1, zombies: [ZombieState]}`와 P3-4a의 `building`: `{schema_version: 1, structures: [BuildingInstance 절의 구조물 문서]}`). 플레이어는 셀 문서에 들어가지 않는다. 시스템이 셀에 두는 엔티티(보관함, 구조물)는 `systems` 아래에 같은 방식으로 더한다(docs/09 §15.1).
+`schema_version`(1), `cell_id`, `world_items`(`items`: 그 셀에 놓인 ItemInstance 배열, `world_item_positions`: `{item_instance_id: [x, y, z]}`. 없으면 `{}`), `systems`(`{system_id: 그 시스템의 셀 문서}`. 지금은 `zombie`: `{schema_version: 1, zombies: [ZombieState]}`와 P3-4a의 `building`: `{schema_version: 1, structures: [BuildingInstance 절의 구조물 문서]}`, P3-3의 `containers`: `{schema_version: 1, containers: [ContainerInstance 절의 보관함 문서]}`). 플레이어는 셀 문서에 들어가지 않는다. 시스템이 셀에 두는 엔티티(보관함, 구조물)는 `systems` 아래에 같은 방식으로 더한다(docs/09 §15.1).
 
 ### CropInstance
 `crop_instance_id`, `crop_definition_id`, `plot_id`, `growth_progress`, `water_level`, `health`, `planted_at`, `harvest_state`.

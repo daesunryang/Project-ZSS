@@ -87,8 +87,9 @@ func test_trade_keys_are_actions_driven_by_settings_and_clash_with_no_other_key(
 	assert_eq(invalid.validate().size(), 7, "; ".join(invalid.validate()))
 	# No trade key is any other key of the client: every pair is checked.
 	var own: Dictionary[String, Key] = defaults.assigned_keys()
-	# 17 since the cell overlay key (P3-2, world_map_presentation_test.gd).
-	assert_eq(own.size(), 17, "every key of the presentation settings is in the list: %s" % ", ".join(PackedStringArray(own.keys())))
+	# 17 since the cell overlay key (P3-2, world_map_presentation_test.gd), 22
+	# since the five container keys (P3-3, container_presentation_test.gd).
+	assert_eq(own.size(), 22, "every key of the presentation settings is in the list: %s" % ", ".join(PackedStringArray(own.keys())))
 	for changed: String in trade_keys:
 		assert_true(own.has(changed), changed)
 		for other: String in own:

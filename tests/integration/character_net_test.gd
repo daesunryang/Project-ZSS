@@ -734,7 +734,7 @@ func test_a_client_without_a_screen_creates_its_character_by_itself() -> void:
 # ------------------------------------------------------------ 6. contract
 
 func test_default_settings_protocol_and_request_validation() -> void:
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 14, "the creation intent and the character rows changed the protocol (7); 8 since P2-T10..T12, 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15), 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a), 13 since the replication scope by cell (P3-2), 14 since the construction RPCs (P3-5)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 15, "the creation intent and the character rows changed the protocol (7); 8 since P2-T10..T12, 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15), 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a), 13 since the replication scope by cell (P3-2), 14 since the construction RPCs (P3-5), 15 since the container RPCs (P3-3)")
 	assert_eq(CharacterNetModule.MODULE_NAME, "CharacterNet")
 	var service: NetworkService = NetworkService.new()
 	assert_eq(ServerComposition.install_net_modules(service, CompositionConfig.from_defaults()), OK)

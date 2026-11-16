@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="ContainerDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/containers/container_definition.gd" id="1_container"]
+
+[resource]
+script = ExtResource("1_container")
+definition_id = "dev_cabinet"
+display_name = "수납장"
+slot_count = 8
+loot_table_id = "dev_house"

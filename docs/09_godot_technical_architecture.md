@@ -233,7 +233,7 @@ Phase 2 기능은 아래 seam으로만 끼워 넣는다. `network_service.gd`는
 | `ServerComposition` / `CompositionConfig` | `scripts/core/server_composition.gd`, `composition_config.gd` | 시스템/모듈 조립의 유일한 장소. `create_world(world_id, config)`, `install_net_modules(service, config)`. 시스템 사이의 시그널 연결도 여기서 한다(P2-T5: `SurvivalService.player_died` → `ZombieService.on_player_died`, §14.20). `WorldPersistence`, `GameBootstrap`, `NetTestCluster`가 모두 사용 |
 | 저장 마이그레이션 | `scripts/services/save/save_migrations.gd` | world_state v1→v2(`world_time_sec`, `systems` 추가), v2→v3(`action_time_sec` 추가, 값은 `world_time_sec`. P2-T1), player v1→v2(`systems` 추가), player v2→v3(`character_generation` 추가, 값은 1. P2-T4), player v3→v4(`character` 추가, 값은 기본 이름과 빈 외형. P2-T9, §14.24). `SaveService` 기본 마이그레이터 |
 
-채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 14(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24), P2-T10~T12 묶음에서 8: 기상 원인(§14.25), `PostureNet` 모듈(§14.26), 다른 플레이어 치료(§14.27), P2-T14에서 9: 건네기 의도와 건네기 알림(§14.28), P2-T15에서 10: 건네기 RPC 삭제와 내려놓기 수량(§14.29), P2-T16에서 11: `TradeNet` 모듈(§14.30), P3-4a에서 12: `StructureNet` 모듈(§15.4), P3-2에서 13: 셀 기반 복제 범위(§15.2), P3-5에서 14: 건축 의도 셋·작업 변화 메시지·구조물 행 11값·접속 조각 스키마 2(§15.5)). 버전별 메시지 목록은 `scripts/core/build_info.gd`의 주석에 있다.
+채널: 0 reliable ordered, 1 unreliable ordered(플레이어 이동), 2 unreliable ordered(AI 엔티티 스냅샷, A묶음 예약). `PROTOCOL_VERSION` = 15(P2-0에서 2, N1 묶음 ZombieNet·SurvivalNet·CombatNet 병합 때 3, P2-T2 InventoryNet에서 4(§14.17), P2-T3 소비 의도에서 5(§14.18), P2-T6~T8 묶음에서 6: 휴식 의도 RPC와 생존 스냅샷 형식 3(§14.23), P2-T9에서 7: `CharacterNet` 모듈(캐릭터 생성 의도, 캐릭터 행, 생성 가능 상태)과 캐릭터 없는 접속자(§14.24), P2-T10~T12 묶음에서 8: 기상 원인(§14.25), `PostureNet` 모듈(§14.26), 다른 플레이어 치료(§14.27), P2-T14에서 9: 건네기 의도와 건네기 알림(§14.28), P2-T15에서 10: 건네기 RPC 삭제와 내려놓기 수량(§14.29), P2-T16에서 11: `TradeNet` 모듈(§14.30), P3-4a에서 12: `StructureNet` 모듈(§15.4), P3-2에서 13: 셀 기반 복제 범위(§15.2), P3-5에서 14: 건축 의도 셋·작업 변화 메시지·구조물 행 11값·접속 조각 스키마 2(§15.5), P3-3에서 15: `ContainerNet` 모듈(§15.3)). 버전별 메시지 목록은 `scripts/core/build_info.gd`의 주석에 있다.
 
 P2-T11에서 `ServerSystem`에 훅 넷이 추가됐다(모두 기본값은 "영향 없음"이고 `ServerWorld`의 같은 이름 함수가 모든 시스템의 값을 모은다, §14.26): `player_attack_block_reason(player_id)`(공격만 막는 사유. `ServerWorld.player_attack_block_reason`은 행동 전체를 막는 사유를 먼저 본다), `player_visibility_multiplier(player_id)`(좀비 시야 거리에 곱하는 가시성, 곱을 0~1로 제한), `player_footstep_loudness_multiplier(player_id)`·`player_footstep_stride_multiplier(player_id)`(발소리 세기·보폭 배율, 곱). 잘못된 값(NaN·무한·음수)은 오류 로그를 남기고 무시한다(1.0으로 취급: 고장 난 시스템이 누구도 숨기지 못한다). 조립에 시그널 연결 둘이 늘었다: `SurvivalService.rest_changed`·`player_died` → `PostureService.on_rest_changed`·`on_player_died`.
 
@@ -2131,6 +2131,94 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 4. 엔티티가 셀을 옮겨 다니면(좀비처럼) 2 대신 주기적으로 대조하는 방식을 쓴다(`ZombieNetModule._reconcile`).
 
 요청자에게 주는 결과에는 관심 셀 밖 엔티티의 존재가 드러나지 않게 한다(줍기의 사유 가리기와 같은 규칙).
+
+### 15.3 보관함·수색·테스트 맵 건물(P3-3, docs/00 ADR-026, system id `containers`·`map_content`, 모듈 `ContainerNet`)
+
+서버 규칙·셀·저장·네트워크·클라이언트 미러·임시 표시·키까지다. 플레이어가 짓는 보관 상자는 P3-3b다. **프로토콜 변경 있음**: RPC 아홉 개와 접속 스냅샷의 `modules.ContainerNet` 조각이 새로 생겨 `BuildInfo.PROTOCOL_VERSION`을 15로 올렸다(14는 P3-5, §15.5). 기존 RPC와 메시지 형식은 그대로다.
+
+**정의와 설정**
+
+| 구성 요소 | 계약 |
+|---|---|
+| `ContainerDefinition` (`resources/definitions/containers/*.tres`) | `definition_id`(snake_case, 저장·전송됨), `display_name`, `slot_count`(묶음 수), `loot_table_id`(`""` = 스스로는 아무것도 생기지 않음: 플레이어가 채우는 상자). 지금 있는 것: `dev_cabinet`(수납장, 8칸, `dev_house`), `dev_crate`(나무 상자, 12칸, `dev_warehouse`) |
+| `ContainerCatalog` | `load_directory()`, `add`, `has`, `get_definition`, `definition_ids()`, `max_slot_count()`, `validate_against(loot_tables)`. 서버와 클라이언트 미러(이름, 행 검증)가 같이 쓴다 |
+| `LootTable` (`resources/definitions/loot_tables/*.tres`) | `table_id`, `rolls_min`~`rolls_max`(굴림 횟수), `nothing_weight`(꽝의 가중치), 평행 배열 `item_definition_ids`·`weights`·`quantities_min`·`quantities_max`(한 칸 = 한 항목). 굴림 한 번이 찾은 것 하나가 묶음 하나다. `validate()`, `validate_against(item_catalog)`(아이템이 있어야 하고, 최대 수량 ≤ 한 묶음의 최대). 지금 있는 것: `dev_house`, `dev_store`, `dev_clinic`, `dev_warehouse` |
+| `LootTableCatalog` | `load_directory()`, `add`, `has`, `get_table`, `validate_against(item_catalog)` |
+| `LootRoller` | 순수 함수. `seed_for(world_seed, container_id) -> int`(문자열 `"<시드>|<ID>"`의 SHA-256 앞 15자리 16진수: 엔진 난수·문자열 해시에 의존하지 않는다), `roll(table, roll_seed) -> [{definition_id, quantity}]`(자체 `RandomNumberGenerator`, 같은 입력 → 같은 결과) |
+| `ContainerSettings` (`data/tuning/container_settings.tres`) | `interact_range_m`(2.5), `search_duration_sec`(1.5, 행동 시간, 0 = 즉시), `search_interrupted_by_damage`(true), `loot_seed`(20261116, 0~2^53-1), `max_containers_per_cell`(500), `max_pending_events`(4096). `validate()` |
+| `ContainerNetSettings` (`data/tuning/container_net_settings.tres`) | `container_intent_rate_per_sec`(8)·`container_intent_burst`(8)(네 의도가 버킷 하나를 같이 쓴다), `rows_per_message`(64), `removals_per_message`(128), `max_mirror_containers`(100000). `validate()`, `validate_against(container_definitions)`(칸 수 ≤ 클라이언트가 받는 내용물 상한 64) |
+| `MapContentDefinition` (`resources/definitions/maps/dev_test_map.tres`) | 아래 "맵 정의 형식" |
+| `CompositionConfig` | 필드 다섯이 늘었다: `containers`, `container_definitions`, `loot_tables`, `container_net`, `map_content`(기본 **null**). `validate()`가 앞의 넷과, `map_content`가 있으면 그것을 구조물·보관함 정의·루팅 테이블·격자·플레이 영역에 대해 검사한다 |
+
+**런타임 모델(`ContainerInstance`)**: `container_id`(`container_<번호>`, 월드의 `EntityIdGenerator`·`EntityRegistry`, 종류 `container`, 재사용하지 않음), `definition_id`, `cell_id`(복구 때 위치로 다시 정함), `position`(Vector3), `inventory_id`(내용물이 든 보관함 전용 인벤토리), `slot_count`(만들 때의 정의 값), `loot_table_id`, `searched`(한 번 true가 되면 다시 false가 되지 않는다), `source_key`(맵 콘텐츠가 놓은 것이면 `"<map>/<building>/<번호>"`, 같은 키의 보관함은 하나뿐), `created_at`(달력 월드 시간), `loot_seed`(만들 때의 `ContainerSettings.loot_seed`: 설정을 나중에 바꿔도 이미 있는 보관함의 내용물은 바뀌지 않는다). `to_dict()`/`from_dict()`(모양만 검사).
+
+**내용물 = 보관함 전용 인벤토리**(`InventoryService`의 "detached inventory", 티켓 밖의 구조 변경): 보관함의 아이템은 따로 셈하지 않는 보통의 `ItemInstance`이고 위치는 `inventory` + 그 인벤토리 ID다. 그래서 넣기·꺼내기는 `transfer_item(보내는 인벤토리, 아이템, 받는 인벤토리, 수량)`이다: 받는 쪽의 같은 종류 묶음에 먼저 합치고, 남는 것은 빈 칸 하나에 넣고, 다 들어가지 않으면 아무것도 옮기지 않는다. 묶음 일부를 옮기면 받는 쪽에 새 ID가 생긴다(기존 규칙). 새 공개 함수: `create_detached_inventory(capacity)`, `is_detached_inventory`, `spawn_detached_item(inventory_id, definition_id, quantity)`(루팅: 빈 칸에 새 묶음), `detached_snapshot`, `check_detached_snapshot`(아무것도 바꾸지 않는 검증), `restore_detached_snapshot`(저장된 ID·묶음·칸 그대로. 이미 메모리에 있거나 은퇴한 아이템 ID는 건너뛰고 경고), `release_detached_inventory`(셀 해제: ID는 은퇴가 아니라 해제). `to_snapshot()`은 보관함 인벤토리와 그 아이템을 넣지 않는다(주인인 보관함 시스템이 저장한다). 이 여섯 함수는 `transaction_committed`를 내지 않는다(아이템이 주인을 바꾸지 않았다). 넣기·꺼내기의 `transfer_item`은 기존대로 `item_transferred`를 내고, `InventoryNetModule`이 **플레이어 쪽**의 변화를 그 플레이어에게만 보낸다(보관함 인벤토리에는 접속자가 없다).
+
+**`ContainerService`(`scripts/domain/containers/container_service.gd`, `ServerSystem`)**: `ServerComposition`이 전투 뒤에 등록하고(생존·자세가 그 틱에 한 일을 `step()`이 본다), `SurvivalService.player_damaged`(새 시그널: `apply_damage`가 피해를 줄 때마다, 죽이는 한 대 포함, 출혈·허기 등 지속 피해 제외)를 `on_player_damaged`에 잇는다.
+
+- 플레이어 요청: `try_open(world, player_id, container_id)`, `try_close(...)`, `try_take(world, player_id, container_id, item_instance_id, quantity)`, `try_put(...)`. `quantity`는 1~묶음 수량 또는 `InventoryService.WHOLE_STACK`(0, 묶음 전체). 서버 규칙: `create_container(world, definition_id, position, loot_table_id = "", source_key = "") -> ActionResult`(행위자·사거리 없음. 메모리에 있는 셀의 어느 위치에나, 언제든. P3-3b의 상자가 이것을 쓴다).
+- 검사 순서(먼저 걸린 것이 사유, 거부되면 아무것도 바뀌지 않는다): `not_online` → `player_dead`/`player_resting`(`ServerWorld.player_action_block_reason`) → `unknown_container`(메모리에 없음) → 열기: `too_far`(플레이어의 **서버 위치**에서 보관함 위치까지 3D 거리) → `container_already_open`/`container_searching`(이미 이 보관함을 열었거나 수색 중) / 닫기: `container_not_open` / 꺼내기·넣기: `container_not_open` → `container_searching` → `too_far` → `item_not_in_container`(꺼내기: 그 아이템이 이 보관함에 없음) 또는 `item_not_in_inventory`(넣기: 들고 있지 않음) → `bad_quantity`(1 미만이거나 묶음보다 많음) → `inventory_full`(꺼내기) / `container_full`(넣기). 닫기는 행동이 막힌 플레이어도 할 수 있다. 같은 단위를 둘이 꺼내면 먼저 처리된 쪽만 성공하고 다른 쪽은 `item_not_in_container`(묶음이 통째로 갔을 때) 또는 `bad_quantity`(남은 수량이 모자랄 때)다.
+- `create_container` 실패: `unknown_container_definition`, `bad_position`(유한하지 않거나 플레이 영역 밖), `unknown_loot_table`, `cell_not_loaded`, `container_source_exists`, `container_limit`, `container_id_failed`. 루팅 테이블이 없는 보관함은 만들 때부터 `searched`다.
+- 세션: 플레이어당 하나(다른 보관함을 열면 앞의 것이 `switched`로 닫힌다), 한 보관함에 여럿. 단계는 `searching` → `open`. `step()`이 틱마다 세션을 보고 닫는다: 보관함이 메모리에 없음(`container_unavailable`), 행동이 막힘(`player_dead`, `player_resting`), 사거리 밖(`too_far`). 수색 중 피격은 `interrupted`(설정). 접속 종료는 말없이 지우고(`on_player_offline`), 새 캐릭터 시작은 닫는다.
+- 수색과 루팅: 수색되지 않은 보관함을 처음 열면 `search_duration_sec` 동안 `searching`이고 그동안 내용물을 알려 주지 않는다. 시간이 차면 `LootRoller.roll(table, seed_for(container.loot_seed, container_id))`로 한 번 채우고(`searched = true`, `loot_roll_count` 증가), 그 보관함을 수색 중인 **모든** 세션이 함께 `open`이 된다. 굴림 결과가 칸보다 많으면 남는 것은 버리고 경고한다(테이블 검증이 칸 수를 보지 않기 때문이다). 중단된 수색은 아무것도 찾지 못하고 다음에 처음부터다. 수색된 보관함은 누구에게나 바로 열린다.
+- 조회: `has_container`, `get_container`, `container_ids`, `container_count`, `has_source`, `container_ids_in_cell`, `public_row(container)`(`{container_id, definition_id, position: [x, y, z], searched}`: 내용물·테이블·여는 사람 없음), `rows_in_cell`, `contents_of(container_id)`(`[{item_instance_id, definition_id, quantity, slot}]`, 칸 순서), `session_phase`, `session_container_id`, `viewers_of`(열어 둔 사람, 수색 중인 사람 제외), `session_count`, `drain_events()`.
+- 이벤트(`drain_events`, JSON-safe, 모두 `event_type`·`world_time`·`cell_id`): `container_added`·`container_changed`(공개 행. 생김 / 수색됨), `container_session`(`player_id`, `container_id`, `phase`: `searching`(+`search_sec`) / `open`(+`items`: 전부) / `closed`(+`reason`)), `container_contents`(`container_id`, `changed`: 지금 안에 있는 바뀐 묶음, `removed`: 빠진 아이템 ID, `viewers`: 그 순간 열어 둔 플레이어). 셀 로딩·해제는 이벤트를 남기지 않는다(해제 때 열려 있던 세션의 `closed`는 남는다).
+
+**월드 셀**(§15.1의 훅 그대로): 보관함은 `ServerWorld.cell_index`에 종류 `container`로 위치의 셀 아래에 들어간다. `to_cell_document`/`restore_cell_document`/`release_cell`을 구현한다(해제: 열어 둔 사람의 세션을 닫고, 보관함 인벤토리와 아이템을 메모리에서 내리고, ID를 레지스트리에서 해제한다). 활성·비활성 훅은 쓰지 않는다(시뮬레이션하지 않는다).
+
+- 복구는 먼저 전부 검증한다: 스키마 버전, 각 보관함의 모양, 정의 존재, 수색되지 않았으면 루팅 테이블 존재, 문서 안의 ID 중복, 내용물(칸 범위·중복·아이템 정의·위치가 그 인벤토리인지, `check_detached_snapshot`). 하나라도 틀리면 아무것도 바꾸지 않는다(그 셀은 로딩되지 않는다).
+- 셀 문서에서는 메모리에 있거나 은퇴한 보관함 ID를 건너뛰고 경고한다. 보관함 안의 아이템도 메모리에 있거나(누가 꺼내 갔다) 은퇴했으면(합쳐져 없어졌다) 건너뛴다. 오래된 셀 파일이 복구되는 경우에만 일어나며, 그래서 어떤 순서의 넣기·꺼내기·해제·재로딩·재시작도 아이템을 둘로 만들거나 되살리지 않는다. 월드 문서에서는 같은 경우가 오류다.
+- 보관함의 셀은 저장된 `cell_id`가 아니라 위치로 다시 정한다(다른 격자로 나뉜 문서도 읽힌다).
+- 새 셀 서비스 함수 둘(티켓 밖의 구조 변경, 맵 시드가 쓴다): `WorldCellService.load_cell_now(world, cell_id) -> bool`(가까이 플레이어가 없어도 그 셀을 지금 PRELOADED로 로딩), `release_cells_now(world, cell_ids) -> Error`(PRELOADED이고 ACTIVE 셀과 이웃하지 않는 셀만, 해제 지연 없이 저장 후 해제. 저장소가 없으면 아무것도 하지 않고 OK).
+
+**저장 배치**: 셀 문서 `systems.containers = {schema_version: 1, containers: [ContainerInstance.to_dict() + items: [ItemInstance.to_dict()]]}`(docs/14 §3 "ContainerInstance"). 셀 문서에 저장되지 않는 보관함(저장소 없는 월드)은 world_state `systems.containers`에 같은 모양으로 들어간다. 보관함이 없으면 두 곳 모두 키가 없다: 이 티켓 전의 저장과 같은 모양이고 그대로 읽힌다. 맵 시드 기록은 world_state `systems.map_content = {schema_version: 1, maps: {<map_id>: {content_version, buildings: [building_id...], complete: bool}}}`. world_state 스키마(4)와 셀 문서 스키마(1)는 바꾸지 않았다. 세션·이벤트는 저장하지 않는다. 넣기·꺼내기가 승인되면 바로 월드 전체를 저장한다(`InventoryNetModule.flush_pending_save`, 줍기·내려놓기와 같다). 열기·수색·닫기는 바로 저장하지 않는다: 저장 전에 서버가 죽어도 같은 시드로 같은 내용물이 다시 나온다.
+
+**맵 콘텐츠(`MapContentService`, system id `map_content`)**: 엔티티를 소유하지 않는다. 건물마다 필요한 셀을 `load_cell_now`로 로딩하고, 구조물 조각을 `BuildingService.place_structure`로 놓은 뒤 바로 `complete_structure`(P3-5의 서버 규칙, docs/15 P3-148: 자재·작업 없이 완공. 투입 자재가 없으니 환급도 없다)로 완공하고(`BuildingService`는 바꾸지 않았다), 보관함을 `create_container`(`source_key` 포함)로 놓고, `seeding_batch_cells`(16)개 셀이 쌓일 때마다 `release_cells_now`로 저장·해제한다. 조각이 `slot_occupied`(배치)·`blocked_by_entity`(완공: 누가 그 변에 서 있음. 남은 청사진은 환급 없이 지운다)로 거부되면 빼고 세고 경고한다. 그 밖의 거부, 셀 로딩·저장 실패는 시드를 멈추고 오류를 돌려준다(맵이 `complete`로 기록되지 않아 다음 호출이 이어서 한다).
+
+- 한 번만: `seed_new_world`(ServerSystem 훅, 새 월드)와 `ensure_seeded(world)`(`WorldPersistence.load_or_create`가 저장된 월드를 복구한 뒤 부른다: 이 티켓 전의 월드, 중간에 멈춘 시드). 완료된 맵은 다시 놓지 않는다. 내용이 바뀌어도(`content_version`) 이미 시드된 월드는 그대로 두고 로그만 남긴다. 저장된 월드에 시드하다 실패하면 서버 시작이 실패한다(`fatal`).
+- 조립 입력: `CompositionConfig.map_content`가 null이면 아무것도 놓지 않는다(`from_defaults()`의 기본: 테스트·도구). `GameBootstrap`은 서버를 시작할 때 `MapContentDefinition.load_or_null()`(테스트 맵)을 넣는다. 그래서 기존 테스트에는 건물이 생기지 않는다.
+- 진단: `last_seed_report`(건물·구조물·보관함 수, 뺀 조각, 로딩한 셀, 해제 횟수, 걸린 시간 µs).
+
+**맵 정의 형식(`MapContentDefinition` → `MapBuildingDefinition` → `MapContainerPlacement`)**
+
+| 리소스 | 필드 |
+|---|---|
+| `MapContentDefinition` | `map_id`(월드 저장에 기록), `content_version`(≥ 1), `seeding_batch_cells`(16), `buildings: Array[MapBuildingDefinition]`. `validate()`(ID, 중복, 두 건물은 한 칸 이상 떨어져야 한다: 벽 자리를 같이 쓰지 않도록), `validate_against(structures, container_definitions, loot_tables, grid, world_half_extent_m)`(바닥은 타일 조각, 벽은 막는 변 조각, 문은 문, 보관함 정의·테이블 존재, 건물 전체가 플레이 영역 안) |
+| `MapBuildingDefinition` | `building_id`, `building_type`(사람·로그용 이름), `origin_tile`(가장 작은 x·z 타일), `size_tiles`(가로 x · 세로 z 타일), `floor_definition_id`·`wall_definition_id`·`door_definition_id`(기본 `dev_floor`·`dev_wall`·`dev_door`), `door_side`(0 = -Z, 1 = +X, 2 = +Z, 3 = -X), `door_offset`(그 변의 낮은 쪽부터 몇 번째 타일), `loot_table_id`(이 건물 보관함의 테이블, `""` = 보관함 정의의 것), `containers` |
+| `MapContainerPlacement` | `definition_id`, `tile_offset`(건물 안 타일, 그 타일 중심에 선다. 타일당 하나), `loot_table_id`(`""` = 건물의 것) |
+
+`MapBuildingPlan`(순수): `structure_pieces(building)`(바닥 w×h + 바깥 변 2(w+h)개, 그중 문 하나), `piece_count`, `door_piece`, `container_position`, `container_source_key`, `footprint`. 테스트 맵: 건물 8채(집 셋 `dev_house`, 가게 `dev_store`, 진료소 `dev_clinic`, 창고·헛간·차고 `dev_warehouse`), 구조물 370개, 보관함 21개, 원점 ±30m 안(셀 넷). 문은 처음에 닫혀 있다(누구나 연다, §15.4).
+
+**네트워크(`ContainerNetModule`, 노드 이름 `ContainerNet`)**: 모든 메시지가 채널 0(`CHANNEL_RELIABLE`), reliable ordered다. 보관함은 월드 상태이고, 클라이언트가 보는 것(행, 세션, 내용물 변화, 결과)이 서버가 정한 순서대로 도착해야 하기 때문이다. `install_net_modules`가 인벤토리·거래 모듈 뒤(관심 모듈 뒤)에 설치한다.
+
+| 방향 | RPC | 채널/모드 | 내용 |
+|---|---|---|---|
+| C→S | `_rpc_request_container_open(request_id:int, container_id:String)` | 0 reliable | 열기(처음이면 수색) |
+| C→S | `_rpc_request_container_close(request_id:int, container_id:String)` | 0 reliable | 닫기 / 수색 그만두기 |
+| C→S | `_rpc_request_container_take(request_id:int, container_id:String, item_instance_id:String, quantity:int)` | 0 reliable | 꺼내기(0 = 묶음 전체) |
+| C→S | `_rpc_request_container_put(request_id:int, container_id:String, item_instance_id:String, quantity:int)` | 0 reliable | 넣기(0 = 묶음 전체) |
+| S→요청자 | `_rpc_container_result(request_id:int, ok:bool, reason:String)` | 0 reliable | `reason`은 승인일 때만 `""` |
+| S→관심 셀 접속자 | `_rpc_container_rows(rows:Array)` | 0 reliable | 생기거나 수색된 보관함, 셀을 얻었을 때 그 셀의 보관함 |
+| S→관심 셀 접속자 | `_rpc_containers_removed(container_ids:Array)` | 0 reliable | 셀을 잃었을 때 그 셀의 보관함(월드에서는 그대로 있다) |
+| S→여는 사람 | `_rpc_container_session(container_id:String, phase:String, reason:String, search_sec:float, items:Array)` | 0 reliable | 본인 세션의 단계. `open`이면 내용물 전부 |
+| S→열어 둔 사람 | `_rpc_container_items(container_id:String, changed:Array, removed:Array)` | 0 reliable | 넣기·꺼내기로 바뀐 묶음과 빠진 ID |
+
+- 행: `[container_id, definition_id, x, y, z, searched]`. 내용물 행: `[item_instance_id, definition_id, quantity, slot]`. 접속 조각: `{schema_version: 1, containers: [행, ...]}`(그 접속자의 관심 셀에 있는 것만, 보관함 시스템이 없으면 `{}`).
+- 관심 셀(§15.2의 마지막 네 줄 그대로): 접속 조각은 `is_cell_of_interest`로 거르고, `cell_interest.cell_gained`에 그 셀의 보관함 행을, `cell_lost`에 그 ID 묶음을 보내고(`_exit_tree`에서 끊는다), 생김·수색은 `peers_interested_in(cell_id)`에게만 보낸다. 보관함은 움직이지 않으므로 대조는 없다. 셀을 얻거나 잃기 전에 대기 중인 이벤트를 먼저 보내 순서가 섞이지 않게 한다.
+- 의도 검증 순서: 접속(`not_joined`) → 인자 타입(`bad_type`) → 요청 번호 ≥ 0(`bad_sequence`) → ID 모양(`bad_container_id`, `bad_item_id`: 빈 문자열이거나 64자 초과), 수량 < 0(`bad_quantity`) → 빈도(`rate_limited`, 네 의도가 버킷 하나) → 규칙. 행위자는 보낸 peer의 플레이어이고 인자에 없다. 위치·소유자·인벤토리·결과는 클라이언트가 보내지 않는다. 모든 거부는 `rejected_intent_count`에 센다(규칙 거부는 `count_rejection`, 경고 로그 없음).
+- 순서: 승인된 넣기·꺼내기는 먼저 저장하고, 그다음 바뀐 것(인벤토리 본인 메시지는 트랜잭션 안에서, 내용물 변화는 이 모듈이)을 보내고, 마지막에 결과를 보낸다. 서버 규칙이 스스로 한 일(수색 완료, 세션 종료, 새 보관함)은 그 틱의 `server_physics`에서 보낸다. 이 모듈이 `ContainerService.drain_events()`의 유일한 소비자다.
+- 공개(ADR-009): 내용물은 그 보관함을 지금 열어 둔 사람에게만 가고, 수색 중인 사람에게는 끝날 때까지 가지 않는다. 누가 무엇을 열고 있는지는 아무에게도 가지 않는다. 거부 사유 가리기(`public_reason`): 그 보관함이 메모리에 있고 요청자의 관심 셀에 있거나, 거부가 요청자 자신에 관한 것(`not_online`, `player_dead`, `player_resting`, 형식·빈도)이면 그대로, 그 밖은 `unknown_container`. 그래서 관심 셀 밖의 보관함은 "없는 ID"와 구별되지 않는다.
+- 진단(서버): `sent_row_message_count`, `sent_removed_message_count`, `sent_session_message_count`, `sent_items_message_count`, `sent_result_message_count`. 클라이언트: `rejected_payload_count`.
+
+**클라이언트 미러(`ClientContainerState`, `ContainerNetModule.client_state`)**: 권한 없음. `containers`(`container_id -> {definition_id, position: Vector3, searched}`), `has_container`, `get_container`, `container_ids`, `container_count`, 본인 세션 `open_container_id()`, `phase()`, `search_sec()`, `contents()`(열려 있을 때만, 칸 순서), 시그널 `changed`, `container_added/changed/removed(id)`, `session_changed`, `contents_changed`, `session_closed(container_id, reason)`. 모든 payload를 검증한다(행 길이·타입, ID 형식·길이 64, 클라이언트가 아는 정의, 유한 좌표, 메시지당 행·ID 256개, 미러 상한, 내용물 행: 수량 ≥ 1·칸 0~63·한 보관함 64묶음, 단계 이름, 수색 시간 0~3600초, 사유 길이). 틀린 행은 세고 건너뛴다. 틀린 접속 조각은 통째로 버리고 미러를 비운다. 열려 있지 않은 보관함의 내용물 변화는 `stale_contents_count`에 세고 버린다. 클라이언트 API: `request_open(container_id)`, `request_close`, `request_take(container_id, item_id, quantity)`, `request_put(...)`(요청 번호를 돌려준다, 보내지 않았으면 0), 시그널 `container_result(request_id, ok, reason)`.
+
+**클라이언트 표시와 키(`scripts/presentation/`)**: 순수 정책 `ContainerIntentPolicy`(`nearest_container_id(origin, containers, max_distance_m)`: 미러에서 가장 가까운 보관함, `open_key_action(phase, candidate)`: 열기/닫기/없음, `can_transfer(phase)`, 커서 `ordered_item_ids`·`index_of`·`resolve`·`step`, 수량 `take_quantity`·`put_quantity`), 문구 `ClientPresentationFormatter.container_display_name`·`container_label`·`build_container_lines`·`format_container_result`·`format_container_closed`, 노드 `ContainerMarkers`(`%Containers` 아래 상자 + 카메라를 향한 라벨, 미러의 행이 바뀔 때만 다시 만든다), HUD `%ContainerLabel`(오른쪽). `ClientView`는 키를 의도로 바꾸기만 한다. 키(`ClientPresentationSettings`, 기본): 열기/닫기 H(`container_open_key`), 커서 J/K, 꺼내기 U, 넣기 I(소지품 커서 Z/X가 가리키는 묶음), Ctrl(`drop_stack_modifier_key`)을 누르고 U/I = 묶음 전체. 한 번에 `container_transfer_quantity`(1)개, 로컬 간격 `container_min_interval_sec`(0.2초), 후보 반경 `container_candidate_range_m`(2.5m, 안내일 뿐 판정은 서버), HUD 줄 `hud_container_line_count`(6). E는 바닥 아이템 줍기만이다. 키 겹침 검사에 다섯 키가 들어가 이 Resource의 키는 스물두 개다. 화면 설명은 docs/11 §2.16.
+
+**테스트**: `tests/unit/container_service_test.gd`(생성·거부, 한 번만의 루팅, 시드·ID 결정성, 수색 시간·동시 수색·중단(떠남·피격·눕기), 넣기·꺼내기의 전부·일부·합치기, 가득 찬 보관함·소지품, 모든 거부 사유, 두 사람이 같은 단위, A가 넣고 B가 꺼냄, 무작위 넣기·꺼내기 보존, 세션 종료), `container_cell_test.gd`(셀 해제 → 재로딩 동일성, 재로딩이 굴리지 않음, 만들 때의 루팅 시드 유지, 월드 문서 왕복, 저장소 없는 월드, 오래된 셀 문서, 문서 검증, 격자 변경, 무작위 넣기·꺼내기·해제·복구 보존), `loot_roll_test.gd`, `map_content_test.gd`(테스트 맵 데이터, 건물 계획, 검증, 조립 입력 기본값, 새 월드 한 번, 시드 구조물이 completed이고 막음, 셀 로딩·해제, 이전 월드, 측정), `container_net_state_test.gd`(미러 검증), `container_presentation_test.gd`(정책·문구·키), `container_measure_test.gd`(측정), `tests/integration/container_net_test.gd`(실제 ENet, 클라이언트 셋: A가 넣고 B가 꺼냄, 내용물은 연 사람에게만, 셀 얻음·잃음·늦은 접속, 위조 요청, 빈도, 수색), `container_persistence_test.gd`(실제 파일: 일부 루팅된 보관함과 넣은 아이템의 재시작, 수색 시점과 무관한 내용물, 서버 월드의 테스트 맵 한 번, 이전 저장의 시드, 재시작 뒤 꺼내기), `container_view_test.gd`(실제 클라이언트 세션의 키·표시).
+
+**P3-3b(지을 수 있는 보관 상자)가 알아야 할 것**: (1) 서버 쪽 자리는 `ContainerService.create_container(world, definition_id, position)`이다. 루팅 테이블이 없는 정의(`loot_table_id = ""`)는 만들 때부터 `searched`라서 빈 채로 열린다. 플레이어 요청(배치 의도, 비용 차감)과 철거 시 내용물 처리(바닥에 떨어뜨릴지)는 없다. (2) 상자를 구조물로 할지(`StructureInstance`와 보관함 ID를 잇기) 보관함만으로 할지 정해야 한다. 지금 보관함은 이동을 막지 않고 격자에 묶이지 않는다(위치는 임의의 Vector3). (3) 플레이어가 만든 상자도 같은 셀 저장·복제·공개 규칙을 그대로 받는다. 소유권·잠금이 생기면 `ContainerService._use_block_reason`에 검사를 더하고 사유 코드를 늘린다. (4) `max_containers_per_cell`(500)은 플레이어 상자에도 적용된다.
+
+**구조물 표시 티켓(P3-4b)이 알아야 할 것**: 테스트 맵 건물(구조물 370개)은 서버에 있고 `StructureNet`으로 복제되지만 아직 화면에 그려지지 않는다: 지금 클라이언트에서는 보관함 상자만 허공에 보이고 벽은 보이지 않는데 서버는 막는다(플레이어가 보이지 않는 벽에 부딪힌다). 보관함 위치는 타일 중심(`StructureGrid.tile_center`)이므로 바닥 메시 위에 그대로 놓인다.
 
 ### 15.4 격자 구조물: 바닥·벽·문(P3-4a, docs/00 ADR-024, system id `building`, 모듈 `StructureNet`)
 

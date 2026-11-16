@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="ContainerNetSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/services/multiplayer/container_net_settings.gd" id="1_container_net"]
+
+[resource]
+script = ExtResource("1_container_net")
+container_intent_rate_per_sec = 8.0
+container_intent_burst = 8
+rows_per_message = 64
+removals_per_message = 128
+max_mirror_containers = 100000

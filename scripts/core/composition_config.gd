@@ -56,6 +56,17 @@ var interest: InterestSettings
 var building: BuildingSettings
 var structures: StructureCatalog
 var structure_net: StructureNetSettings
+## P3-3 (containers, docs/09 §15.3): the container rules, the container
+## definitions (servers and client mirrors) and the loot tables (servers).
+var containers: ContainerSettings
+var container_definitions: ContainerCatalog
+var loot_tables: LootTableCatalog
+var container_net: ContainerNetSettings
+## P3-3: the buildings and containers a world is seeded with, once
+## (MapContentService). null (the default of from_defaults(): tests, tools) =
+## the world gets no map content. A dedicated server sets the test map
+## (MapContentDefinition.DEFAULT_PATH, GameBootstrap).
+var map_content: MapContentDefinition = null
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -86,6 +97,10 @@ static func from_defaults() -> CompositionConfig:
 	config.building = BuildingSettings.load_or_default()
 	config.structures = StructureCatalog.load_directory()
 	config.structure_net = StructureNetSettings.load_or_default()
+	config.containers = ContainerSettings.load_or_default()
+	config.container_definitions = ContainerCatalog.load_directory()
+	config.loot_tables = LootTableCatalog.load_directory()
+	config.container_net = ContainerNetSettings.load_or_default()
 	return config
 
 
@@ -153,4 +168,23 @@ func validate() -> PackedStringArray:
 	errors.append_array(trade.validate())
 	errors.append_array(trade_net.validate())
 	errors.append_array(trade_net.validate_against(trade))
+	errors.append_array(_validate_containers())
+	return errors
+
+
+## P3-3: errors of the container settings, definitions and loot tables, and
+## of the map content (when the world is to get one) against all of them.
+func _validate_containers() -> PackedStringArray:
+	var errors: PackedStringArray = []
+	if containers == null or container_definitions == null or loot_tables == null or container_net == null:
+		errors.append("composition config is incomplete (containers)")
+		return errors
+	errors.append_array(containers.validate())
+	errors.append_array(loot_tables.validate_against(catalog))
+	errors.append_array(container_definitions.validate_against(loot_tables))
+	errors.append_array(container_net.validate())
+	errors.append_array(container_net.validate_against(container_definitions))
+	if map_content != null:
+		errors.append_array(map_content.validate())
+		errors.append_array(map_content.validate_against(structures, container_definitions, loot_tables, StructureGrid.new(building.grid_module_m), gameplay.world_half_extent_m))
 	return errors

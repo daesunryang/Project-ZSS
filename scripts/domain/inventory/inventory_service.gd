@@ -18,8 +18,12 @@ extends RefCounted
 ##   remove_item     a quantity leaves the game; at 0 the instance is deleted
 ##                   and its id is retired for good (P2-T2)
 ##   transfer_item   a quantity moves from one inventory into another,
-##                   merging into the receiver's stacks (P2-T14). No player
-##                   intent calls it since P2-T15 (docs/00 ADR-021).
+##                   merging into the receiver's stacks (P2-T14). Since P3-3
+##                   it is how a player puts items into a container and takes
+##                   them out (ContainerService; one side is the container's
+##                   detached inventory, see "detached inventories" below).
+##                   No rule moves items between two players with it (docs/00
+##                   ADR-021).
 ##   take_items      units of several carried stacks leave an inventory at
 ##                   once because a server rule put them into something
 ##                   that is not an item any more (building materials,
@@ -961,10 +965,167 @@ func reassign_world_item_cells(resolver: Callable) -> int:
 	return changed
 
 
+# ---------------------------------------------------- detached inventories
+# P3-3 (docs/09 §15.3). A detached inventory belongs to an entity standing in
+# the world (a container), not to a player. It is an inventory like any
+# other for the transactions (transfer_item between a player's inventory and
+# a container's inventory IS "put in" / "take out", with the merging and the
+# all-or-nothing rule of every transfer), but its owner saves it and takes it
+# out of memory:
+#   create_detached_inventory    a new, empty one
+#   spawn_detached_item          a new item inside one (loot)
+#   detached_snapshot            its capacity and items, as save data
+#   check_detached_snapshot      errors of such save data (changes nothing)
+#   restore_detached_snapshot    brings one back with its saved id and items
+#   release_detached_inventory   forgets one and its items (after a save)
+# to_snapshot() leaves detached inventories and their items out. None of
+# these six announces anything through `transaction_committed`: no item
+# changed hands.
+
+## Key of detached_snapshot(): the slot capacity.
+const DETACHED_CAPACITY: String = "capacity"
+## inventory_id -> true for every detached inventory in memory.
+var _detached: Dictionary[String, bool] = {}
+
+
+## Creates an empty detached inventory and returns its id ("" on failure).
+func create_detached_inventory(capacity: int) -> String:
+	var inventory_id: String = create_inventory(capacity)
+	if not inventory_id.is_empty():
+		_detached[inventory_id] = true
+	return inventory_id
+
+
+func is_detached_inventory(inventory_id: String) -> bool:
+	return _detached.has(inventory_id)
+
+
+## Creates a new item in the first free slot of a detached inventory (it
+## does not join another stack). Returns its id, "" when the definition is
+## unknown, the quantity is no stack of it, or the inventory is no detached
+## one or has no free slot.
+func spawn_detached_item(inventory_id: String, definition_id: String, quantity: int) -> String:
+	const OPERATION: String = "spawn_detached_item"
+	var definition: ItemDefinition = _catalog.get_definition(definition_id)
+	if not _detached.has(inventory_id) or definition == null or quantity < 1 or quantity > definition.max_stack:
+		GameLogger.error("inventory", "item cannot be created in this inventory", {"inventory_id": inventory_id, "definition_id": definition_id, "quantity": quantity, "operation": OPERATION})
+		return ""
+	var slot_id: String = _first_free_slot(inventory_id)
+	if slot_id.is_empty():
+		return ""
+	var item: ItemInstance = ItemInstance.new()
+	item.item_instance_id = _ids.next_id(ENTITY_KIND_ITEM)
+	item.definition_id = definition_id
+	item.quantity = quantity
+	item.location_type = ItemInstance.LOCATION_INVENTORY
+	item.location_id = inventory_id
+	item.slot_id = slot_id
+	if _registry.register(item.item_instance_id, ENTITY_KIND_ITEM) != OK:
+		return ""
+	_items[item.item_instance_id] = item
+	return item.item_instance_id
+
+
+## Save data of one detached inventory: {capacity: int, items:
+## [ItemInstance.to_dict()]} in slot order. {} when it is none.
+func detached_snapshot(inventory_id: String) -> Dictionary:
+	if not _detached.has(inventory_id):
+		return {}
+	var held: Array[ItemInstance] = items_in_inventory(inventory_id)
+	held.sort_custom(func(a: ItemInstance, b: ItemInstance) -> bool: return slot_index_of(a.slot_id) < slot_index_of(b.slot_id))
+	var items: Array[Dictionary] = []
+	for item: ItemInstance in held:
+		items.append(item.to_dict())
+	return {DETACHED_CAPACITY: _inventories[inventory_id], SNAPSHOT_ITEMS: items}
+
+
+## Errors of the save data of a detached inventory (detached_snapshot) that
+## is to come back as `inventory_id`; empty = restore_detached_snapshot will
+## accept it. Changes nothing.
+func check_detached_snapshot(inventory_id: String, snapshot: Dictionary) -> PackedStringArray:
+	var errors: PackedStringArray = []
+	if inventory_id.is_empty() or _inventories.has(inventory_id) or _registry.has(inventory_id) or _registry.is_tombstoned(inventory_id):
+		return PackedStringArray(["inventory %s is empty, in memory or removed" % inventory_id])
+	var capacity: Variant = snapshot.get(DETACHED_CAPACITY, null)
+	var items: Variant = snapshot.get(SNAPSHOT_ITEMS, null)
+	if not ItemInstance.is_integer_value(capacity) or int(capacity) < 1 or typeof(items) != TYPE_ARRAY:
+		return PackedStringArray(["inventory %s: capacity must be >= 1 and items an array" % inventory_id])
+	var seen_ids: Dictionary[String, bool] = {}
+	var seen_slots: Dictionary[int, bool] = {}
+	for entry: Variant in (items as Array):
+		var item: ItemInstance = ItemInstance.from_dict(entry as Dictionary) if typeof(entry) == TYPE_DICTIONARY else null
+		if item == null:
+			errors.append("inventory %s: invalid item entry" % inventory_id)
+			continue
+		var slot: int = slot_index_of(item.slot_id) if item.slot_id.begins_with(SLOT_PREFIX) and item.slot_id.trim_prefix(SLOT_PREFIX).is_valid_int() else -1
+		if item.location_type != ItemInstance.LOCATION_INVENTORY or item.location_id != inventory_id:
+			errors.append("inventory %s: item %s is not in it" % [inventory_id, item.item_instance_id])
+		elif slot < 0 or slot >= int(capacity) or seen_slots.has(slot):
+			errors.append("inventory %s: bad or doubled slot of %s" % [inventory_id, item.item_instance_id])
+		elif seen_ids.has(item.item_instance_id):
+			errors.append("inventory %s: duplicate item id %s" % [inventory_id, item.item_instance_id])
+		elif not _catalog.has(item.definition_id):
+			errors.append("inventory %s: unknown definition %s for %s" % [inventory_id, item.definition_id, item.item_instance_id])
+		seen_ids[item.item_instance_id] = true
+		seen_slots[slot] = true
+	return errors
+
+
+## Brings a saved detached inventory (detached_snapshot) back into memory
+## under its saved id, with the same item ids, stacks and slots. Everything
+## is validated first (check_detached_snapshot); on any error nothing
+## changes and the errors are returned.
+##
+## The item in memory wins over its saved copy, as in restore_cell_snapshot:
+## an item whose id is already in memory (somebody took it out) or was
+## retired (it merged away or was used up) is skipped and logged. This only
+## happens when the save data is older than the rest of the save.
+func restore_detached_snapshot(inventory_id: String, snapshot: Dictionary) -> PackedStringArray:
+	var errors: PackedStringArray = check_detached_snapshot(inventory_id, snapshot)
+	if not errors.is_empty():
+		return errors
+	_inventories[inventory_id] = int(snapshot[DETACHED_CAPACITY])
+	_detached[inventory_id] = true
+	_ids.reserve_existing_id(inventory_id)
+	_registry.register(inventory_id, ENTITY_KIND_INVENTORY)
+	var skipped: PackedStringArray = []
+	for entry: Variant in (snapshot[SNAPSHOT_ITEMS] as Array):
+		var item: ItemInstance = ItemInstance.from_dict(entry as Dictionary)
+		var item_id: String = item.item_instance_id
+		if _items.has(item_id) or _registry.has(item_id) or _registry.is_tombstoned(item_id):
+			skipped.append(item_id)
+			continue
+		_items[item_id] = item
+		_ids.reserve_existing_id(item_id)
+		_registry.register(item_id, ENTITY_KIND_ITEM)
+	if not skipped.is_empty():
+		GameLogger.warning("inventory", "saved container items skipped: already in memory or removed", {"inventory_id": inventory_id, "items": ", ".join(skipped), "operation": "restore_detached"})
+	return errors
+
+
+## Forgets a detached inventory and the items in it (call only after they
+## were saved, CLAUDE.md §6). The ids are released, not retired: everything
+## still exists in the save and comes back with restore_detached_snapshot().
+## Returns how many items left memory.
+func release_detached_inventory(inventory_id: String) -> int:
+	if not _detached.has(inventory_id):
+		return 0
+	var held: Array[ItemInstance] = items_in_inventory(inventory_id)
+	for item: ItemInstance in held:
+		_items.erase(item.item_instance_id)
+		_registry.release(item.item_instance_id)
+	_inventories.erase(inventory_id)
+	_detached.erase(inventory_id)
+	_registry.release(inventory_id)
+	return held.size()
+
+
 ## Plain-data snapshot for saving (sorted, deterministic). `saved_with_cell`
 ## (Callable(cell_id: String) -> bool, P3-1) names the cells whose world
 ## items are saved in a document of their own (cell_snapshot): those items
-## are left out here. Without it every item is in the snapshot.
+## are left out here. Without it every item is in the snapshot. Detached
+## inventories and their items are never in it (P3-3: their owner saves
+## them).
 func to_snapshot(saved_with_cell: Callable = Callable()) -> Dictionary:
 	var item_ids: PackedStringArray = PackedStringArray(_items.keys())
 	item_ids.sort()
@@ -975,13 +1136,16 @@ func to_snapshot(saved_with_cell: Callable = Callable()) -> Dictionary:
 		var in_world: bool = _world_positions.has(item_id)
 		if in_world and saved_with_cell.is_valid() and bool(saved_with_cell.call(item.location_id)):
 			continue
+		if not in_world and _detached.has(item.location_id):
+			continue
 		items.append(item.to_dict())
 		if in_world:
 			var p: Vector3 = _world_positions[item_id]
 			positions[item_id] = [p.x, p.y, p.z]
 	var inventories: Dictionary = {}
 	for inventory_id: String in _inventories:
-		inventories[inventory_id] = _inventories[inventory_id]
+		if not _detached.has(inventory_id):
+			inventories[inventory_id] = _inventories[inventory_id]
 	return {SNAPSHOT_ITEMS: items, SNAPSHOT_POSITIONS: positions, SNAPSHOT_INVENTORIES: inventories}
 
 
@@ -1044,6 +1208,7 @@ func restore_snapshot(snapshot: Dictionary) -> PackedStringArray:
 	_items = new_items
 	_world_positions = new_positions
 	_inventories = new_inventories
+	_detached.clear()
 	for inventory_id: String in _inventories:
 		_ids.reserve_existing_id(inventory_id)
 		if not _registry.has(inventory_id):

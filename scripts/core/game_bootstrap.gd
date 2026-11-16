@@ -91,6 +91,11 @@ func _start_network(config: LaunchConfig, settings: AppSettings, world_id: Strin
 		GameLogger.error("bootstrap", "invalid network settings", {"errors": "; ".join(errors), "operation": "start_network"})
 		return ERR_INVALID_DATA
 	var composition: CompositionConfig = CompositionConfig.from_defaults()
+	if config.is_server():
+		# P3-3: a dedicated server's world gets the test map content (buildings
+		# and containers), once. Compositions built elsewhere (tests, tools)
+		# get none unless they ask for it (docs/09 §15.3).
+		composition.map_content = MapContentDefinition.load_or_null()
 	errors = composition.validate()
 	if not errors.is_empty():
 		GameLogger.error("bootstrap", "invalid gameplay settings", {"errors": "; ".join(errors), "operation": "start_network"})

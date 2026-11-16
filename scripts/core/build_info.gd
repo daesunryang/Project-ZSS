@@ -103,7 +103,19 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    materials were added), and the "StructureNet" join fragment is schema 2
 ##    with a "workers" list. The owner of an inventory that materials left
 ##    gets the existing owner-only InventoryNet messages.
-const PROTOCOL_VERSION: int = 14
+## 15: P3-3 (containers, docs/00 ADR-026, docs/09 §15.3). New module
+##    ContainerNet: four intents (_rpc_request_container_open,
+##    _rpc_request_container_close, _rpc_request_container_take,
+##    _rpc_request_container_put) with one result (_rpc_container_result),
+##    containers to the peers that are told about their cell
+##    (_rpc_container_rows, _rpc_containers_removed), the session of the
+##    player that opened one (_rpc_container_session) and the changes of its
+##    content to whoever has it open (_rpc_container_items). The join
+##    snapshot has a "ContainerNet" fragment with the containers of the
+##    joining peer's cells. No existing RPC or message format changed; what a
+##    player takes out or puts in reaches it through the existing owner-only
+##    InventoryNet messages.
+const PROTOCOL_VERSION: int = 15
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

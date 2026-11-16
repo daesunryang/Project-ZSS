@@ -15,6 +15,8 @@ extends Node3D
 @onready var _inventory_label: Label = %InventoryLabel
 @onready var _consume_result_label: Label = %ConsumeResultLabel
 @onready var _trade_label: Label = %TradeLabel
+@onready var _containers_root: Node3D = %Containers
+@onready var _container_label: Label = %ContainerLabel
 @onready var _creation_screen: CharacterCreationScreen = %CharacterCreationScreen
 
 ## Children of a player's visual.
@@ -97,6 +99,24 @@ var _world_map: WorldMapVisuals = null
 ## known) and what that HUD line was built from.
 var _current_cell_id: String = ""
 var _map_hud_key: String = ""
+## Containers (P3-3): the requests and the mirror, the static definitions
+## (names), the markers and the hash of the mirror rows they were built from.
+var _container_module: ContainerNetModule = null
+var _container_state: ClientContainerState = null
+var _container_catalog: ContainerCatalog = null
+var _container_markers: ContainerMarkers = null
+var _containers_signature: int = 0
+## Flood guard of the container keys (same rule as the attack guard).
+var _container_policy: AttackIntentPolicy = null
+## The container the open key would name now, as last shown in the HUD ("" =
+## none in reach).
+var _container_candidate: String = ContainerIntentPolicy.NO_CONTAINER
+## The stack inside the open container the container cursor is on ("" =
+## nothing) and its position in the cursor order.
+var _container_selected_id: String = ContainerIntentPolicy.NO_SELECTION
+var _container_selected_index: int = 0
+## What the container HUD block was last built from.
+var _container_hud_key: String = ""
 
 
 func _ready() -> void:
@@ -127,6 +147,9 @@ func _ready() -> void:
 	_item_catalog = ItemCatalog.load_directory()
 	_world_item_markers = WorldItemMarkers.new(_world_items_root, _item_catalog, _presentation)
 	_world_map = WorldMapVisuals.new(_world_map_root, _presentation)
+	_container_policy = AttackIntentPolicy.new(_presentation.container_min_interval_sec)
+	_container_catalog = ContainerCatalog.load_directory()
+	_container_markers = ContainerMarkers.new(_containers_root, _container_catalog, _presentation)
 	var shared_keys: PackedStringArray = _presentation.keys_shared_with(_settings)
 	if not shared_keys.is_empty():
 		GameLogger.error("presentation", "client keys are also movement or pickup keys", {"settings": ", ".join(shared_keys), "operation": "client_view_ready"})
@@ -173,10 +196,22 @@ func _physics_process(_delta: float) -> void:
 	_update_camera()
 	_update_treat_target()
 	_update_pickup_candidate()
+	_update_container_candidate()
 	_update_map_hud()
 	# No game input while the character creation screen is open (P2-T9).
 	if not is_game_input_enabled():
 		return
+	# P3-3: the container keys. The cursor is local; the others ask the server.
+	if Input.is_action_just_pressed(ClientInputActions.CONTAINER_OPEN):
+		_press_container_open()
+	if Input.is_action_just_pressed(ClientInputActions.CONTAINER_PREVIOUS):
+		move_container_selection(-1)
+	if Input.is_action_just_pressed(ClientInputActions.CONTAINER_NEXT):
+		move_container_selection(1)
+	if Input.is_action_just_pressed(ClientInputActions.CONTAINER_TAKE):
+		_request_container_take()
+	if Input.is_action_just_pressed(ClientInputActions.CONTAINER_PUT):
+		_request_container_put()
 	# P3-2: the cell overlay, a testing aid (local only).
 	if Input.is_action_just_pressed(ClientInputActions.CELL_OVERLAY):
 		set_cell_overlay_visible(not is_cell_overlay_visible())
@@ -305,14 +340,25 @@ func _bind_network() -> void:
 		_map = cell_module.client_map
 		if not _map.changed.is_connected(_on_map_changed):
 			_map.changed.connect(_on_map_changed)
+	_container_module = _network.get_module(ContainerNetModule.MODULE_NAME) as ContainerNetModule
+	if _container_module != null:
+		_container_state = _container_module.client_state
+		if not _container_state.changed.is_connected(_on_container_state_changed):
+			_container_state.changed.connect(_on_container_state_changed)
+		if not _container_state.session_closed.is_connected(_on_container_closed):
+			_container_state.session_closed.connect(_on_container_closed)
+		if not _container_module.container_result.is_connected(_on_container_result):
+			_container_module.container_result.connect(_on_container_result)
 	_on_map_changed()
 	_sync_creation_screen()
 	_sync_player_visuals()
 	_sync_zombie_visuals()
 	_sync_world_item_markers()
+	_sync_container_markers()
 	_refresh_survival_hud()
 	_refresh_inventory_hud()
 	_refresh_trade_hud()
+	_refresh_container_hud()
 	_load_recent_events()
 
 
@@ -340,6 +386,7 @@ func _on_survival_state_changed() -> void:
 	_sync_player_visuals()
 	_refresh_survival_hud()
 	_refresh_trade_hud()
+	_refresh_container_hud()
 
 
 # ------------------------------------------------------------ map (P3-2)
@@ -947,6 +994,166 @@ func _on_trade_notice(notice: Dictionary) -> void:
 	for player_id: Variant in (ids as Array if typeof(ids) == TYPE_ARRAY else []):
 		names[str(player_id)] = _player_label(str(player_id))
 	_append_event_line(ClientPresentationFormatter.format_trade_notice(notice, names))
+
+
+# ------------------------------------------------------------ containers (P3-3)
+
+## The container the open key would name now ("" = none in reach).
+func container_candidate_id() -> String:
+	return _container_candidate
+
+
+## The stack inside the open container the container cursor is on ("" =
+## nothing is open, or it is empty).
+func selected_container_item_id() -> String:
+	return _container_selected_id
+
+
+## Moves the container cursor one stack forwards (`direction` > 0) or
+## backwards (< 0), wrapping at both ends. Local only: nothing is sent.
+func move_container_selection(direction: int) -> void:
+	if _container_state == null or not ContainerIntentPolicy.can_transfer(_container_state.phase()):
+		return
+	var contents: Array[Dictionary] = _container_state.contents()
+	_container_selected_id = ContainerIntentPolicy.step(contents, _container_selected_id, direction)
+	_container_selected_index = maxi(ContainerIntentPolicy.index_of(contents, _container_selected_id), 0)
+	_refresh_container_hud()
+
+
+## The mirror of the containers or of the local session changed: the
+## markers, and the HUD block.
+func _on_container_state_changed() -> void:
+	_sync_container_markers()
+	_refresh_container_hud()
+
+
+## Containers standing in the world: the markers are touched only when the
+## mirrored containers themselves changed.
+func _sync_container_markers() -> void:
+	if _container_state == null:
+		return
+	var signature: int = _container_state.containers.hash()
+	if signature == _containers_signature:
+		return
+	_containers_signature = signature
+	_container_markers.sync(_container_state.containers)
+
+
+## Keeps the HUD's "open" line current: the candidate changes when the local
+## player moves or a container appears or goes, without any signal of its
+## own.
+func _update_container_candidate() -> void:
+	var candidate: String = ContainerIntentPolicy.NO_CONTAINER
+	if _container_state != null and _state != null and not _state.local_player_id.is_empty() and _state.players.has(_state.local_player_id):
+		candidate = ContainerIntentPolicy.nearest_container_id(_state.position_of(_state.local_player_id), _container_state.containers, _presentation.container_candidate_range_m)
+	if candidate == _container_candidate:
+		return
+	_container_candidate = candidate
+	_refresh_container_hud()
+
+
+## Rebuilds the container block: what the open key would open, the running
+## search, or the content of the open container with its cursor. Hidden
+## while not joined and when there is nothing to say.
+func _refresh_container_hud() -> void:
+	if _container_state == null or _state == null or _state.local_player_id.is_empty():
+		_container_label.visible = false
+		return
+	var contents: Array[Dictionary] = _container_state.contents()
+	# The cursor follows the mirror: it stays on its stack, or takes the stack
+	# that is now at its place when that one left the container.
+	_container_selected_id = ContainerIntentPolicy.resolve(contents, _container_selected_id, _container_selected_index)
+	_container_selected_index = maxi(ContainerIntentPolicy.index_of(contents, _container_selected_id), 0)
+	var alive: bool = _survival_state == null or not _survival_state.has_player(_state.local_player_id) or _survival_state.is_alive(_state.local_player_id)
+	var open_label: String = ClientPresentationFormatter.container_display_name(str(_container_state.get_container(_container_state.open_container_id()).get(ClientContainerState.KEY_DEFINITION_ID, "")), _container_catalog)
+	var candidate_label: String = ClientPresentationFormatter.container_label(_container_state.get_container(_container_candidate), _container_catalog)
+	var lines: PackedStringArray = ClientPresentationFormatter.build_container_lines(_container_state.phase(), open_label, _container_state.search_sec(), contents, _item_catalog, _container_selected_id, candidate_label, alive, _presentation)
+	var key: String = "\n".join(lines)
+	if key == _container_hud_key and _container_label.visible == not lines.is_empty():
+		return
+	_container_hud_key = key
+	_container_label.text = key
+	_container_label.visible = not lines.is_empty()
+
+
+## True when a container key may send something now (joined, and the local
+## flood guard of the container keys allows it).
+func _container_key_allowed() -> bool:
+	var connected: bool = (
+		_container_module != null
+		and _container_state != null
+		and _network != null
+		and _network.is_client()
+		and _state != null
+		and not _state.local_player_id.is_empty()
+	)
+	return _container_policy.should_send(connected, _now_sec())
+
+
+## Container open key: closes the container that is open or being searched,
+## otherwise asks the server to open the nearest one in reach. Only the
+## container's id is sent; the server decides.
+func _press_container_open() -> void:
+	if not _container_key_allowed():
+		return
+	_update_container_candidate()
+	match ContainerIntentPolicy.open_key_action(_container_state.phase(), _container_candidate):
+		ContainerIntentPolicy.OpenAction.CLOSE:
+			_container_module.request_close(_container_state.open_container_id())
+		ContainerIntentPolicy.OpenAction.OPEN:
+			_container_module.request_open(_container_candidate)
+		_:
+			_show_consume_text(ClientPresentationFormatter.nothing_to_open_text())
+
+
+## Container take key: asks for units of the stack under the container
+## cursor (the whole stack with the stack modifier held). Only the ids and
+## the quantity are sent; the server decides.
+func _request_container_take() -> void:
+	if not _container_key_allowed():
+		return
+	if not ContainerIntentPolicy.can_transfer(_container_state.phase()):
+		_show_consume_text(ClientPresentationFormatter.container_not_open_text())
+		return
+	var quantity: int = ContainerIntentPolicy.take_quantity(_container_state.contents(), _container_selected_id, _presentation.container_transfer_quantity, Input.is_action_pressed(ClientInputActions.DROP_STACK))
+	if quantity == ContainerIntentPolicy.NOTHING_TO_MOVE:
+		_show_consume_text(ClientPresentationFormatter.nothing_to_take_text())
+		return
+	_container_module.request_take(_container_state.open_container_id(), _container_selected_id, quantity)
+
+
+## Container put key: asks to put units of the stack under the INVENTORY
+## cursor into the open container (the whole stack with the stack modifier
+## held).
+func _request_container_put() -> void:
+	if not _container_key_allowed():
+		return
+	if not ContainerIntentPolicy.can_transfer(_container_state.phase()):
+		_show_consume_text(ClientPresentationFormatter.container_not_open_text())
+		return
+	var quantity: int = ContainerIntentPolicy.put_quantity(_state.inventory, _selected_item_id, _presentation.container_transfer_quantity, Input.is_action_pressed(ClientInputActions.DROP_STACK))
+	if quantity == ContainerIntentPolicy.NOTHING_TO_MOVE:
+		_show_consume_text(ClientPresentationFormatter.nothing_to_put_text())
+		return
+	_container_module.request_put(_container_state.open_container_id(), _selected_item_id, quantity)
+
+
+## The answer to a container request: a refusal is shown where the use
+## results are shown (an accepted one shows in the HUD block).
+func _on_container_result(_request_id: int, ok: bool, reason: String) -> void:
+	var text: String = ClientPresentationFormatter.format_container_result(ok, reason)
+	if not text.is_empty():
+		_show_consume_text(text)
+
+
+## The server ended the local session (walked away, hit while searching,
+## ...): told where the use results are shown.
+func _on_container_closed(_container_id: String, reason: String) -> void:
+	_container_selected_id = ContainerIntentPolicy.NO_SELECTION
+	_container_selected_index = 0
+	var text: String = ClientPresentationFormatter.format_container_closed(reason)
+	if not text.is_empty():
+		_show_consume_text(text)
 
 
 ## Rest key (P2-T8): asks the server to lie down, or to get up when the

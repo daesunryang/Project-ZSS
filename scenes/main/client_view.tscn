@@ -33,6 +33,9 @@ unique_name_in_owner = true
 [node name="WorldItems" type="Node3D" parent="."]
 unique_name_in_owner = true
 
+[node name="Containers" type="Node3D" parent="."]
+unique_name_in_owner = true
+
 [node name="Camera" type="Camera3D" parent="."]
 unique_name_in_owner = true
 current = true
@@ -119,6 +122,19 @@ offset_top = 548.0
 offset_right = 640.0
 offset_bottom = 660.0
 text = "거래"
+
+[node name="ContainerLabel" type="Label" parent="Hud"]
+unique_name_in_owner = true
+visible = false
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -620.0
+offset_top = 190.0
+offset_right = -8.0
+offset_bottom = 420.0
+grow_horizontal = 0
+text = "보관함"
 
 [node name="ConsumeResultLabel" type="Label" parent="Hud"]
 unique_name_in_owner = true

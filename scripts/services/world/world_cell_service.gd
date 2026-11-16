@@ -199,6 +199,40 @@ func load_all_saved_cells(world: ServerWorld) -> PackedStringArray:
 	return failed
 
 
+## Brings one cell into memory now (it becomes PRELOADED), whether or not a
+## player is near (P3-3: a server rule that places entities in a cell nobody
+## stands in, like the seeding of the map content). True when the cell is in
+## memory afterwards. A cell loaded this way is released by the normal rules,
+## or at once by release_cells_now().
+func load_cell_now(world: ServerWorld, cell_id: String) -> bool:
+	if is_loaded(cell_id):
+		return true
+	if state_of(cell_id) != WorldCellLifecycle.State.UNLOADED or not world.cell_grid.is_valid_cell_id(cell_id):
+		return false
+	return _load(world, cell_id, world.clock.action_time_sec)
+
+
+## Saves and releases these cells now, without waiting for the unload delay
+## (P3-3; the counterpart of load_cell_now). Only cells that are PRELOADED
+## and not next to an ACTIVE cell are released: a cell a player needs stays.
+## Without a store nothing is released (a world without one never releases a
+## cell) and OK is returned. Returns the error of the save when it failed;
+## the cells then stay in memory.
+func release_cells_now(world: ServerWorld, cell_ids: PackedStringArray) -> Error:
+	if _store == null:
+		return OK
+	var releasable: PackedStringArray = []
+	for cell_id: String in cell_ids:
+		if state_of(cell_id) == WorldCellLifecycle.State.PRELOADED and not _has_active_neighbour(world.cell_grid, cell_id) and not releasable.has(cell_id):
+			releasable.append(cell_id)
+	if releasable.is_empty():
+		return OK
+	releasable.sort()
+	var failed_before: int = failed_save_count
+	_unload(world, releasable, world.clock.action_time_sec)
+	return OK if failed_save_count == failed_before else ERR_CANT_CREATE
+
+
 ## Loads the cell of every entity that is in memory in a cell that is not
 ## loaded (see "strays" in the header). Part of every look; also called
 ## before a save, so that a save never writes a cell without what was

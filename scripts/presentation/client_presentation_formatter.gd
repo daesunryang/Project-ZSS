@@ -723,3 +723,148 @@ static func format_trade_notice(notice: Dictionary, names: Dictionary) -> String
 	var first: String = str((ids as Array)[0])
 	var second: String = str((ids as Array)[1])
 	return "%s ↔ %s 거래" % [str(names.get(first, first)), str(names.get(second, second))]
+
+
+# ------------------------------------------------------------ containers (P3-3)
+
+## Name shown for a container definition: its display name, or its id when
+## the definition or its name is missing.
+static func container_display_name(definition_id: String, catalog: ContainerCatalog) -> String:
+	var definition: ContainerDefinition = catalog.get_definition(definition_id) if catalog != null else null
+	return definition.display_name if definition != null and not definition.display_name.is_empty() else definition_id
+
+
+## Label of a container standing in the world (a mirror row of
+## ClientContainerState.containers): its name, with "(수색 전)" until somebody
+## searched it. "" for a row that is no container.
+static func container_label(entry: Dictionary, catalog: ContainerCatalog) -> String:
+	var definition_id: Variant = entry.get(ClientContainerState.KEY_DEFINITION_ID, null)
+	if typeof(definition_id) != TYPE_STRING or str(definition_id).is_empty():
+		return ""
+	var container_name: String = container_display_name(str(definition_id), catalog)
+	return container_name if entry.get(ClientContainerState.KEY_SEARCHED, false) == true else "%s (수색 전)" % container_name
+
+
+## HUD block of the containers (P3-3). `phase` is the mirrored session's
+## (ClientContainerState.phase()):
+##   no session   one line naming what the open key would open
+##                (`candidate_label`, a container_label()); nothing at all
+##                when no container is in reach
+##   searching    "<name> 수색 중" with the length of the search and the key
+##                that gives up
+##   open         a header with the container's name, the number of stacks
+##                inside and the keys, then one line per stack ("name x
+##                quantity") in cursor order (ContainerIntentPolicy), the line
+##                of `selected_id` marked with ">". At most
+##                `settings.hud_container_line_count` stacks are listed, a
+##                window that always contains the cursor.
+## `open_label` is the name of the container of the session. Nothing is
+## shown for a dead character.
+static func build_container_lines(phase: String, open_label: String, search_sec: float, contents: Array[Dictionary], item_catalog: ItemCatalog, selected_id: String, candidate_label: String, alive: bool, settings: ClientPresentationSettings) -> PackedStringArray:
+	var lines: PackedStringArray = []
+	if not alive:
+		return lines
+	var open_key: String = key_label(settings.container_open_key)
+	if phase == ClientContainerState.PHASE_SEARCHING:
+		lines.append("%s 수색 중 (%.1f초) | 그만두기 [%s]" % [open_label, search_sec, open_key])
+		return lines
+	if phase != ClientContainerState.PHASE_OPEN:
+		if not candidate_label.is_empty():
+			lines.append("보관함 열기 [%s]: %s" % [open_key, candidate_label])
+		return lines
+	var ids: PackedStringArray = ContainerIntentPolicy.ordered_item_ids(contents)
+	var modifier: String = key_label(settings.drop_stack_modifier_key)
+	lines.append("%s (%d) | 선택 [%s/%s] 꺼내기 [%s] 넣기 [%s] 묶음째 [%s+키] 닫기 [%s]" % [
+		open_label, ids.size(),
+		key_label(settings.container_previous_key), key_label(settings.container_next_key),
+		key_label(settings.container_take_key), key_label(settings.container_put_key),
+		modifier, open_key,
+	])
+	if ids.is_empty():
+		lines.append("  비어 있음")
+		return lines
+	var rows: Dictionary[String, Dictionary] = {}
+	for entry: Dictionary in contents:
+		if ContainerIntentPolicy.quantity_of_row(entry) >= 1:
+			rows[str(entry[ClientContainerState.KEY_ITEM_ID])] = entry
+	var listed: int = mini(ids.size(), maxi(settings.hud_container_line_count, 1))
+	var first: int = clampi(maxi(ids.find(selected_id), 0) - (listed >> 1), 0, ids.size() - listed)
+	if first > 0:
+		lines.append("  ... 위 %d개" % first)
+	for index: int in range(first, first + listed):
+		var entry: Dictionary = rows[ids[index]]
+		var definition_id: Variant = entry.get(ClientContainerState.KEY_DEFINITION_ID, null)
+		var item_name: String = item_display_name(str(definition_id), item_catalog) if typeof(definition_id) == TYPE_STRING else "?"
+		lines.append("%s %s x%d" % [">" if ids[index] == selected_id else " ", item_name, ContainerIntentPolicy.quantity_of_row(entry)])
+	if first + listed < ids.size():
+		lines.append("  ... 아래 %d개" % (ids.size() - first - listed))
+	return lines
+
+
+## Server answer to a container request of any kind (open, close, take,
+## put). "" for an accepted one: what changed shows in the HUD. What the
+## player can do something about is told as a sentence; everything else keeps
+## its code.
+static func format_container_result(ok: bool, reason: String) -> String:
+	if ok:
+		return ""
+	match reason:
+		ContainerService.REASON_TOO_FAR:
+			return "보관함 거부: 너무 멉니다"
+		ContainerService.REASON_UNKNOWN_CONTAINER:
+			return "보관함 거부: 그런 보관함이 없습니다"
+		ContainerService.REASON_NOT_OPEN:
+			return "보관함 거부: 먼저 보관함을 여세요"
+		ContainerService.REASON_SEARCHING:
+			return "보관함 거부: 아직 수색 중입니다"
+		ContainerService.REASON_ALREADY_OPEN:
+			return "보관함 거부: 이미 열려 있습니다"
+		ContainerService.REASON_ITEM_NOT_INSIDE:
+			return "꺼내기 거부: 보관함에 없는 아이템입니다 (다른 사람이 먼저 꺼냈을 수 있습니다)"
+		ContainerService.REASON_ITEM_NOT_CARRIED:
+			return "넣기 거부: 가지고 있지 않은 아이템입니다"
+		ContainerService.REASON_CONTAINER_FULL:
+			return "넣기 거부: 보관함이 가득 찼습니다"
+		InventoryService.REASON_INVENTORY_FULL:
+			return "꺼내기 거부: 소지품이 가득 찼습니다"
+		InventoryService.REASON_BAD_QUANTITY:
+			return "보관함 거부: 수량이 맞지 않습니다 (다른 사람이 먼저 꺼냈을 수 있습니다)"
+		NetworkService.RATE_LIMITED:
+			return "보관함 거부: 요청이 너무 잦습니다"
+	return "보관함 거부: %s" % reason
+
+
+## Notice for a session the server ended (ClientContainerState.
+## session_closed). "" when the player asked for it or opened another
+## container, and for a dead character (the death message says enough).
+static func format_container_closed(reason: String) -> String:
+	match reason:
+		ContainerService.REASON_CLOSED, ContainerService.REASON_SWITCHED, "player_dead":
+			return ""
+		ContainerService.REASON_TOO_FAR:
+			return "보관함에서 멀어져 닫혔습니다"
+		ContainerService.REASON_INTERRUPTED:
+			return "공격을 받아 수색이 중단됐습니다"
+		ContainerService.REASON_CONTAINER_GONE:
+			return "보관함이 범위를 벗어나 닫혔습니다"
+		"player_resting":
+			return "누워서 보관함이 닫혔습니다"
+	return "보관함이 닫혔습니다: %s" % reason
+
+
+## Local notices: a container key was pressed but there is nothing to ask
+## for (no request was sent).
+static func nothing_to_open_text() -> String:
+	return "가까이에 보관함이 없습니다"
+
+
+static func container_not_open_text() -> String:
+	return "열린 보관함이 없습니다"
+
+
+static func nothing_to_take_text() -> String:
+	return "꺼낼 아이템이 없습니다"
+
+
+static func nothing_to_put_text() -> String:
+	return "넣을 아이템이 없습니다"

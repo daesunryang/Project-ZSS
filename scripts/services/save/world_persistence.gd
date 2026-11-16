@@ -47,6 +47,13 @@ func load_or_create(world_id: String) -> ServerWorld:
 		return null
 	if cells != null and cells.needs_repartition() and not _repartition(world, cells, store, loaded["cell_ids"] as PackedStringArray):
 		return null
+	# P3-3: a world that was saved before it got the configured map content
+	# gets it now, once (a new world got it when it was seeded). The seeding
+	# saves what it placed; a world that has it already is left alone.
+	var map_content: MapContentService = world.get_system(MapContentService.SYSTEM_ID) as MapContentService
+	if map_content != null and map_content.ensure_seeded(world) != OK:
+		GameLogger.fatal("save", "the map content could not be placed in the saved world", {"world_id": world_id, "operation": "seed_map"})
+		return null
 	return world
 
 
