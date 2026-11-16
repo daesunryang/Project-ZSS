@@ -29,6 +29,9 @@ var _last_save_error: Error = OK
 
 ## Diagnostics exposed through server Performance custom monitors.
 var last_save_build_msec: float = 0.0
+var last_save_documents_msec: float = 0.0
+var last_save_snapshot_msec: float = 0.0
+var last_save_validation_msec: float = 0.0
 var last_save_write_msec: float = 0.0
 var saves_coalesced: int = 0
 
@@ -101,6 +104,7 @@ func request_save(world: ServerWorld, completed: Callable = Callable(), keep_res
 		return request_id
 	var request: Dictionary = {
 		"snapshot": built["snapshot"],
+		"cell_cache_updates": built.get("cell_cache_updates", {}),
 		"world": world,
 		"request_ids": [request_id],
 		"callbacks": [completed],
@@ -116,6 +120,7 @@ func request_save(world: ServerWorld, completed: Callable = Callable(), keep_res
 			_pending = request
 		else:
 			_pending["snapshot"] = request["snapshot"]
+			_pending["cell_cache_updates"] = request["cell_cache_updates"]
 			_pending["world"] = world
 			(_pending["request_ids"] as Array).append(request_id)
 			(_pending["callbacks"] as Array).append(completed)
@@ -159,8 +164,18 @@ func _build_snapshot(world: ServerWorld) -> Dictionary:
 	var now: int = int(Time.get_unix_time_from_system())
 	for player_id: String in world.online_player_ids():
 		world.get_player(player_id).last_saved_at_utc = now
+	var documents_started_usec: int = Time.get_ticks_usec()
 	var documents: Dictionary = world.to_documents()
-	var built: Dictionary = _save.build_snapshot(world.world_id, documents["world_state"], documents["players"], documents["cells"], bool(documents["replace_cells"]))
+	last_save_documents_msec = float(Time.get_ticks_usec() - documents_started_usec) / 1000.0
+	var cells: WorldCellService = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
+	var cache_updates: Dictionary = cells.take_save_cache_updates() if cells != null else {}
+	var snapshot_started_usec: int = Time.get_ticks_usec()
+	# to_documents() returns fresh immutable save data; cached cell documents
+	# are replaced, never mutated. Validation and serialization belong to the
+	# worker, so the main thread neither walks nor deep-copies the full tree.
+	var built: Dictionary = _save.build_snapshot(world.world_id, documents["world_state"], documents["players"], documents["cells"], bool(documents["replace_cells"]), false, false)
+	last_save_snapshot_msec = float(Time.get_ticks_usec() - snapshot_started_usec) / 1000.0
+	built["cell_cache_updates"] = cache_updates
 	last_save_build_msec = float(Time.get_ticks_usec() - started_usec) / 1000.0
 	if int(built["error"]) != OK:
 		GameLogger.error("save", str(built["message"]), {"world_id": world.world_id, "error": error_string(int(built["error"])), "operation": "build_save"})
@@ -210,13 +225,14 @@ func _finish_worker(token: int) -> void:
 
 func _complete_request_batch(request: Dictionary, result: Dictionary) -> void:
 	last_save_write_msec = float(result.get("write_msec", 0.0))
+	last_save_validation_msec = float(result.get("validation_msec", 0.0))
 	var world: ServerWorld = request["world"] as ServerWorld
 	var error: Error = int(result.get("error", FAILED))
 	_last_save_error = error
 	if error == OK:
 		var cells: WorldCellService = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
 		if cells != null:
-			cells.on_world_saved()
+			cells.on_world_saved(request.get("cell_cache_updates", {}))
 		GameLogger.info("save", "world saved", {"world_id": world.world_id, "generation": result.get("generation", 0), "documents": result.get("documents", 0), "written": result.get("written", 0), "write_msec": last_save_write_msec})
 	else:
 		GameLogger.error("save", str(result.get("message", "world save failed")), {"world_id": world.world_id, "error": error_string(error), "operation": "save_world"})

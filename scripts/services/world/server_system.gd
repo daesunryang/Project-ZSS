@@ -13,6 +13,15 @@ extends RefCounted
 ## Default implementations are intentional no-ops for optional hooks;
 ## get_system_id() must be overridden.
 
+## Emitted after persistent state inside one loaded cell changes. False
+## positives only rebuild a document; a missed signal could lose state.
+signal cell_save_dirty(cell_id: String)
+
+
+func mark_cell_save_dirty(cell_id: String) -> void:
+	if not cell_id.is_empty():
+		cell_save_dirty.emit(cell_id)
+
 
 ## Unique snake_case id; also the save key. Must be overridden.
 func get_system_id() -> String:

@@ -15,6 +15,9 @@ var _entries: Dictionary[String, Array] = {}
 ## cell_id -> {entity_id: kind}
 var _cells: Dictionary[String, Dictionary] = {}
 
+## Membership changes dirty both the old and new cell save documents.
+signal cells_changed(previous_cell_id: String, cell_id: String)
+
 
 ## Puts an entity into a cell, or moves it there (a zombie crossed a
 ## border). Returns the cell it was in before ("" for a new entity; the same
@@ -32,6 +35,7 @@ func put(entity_id: String, kind: String, cell_id: String) -> String:
 	if not _cells.has(cell_id):
 		_cells[cell_id] = {}
 	_cells[cell_id][entity_id] = kind
+	cells_changed.emit(previous, cell_id)
 	return previous
 
 
@@ -39,8 +43,10 @@ func put(entity_id: String, kind: String, cell_id: String) -> String:
 func remove(entity_id: String) -> bool:
 	if not _entries.has(entity_id):
 		return false
-	_remove_from_cell(entity_id, str(_entries[entity_id][0]))
+	var previous: String = str(_entries[entity_id][0])
+	_remove_from_cell(entity_id, previous)
 	_entries.erase(entity_id)
+	cells_changed.emit(previous, "")
 	return true
 
 

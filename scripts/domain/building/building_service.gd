@@ -732,6 +732,8 @@ func resolve_movement_step(mover_kind: String, from: Vector3, to: Vector3) -> Ve
 ## dedicated server.
 func to_world_document() -> Dictionary:
 	var world: ServerWorld = _world()
+	if world != null and world.saves_all_loaded_entities_in_cells():
+		return {}
 	var structures: Array[Dictionary] = []
 	for structure_id: String in _structures:
 		var structure: StructureInstance = _structures[structure_id]
@@ -1055,6 +1057,7 @@ func _read_structures(document: Dictionary, expected_version: int, context: Stri
 
 ## Records one event: the frame plus the structure's public row.
 func _push_event(event_type: String, structure: StructureInstance, player_id: String, fields: Dictionary) -> Dictionary:
+	mark_cell_save_dirty(structure.cell_id)
 	var event: Dictionary = {"event_type": event_type, "world_time": _clock.world_time_sec, "player_id": player_id, "cell_id": structure.cell_id}
 	event.merge(public_row(structure))
 	event.merge(fields)
@@ -1142,6 +1145,7 @@ func _add_work(world: ServerWorld, structure: StructureInstance, work_sec: float
 	if progress > structure.construction_progress:
 		structure.construction_progress = progress
 		structure.last_modified_at = _clock.world_time_sec
+		mark_cell_save_dirty(structure.cell_id)
 	var started: bool = structure.construction_state == StructureInstance.State.BLUEPRINT and progress > StructureInstance.NO_PROGRESS
 	if started:
 		structure.construction_state = StructureInstance.State.CONSTRUCTING

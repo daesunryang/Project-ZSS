@@ -59,6 +59,8 @@ extends RefCounted
 
 ## A transaction was committed. `event` is a copy of the ActionResult event.
 signal transaction_committed(event: Dictionary)
+## A committed transaction changed a world item in this cell.
+signal cell_save_dirty(cell_id: String)
 
 const ENTITY_KIND_ITEM: String = "item"
 const ENTITY_KIND_INVENTORY: String = "inventory"
@@ -1340,6 +1342,12 @@ func _dropped_event(inventory_id: String, item_instance_ids: Array, cell_id: Str
 ## Announces a committed transaction and wraps it as the command result.
 ## Listeners get their own copy, so they cannot alter the caller's result.
 func _commit(event: Dictionary) -> ActionResult:
+	var from_cell_id: String = str(event.get("from_cell_id", ""))
+	var cell_id: String = str(event.get("cell_id", ""))
+	if not from_cell_id.is_empty():
+		cell_save_dirty.emit(from_cell_id)
+	if not cell_id.is_empty() and cell_id != from_cell_id:
+		cell_save_dirty.emit(cell_id)
 	transaction_committed.emit(event.duplicate(true))
 	return ActionResult.success(event)
 

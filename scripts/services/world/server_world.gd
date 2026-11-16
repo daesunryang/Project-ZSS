@@ -94,6 +94,8 @@ var _system_order: Array[ServerSystem] = []
 ## The systems that can stop a mover (ServerSystem.constrains_movement), in
 ## registration order (P3-4a). Empty in a world without structures.
 var _movement_constraints: Array[ServerSystem] = []
+## Microsecond breakdown of the most recent to_documents() call.
+var last_document_build_usec: Dictionary[String, int] = {}
 
 
 func _init(id: String, gameplay_settings: GameplaySettings, catalog: ItemCatalog) -> void:
@@ -101,6 +103,8 @@ func _init(id: String, gameplay_settings: GameplaySettings, catalog: ItemCatalog
 	gameplay = gameplay_settings
 	inventory = InventoryService.new(catalog, ids, registry, gameplay.pickup_range_m, gameplay.world_half_extent_m, cell_index)
 	inventory.merge_on_pickup = gameplay.merge_stacks_on_pickup
+	cell_index.cells_changed.connect(_on_index_cells_changed)
+	inventory.cell_save_dirty.connect(_on_cell_save_dirty)
 
 
 ## Populates a brand-new world from the development seed.
@@ -136,10 +140,22 @@ func register_system(system: ServerSystem) -> Error:
 	_system_order.append(system)
 	if system is WorldCellService:
 		_cells = system as WorldCellService
+	system.cell_save_dirty.connect(_on_cell_save_dirty)
 	if system.constrains_movement():
 		_movement_constraints.append(system)
 	system.on_registered(self)
 	return OK
+
+
+func _on_index_cells_changed(previous_cell_id: String, cell_id: String) -> void:
+	_on_cell_save_dirty(previous_cell_id)
+	if cell_id != previous_cell_id:
+		_on_cell_save_dirty(cell_id)
+
+
+func _on_cell_save_dirty(cell_id: String) -> void:
+	if _cells != null:
+		_cells.mark_cell_dirty(cell_id)
 
 
 ## Registered system by id, or null.
@@ -568,28 +584,38 @@ func clamp_to_world(position: Vector3) -> Vector3:
 ## a cell store "cells" is empty. "replace_cells": every other saved cell
 ## file is out of date (SaveService.save_world).
 func to_documents() -> Dictionary:
+	last_document_build_usec = {}
+	var total_started_usec: int = Time.get_ticks_usec()
 	# First: it may bring cells (and their saved entities) into memory.
+	var part_started_usec: int = Time.get_ticks_usec()
 	var cell_documents: Dictionary = _cells.cell_documents_for_save(self) if _cells != null else {}
+	last_document_build_usec["cells"] = Time.get_ticks_usec() - part_started_usec
 	var keys: Dictionary = {}
 	for key: String in _player_ids_by_key:
 		keys[key] = _player_ids_by_key[key]
+	part_started_usec = Time.get_ticks_usec()
+	var inventory_document: Dictionary = inventory.to_snapshot(saves_cell_document)
+	last_document_build_usec["world.inventory"] = Time.get_ticks_usec() - part_started_usec
 	var world_state: Dictionary = {
 		"schema_version": SCHEMA_VERSION,
 		"world_id": world_id,
 		"next_entity_sequence": ids.get_next_sequence(),
 		"tombstones": Array(registry.tombstones()),
 		"player_keys": keys,
-		"inventory": inventory.to_snapshot(saves_cell_document),
+		"inventory": inventory_document,
 		KEY_WORLD_TIME: clock.world_time_sec,
 		KEY_ACTION_TIME: clock.action_time_sec,
 	}
 	var system_docs: Dictionary = {}
 	for system: ServerSystem in _system_order:
+		part_started_usec = Time.get_ticks_usec()
 		var document: Dictionary = system.to_world_document()
+		last_document_build_usec["world.system.%s" % system.get_system_id()] = Time.get_ticks_usec() - part_started_usec
 		if not document.is_empty():
 			system_docs[system.get_system_id()] = document
 	world_state[KEY_SYSTEMS] = system_docs
 	var players: Dictionary = {}
+	part_started_usec = Time.get_ticks_usec()
 	for player_id: String in _players:
 		var player_doc: Dictionary = _players[player_id].to_dict()
 		var fragments: Dictionary = {}
@@ -599,6 +625,8 @@ func to_documents() -> Dictionary:
 				fragments[system.get_system_id()] = fragment
 		player_doc[KEY_SYSTEMS] = fragments
 		players[player_id] = player_doc
+	last_document_build_usec["players"] = Time.get_ticks_usec() - part_started_usec
+	last_document_build_usec["total"] = Time.get_ticks_usec() - total_started_usec
 	return {"world_state": world_state, "players": players, "cells": cell_documents, "replace_cells": _cells != null and _cells.replaces_saved_cells()}
 
 
@@ -793,6 +821,10 @@ func saves_cell_document(cell_id: String) -> bool:
 	return _cells != null and _cells.saves_cell_document(cell_id)
 
 
+func saves_all_loaded_entities_in_cells() -> bool:
+	return _cells != null and _cells.saves_all_loaded_entities_in_cells()
+
+
 ## Brings the entities of cell documents that were written for ANOTHER
 ## cell grid into memory ({cell_id: document}) and gives every world item
 ## the cell of its position (zombies are indexed by position anyway). The
@@ -817,10 +849,19 @@ func repartition_from(cell_documents: Dictionary) -> PackedStringArray:
 func cell_document(cell_id: String) -> Dictionary:
 	var system_docs: Dictionary = {}
 	for system: ServerSystem in _system_order:
+		var started_usec: int = Time.get_ticks_usec()
 		var document: Dictionary = system.to_cell_document(cell_id)
+		_add_document_build_usec("cell.system.%s" % system.get_system_id(), Time.get_ticks_usec() - started_usec)
 		if not document.is_empty():
 			system_docs[system.get_system_id()] = document
-	return WorldCellDocument.create(cell_id, inventory.cell_snapshot(cell_id), system_docs)
+	var inventory_started_usec: int = Time.get_ticks_usec()
+	var inventory_document: Dictionary = inventory.cell_snapshot(cell_id)
+	_add_document_build_usec("cell.inventory", Time.get_ticks_usec() - inventory_started_usec)
+	return WorldCellDocument.create(cell_id, inventory_document, system_docs)
+
+
+func _add_document_build_usec(key: String, elapsed_usec: int) -> void:
+	last_document_build_usec[key] = int(last_document_build_usec.get(key, 0)) + elapsed_usec
 
 
 ## Brings the saved entities of a cell back into memory ({} = nothing was

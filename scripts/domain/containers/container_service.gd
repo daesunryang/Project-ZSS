@@ -564,6 +564,8 @@ func to_world_document() -> Dictionary:
 	var world: ServerWorld = _world()
 	if world == null:
 		return {}
+	if world.saves_all_loaded_entities_in_cells():
+		return {}
 	var containers: Array[Dictionary] = []
 	for container_id: String in _containers:
 		var container: ContainerInstance = _containers[container_id]
@@ -855,6 +857,7 @@ func _push_row_event(event_type: String, container: ContainerInstance) -> Dictio
 
 
 func _push_event(event: Dictionary) -> void:
+	mark_cell_save_dirty(str(event.get("cell_id", "")))
 	_events.append(event)
 	while _events.size() > _settings.max_pending_events:
 		_events.pop_front()

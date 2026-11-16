@@ -105,10 +105,10 @@ func save_world(world_id: String, world_state: Dictionary, players: Dictionary, 
 	return OK
 
 
-## Validates and deep-copies a world save on the main thread. The returned
-## snapshot contains JSON-safe values only and is never mutated by the writer.
-## JSON serialization deliberately happens later in write_snapshot().
-func build_snapshot(world_id: String, world_state: Dictionary, players: Dictionary, cells: Dictionary = {}, replace_cells: bool = false) -> Dictionary:
+## Assembles a world save snapshot. Direct callers keep validation and a
+## defensive deep copy by default. WorldPersistence passes fresh immutable
+## documents and defers validation to write_snapshot() on its worker.
+func build_snapshot(world_id: String, world_state: Dictionary, players: Dictionary, cells: Dictionary = {}, replace_cells: bool = false, validate_documents: bool = true, copy_documents: bool = true) -> Dictionary:
 	if not LaunchConfig.is_valid_world_id(world_id):
 		return {"error": ERR_INVALID_PARAMETER, "message": "invalid world id", "snapshot": {}}
 	var documents: Dictionary[String, Dictionary] = {WORLD_STATE_FILE: world_state}
@@ -125,15 +125,13 @@ func build_snapshot(world_id: String, world_state: Dictionary, players: Dictiona
 			dropped.append(cell_file(str(cell_id)))
 		else:
 			documents[cell_file(str(cell_id))] = cells[cell_id]
-	for rel_path: String in documents:
-		var document: Dictionary = documents[rel_path]
-		if not document.has(SaveMigrator.KEY_SCHEMA_VERSION):
-			return {"error": ERR_INVALID_DATA, "message": "document without schema_version: " + rel_path, "snapshot": {}}
-		if not is_json_safe(document):
-			return {"error": ERR_INVALID_DATA, "message": "document contains non-JSON values: " + rel_path, "snapshot": {}}
+	if validate_documents:
+		var validation: Dictionary = _validate_documents(documents)
+		if int(validation["error"]) != OK:
+			return {"error": validation["error"], "message": validation["message"], "snapshot": {}}
 	var snapshot: Dictionary = {
 		"world_id": world_id,
-		"documents": documents.duplicate(true),
+		"documents": documents.duplicate(true) if copy_documents else documents,
 		"dropped": dropped.duplicate(),
 		"replace_cells": replace_cells,
 		"saved_at_utc": int(Time.get_unix_time_from_system()),
@@ -154,6 +152,13 @@ static func write_snapshot(root: String, backup_keep: int, snapshot: Dictionary)
 func _write_snapshot(snapshot: Dictionary) -> Dictionary:
 	var world_id: String = str(snapshot["world_id"])
 	var documents: Dictionary = snapshot["documents"] as Dictionary
+	var validation_started_usec: int = Time.get_ticks_usec()
+	var validation: Dictionary = _validate_documents(documents)
+	var validation_msec: float = float(Time.get_ticks_usec() - validation_started_usec) / 1000.0
+	if int(validation["error"]) != OK:
+		var invalid: Dictionary = _write_failure(str(validation["message"]), int(validation["error"]))
+		invalid["validation_msec"] = validation_msec
+		return invalid
 	var dropped: PackedStringArray = snapshot["dropped"] as PackedStringArray
 	var replace_cells: bool = bool(snapshot["replace_cells"])
 
@@ -232,11 +237,23 @@ func _write_snapshot(snapshot: Dictionary) -> Dictionary:
 		return _write_failure("manifest write failed", ERR_FILE_CANT_WRITE)
 	_remove_files(base, removed)
 	_prune_backups(base, new_generation)
-	return {"error": OK, "message": "", "generation": new_generation, "documents": documents.size(), "written": texts.size()}
+	return {"error": OK, "message": "", "generation": new_generation, "documents": documents.size(), "written": texts.size(), "validation_msec": validation_msec}
 
 
 static func _write_failure(message: String, code: Error) -> Dictionary:
 	return {"error": code, "message": message, "generation": 0, "documents": 0, "written": 0}
+
+
+static func _validate_documents(documents: Dictionary) -> Dictionary:
+	for rel_path: Variant in documents:
+		if typeof(rel_path) != TYPE_STRING or typeof(documents[rel_path]) != TYPE_DICTIONARY:
+			return {"error": ERR_INVALID_DATA, "message": "invalid document entry: " + str(rel_path)}
+		var document: Dictionary = documents[rel_path]
+		if not document.has(SaveMigrator.KEY_SCHEMA_VERSION):
+			return {"error": ERR_INVALID_DATA, "message": "document without schema_version: " + str(rel_path)}
+		if not is_json_safe(document):
+			return {"error": ERR_INVALID_DATA, "message": "document contains non-JSON values: " + str(rel_path)}
+	return {"error": OK, "message": ""}
 
 
 ## Ids of the cells the current save has a file for, sorted.

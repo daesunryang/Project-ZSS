@@ -451,6 +451,7 @@ func _step_zombies(world: ServerWorld, action_delta: float) -> void:
 	var now: float = _clock.action_time_sec
 	_remove_old_corpses(now)
 	for zombie_id: String in _awake:
+		mark_cell_save_dirty(world.cell_index.cell_of(zombie_id))
 		_move(world, _zombies[zombie_id], action_delta)
 	_drain_navigation_plans(world)
 	for zombie_id: String in _falling_asleep:
@@ -483,10 +484,11 @@ func _step_zombies(world: ServerWorld, action_delta: float) -> void:
 func to_world_document() -> Dictionary:
 	var world: ServerWorld = _world()
 	var zombies: Array[Dictionary] = []
-	for zombie_id: String in _zombies:
-		if world != null and world.saves_cell_document(world.cell_index.cell_of(zombie_id)):
-			continue
-		zombies.append(_zombies[zombie_id].to_dict())
+	if world == null or not world.saves_all_loaded_entities_in_cells():
+		for zombie_id: String in _zombies:
+			if world != null and world.saves_cell_document(world.cell_index.cell_of(zombie_id)):
+				continue
+			zombies.append(_zombies[zombie_id].to_dict())
 	return {
 		"schema_version": SCHEMA_VERSION,
 		# 64-bit values are stored as strings: JSON numbers would lose precision.
@@ -539,12 +541,16 @@ func restore_world_document(document: Dictionary) -> PackedStringArray:
 ## The cell became ACTIVE: its zombies are stepped from now on. They do not
 ## hear what rang before they woke (see the header).
 func on_cell_activated(world: ServerWorld, cell_id: String) -> void:
+	var changed: bool = false
 	for zombie_id: String in world.cell_index.entities_in_cell(cell_id, ENTITY_KIND_ZOMBIE):
 		var zombie: ZombieState = _zombies.get(zombie_id, null)
 		if zombie == null:
 			continue
+		changed = changed or zombie.last_noise_time < _clock.action_time_sec
 		zombie.last_noise_time = maxf(zombie.last_noise_time, _clock.action_time_sec)
 		_wake(zombie)
+	if changed:
+		mark_cell_save_dirty(cell_id)
 
 
 ## The cell is no longer ACTIVE: its zombies freeze as they are.
@@ -1185,6 +1191,9 @@ func _queue_ai(zombie_id: String, urgent: bool) -> void:
 
 
 func _push_event(event_type: String, zombie_id: String, fields: Dictionary) -> Dictionary:
+	var world: ServerWorld = _world()
+	if world != null:
+		mark_cell_save_dirty(world.cell_index.cell_of(zombie_id))
 	var event: Dictionary = {"event_type": event_type, "zombie_id": zombie_id, "world_time": _clock.world_time_sec}
 	event.merge(fields)
 	_events.append(event)

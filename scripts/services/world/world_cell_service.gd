@@ -69,6 +69,8 @@ var unload_count: int = 0
 var failed_load_count: int = 0
 var failed_save_count: int = 0
 var refresh_count: int = 0
+var last_save_cells_built: int = 0
+var last_save_cells_reused: int = 0
 
 var _settings: WorldCellSettings
 var _store: WorldCellStore = null
@@ -89,6 +91,13 @@ var _refreshing: bool = false
 var _grid_signature: Dictionary = {}
 ## The restored save was cut with another grid (see needs_repartition).
 var _repartition_needed: bool = false
+## Cached documents are immutable and become reusable only after the
+## generation containing them completed successfully.
+var _cell_revisions: Dictionary[String, int] = {}
+var _saved_cell_documents: Dictionary[String, Dictionary] = {}
+var _saved_cell_revisions: Dictionary[String, int] = {}
+var _save_cache_updates: Dictionary[String, Dictionary] = {}
+var _save_document_cache_enabled: bool = true
 
 
 func _init(settings: WorldCellSettings) -> void:
@@ -109,6 +118,24 @@ func set_store(store: WorldCellStore) -> void:
 
 func get_store() -> WorldCellStore:
 	return _store
+
+
+func set_save_document_cache_enabled(enabled: bool) -> void:
+	_save_document_cache_enabled = enabled
+
+
+func mark_cell_dirty(cell_id: String) -> void:
+	if cell_id.is_empty():
+		return
+	_cell_revisions[cell_id] = int(_cell_revisions.get(cell_id, 0)) + 1
+
+
+## Metadata from the immediately preceding cell_documents_for_save() call.
+## The persistence request owns this dictionary after taking it.
+func take_save_cache_updates() -> Dictionary:
+	var updates: Dictionary = _save_cache_updates
+	_save_cache_updates = {}
+	return updates
 
 
 ## WorldCellLifecycle.State of a cell.
@@ -258,6 +285,12 @@ func saves_cell_document(cell_id: String) -> bool:
 	return _store != null and _store.saves_loaded_cells() and is_loaded(cell_id)
 
 
+## True when every in-memory cell entity belongs in a cell document. This
+## lets systems avoid scanning all of their entities merely to skip them.
+func saves_all_loaded_entities_in_cells() -> bool:
+	return _store != null and _store.saves_loaded_cells()
+
+
 ## The cell documents of a world save made now ({cell_id: document}):
 ##   - store of a saved world: every cell that is in memory (the files of
 ##     the other cells are already in the save);
@@ -269,11 +302,22 @@ func saves_cell_document(cell_id: String) -> bool:
 func cell_documents_for_save(world: ServerWorld) -> Dictionary:
 	adopt_strays(world)
 	var documents: Dictionary = {}
+	_save_cache_updates = {}
+	last_save_cells_built = 0
+	last_save_cells_reused = 0
 	if _store == null:
 		return documents
 	if _store.saves_loaded_cells():
 		for cell_id: String in loaded_cell_ids():
-			documents[cell_id] = world.cell_document(cell_id)
+			var revision: int = int(_cell_revisions.get(cell_id, 0))
+			if _save_document_cache_enabled and _saved_cell_documents.has(cell_id) and int(_saved_cell_revisions.get(cell_id, -1)) == revision:
+				documents[cell_id] = _saved_cell_documents[cell_id]
+				last_save_cells_reused += 1
+			else:
+				var document: Dictionary = world.cell_document(cell_id)
+				documents[cell_id] = document
+				_save_cache_updates[cell_id] = {"revision": revision, "document": document}
+				last_save_cells_built += 1
 	else:
 		for cell_id: String in _store.saved_cell_ids():
 			if not is_loaded(cell_id):
@@ -288,7 +332,11 @@ func replaces_saved_cells() -> bool:
 
 
 ## A world save succeeded.
-func on_world_saved() -> void:
+func on_world_saved(cache_updates: Dictionary = {}) -> void:
+	for cell_id: String in cache_updates:
+		var update: Dictionary = cache_updates[cell_id]
+		_saved_cell_documents[cell_id] = update["document"]
+		_saved_cell_revisions[cell_id] = int(update["revision"])
 	if _store != null and _store.replaces_saved_cells():
 		_store.saved_cells_replaced()
 
@@ -513,6 +561,8 @@ func _finish_unload(error: Error, world: ServerWorld, cell_ids: PackedStringArra
 		cell_unloading.emit(cell_id)
 		var released: int = world.cell_index.count_in_cell(cell_id)
 		world.release_cell(cell_id)
+		_saved_cell_documents.erase(cell_id)
+		_saved_cell_revisions.erase(cell_id)
 		_idle_since.erase(cell_id)
 		_retry_at.erase(cell_id)
 		unload_count += 1
