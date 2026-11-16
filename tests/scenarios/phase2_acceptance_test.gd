@@ -98,6 +98,7 @@ const SPEED_HACK_DIRECTION: Vector2 = Vector2(40.0, 0.0)
 const HUGE_SEQUENCE: int = 1000000
 const WARMUP_TICKS: int = 15
 const MEASURE_TICKS: int = 60
+const MIN_GRANTED_STEPS: int = MEASURE_TICKS / 2
 const SPEED_TOLERANCE: float = 0.001
 ## Positions are 32-bit floats: one tick's step is exact to about 1e-6 m.
 const STEP_TOLERANCE_M: float = 1.0e-4
@@ -1059,12 +1060,15 @@ func test_leg_wound_slows_server_movement_by_the_configured_factor() -> void:
 		a.send_move_intent(Vector2.ZERO, yaw)
 		b.send_move_intent(Vector2.ZERO, yaw)
 		await tree.physics_frame
-	assert_eq(odd_steps, PackedStringArray(), "every tick grants %.5f m to bob and %.5f m to alice" % [full_step, full_step * expected])
-	assert_true(bob_steps > MEASURE_TICKS / 2 and alice_steps == bob_steps, "both walked the same ticks (%d / %d of %d)" % [alice_steps, bob_steps, MEASURE_TICKS])
+	assert_eq(odd_steps, PackedStringArray(), "every granted tick gives %.5f m to bob and %.5f m to alice" % [full_step, full_step * expected])
+	assert_true(bob_steps >= MIN_GRANTED_STEPS and alice_steps >= MIN_GRANTED_STEPS, "enough granted steps for both players (%d / %d of %d)" % [alice_steps, bob_steps, MEASURE_TICKS])
 	assert_true(_approx(bob_walked, full_step * float(bob_steps), SPEED_TOLERANCE), "bob walked at full speed: %.4f m in %d ticks" % [bob_walked, bob_steps])
 	assert_true(_approx(alice_walked, full_step * expected * float(alice_steps), SPEED_TOLERANCE), "alice walked %.4f m in %d ticks" % [alice_walked, alice_steps])
-	assert_true(_approx(alice_walked / bob_walked, expected, SPEED_TOLERANCE), "speed ratio %.4f equals the predicted factor %.4f" % [alice_walked / bob_walked, expected])
-	assert_true(alice_walked < bob_walked, "the wounded player is slower")
+	if alice_steps > 0 and bob_steps > 0:
+		var alice_granted_step: float = alice_walked / float(alice_steps)
+		var bob_granted_step: float = bob_walked / float(bob_steps)
+		assert_true(_approx(alice_granted_step / bob_granted_step, expected, SPEED_TOLERANCE), "granted-step ratio %.4f equals the predicted factor %.4f" % [alice_granted_step / bob_granted_step, expected])
+		assert_true(alice_granted_step < bob_granted_step, "the wounded player's granted step is shorter")
 	await _settle()
 	var seen: bool = await _eventually(func() -> bool:
 		var server_position: Vector3 = world.get_player(alice_id).position

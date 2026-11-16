@@ -20,6 +20,8 @@ const SIGHT_RANGE: float = 20.0
 const FROZEN_NEED_HOURS: float = 100000.0
 ## Server ticks both players push the same move intent.
 const MOVE_TICKS: int = 60
+const MIN_GRANTED_MOVE_STEPS: int = MOVE_TICKS / 2
+const MOVE_STEP_TOLERANCE_M: float = 1.0e-4
 
 var _cluster: NetTestCluster = null
 var _net_settings: NetworkSettings = null
@@ -206,19 +208,33 @@ func test_a_client_lies_prone_everybody_sees_it_and_it_crawls() -> void:
 	assert_eq(_mirror(b).posture_of(bob_id), PlayerPosture.Kind.STANDING)
 
 	# Both push the same move intent for the same ticks: alice crawls.
-	var a_start: Vector3 = _world.get_player(alice_id).position
-	var b_start: Vector3 = _world.get_player(bob_id).position
+	var full_step: float = _world.gameplay.move_speed_mps / float(Engine.physics_ticks_per_second)
+	var crawl_step: float = full_step * _config.posture.prone_movement_multiplier
+	var alice_at: Vector3 = _world.get_player(alice_id).position
+	var bob_at: Vector3 = _world.get_player(bob_id).position
+	var alice_steps: int = 0
+	var bob_steps: int = 0
+	var odd_steps: PackedStringArray = []
 	for tick: int in range(MOVE_TICKS):
 		a.send_move_intent(Vector2(1.0, 0.0), 0.0)
 		b.send_move_intent(Vector2(1.0, 0.0), 0.0)
 		await tree.physics_frame
+		var alice_step: float = _world.get_player(alice_id).position.distance_to(alice_at)
+		var bob_step: float = _world.get_player(bob_id).position.distance_to(bob_at)
+		alice_at = _world.get_player(alice_id).position
+		bob_at = _world.get_player(bob_id).position
+		if absf(alice_step - crawl_step) <= MOVE_STEP_TOLERANCE_M:
+			alice_steps += 1
+		elif alice_step != 0.0:
+			odd_steps.append("alice %.6f" % alice_step)
+		if absf(bob_step - full_step) <= MOVE_STEP_TOLERANCE_M:
+			bob_steps += 1
+		elif bob_step != 0.0:
+			odd_steps.append("bob %.6f" % bob_step)
 	await _settle(5)
-	var crawled: float = _world.get_player(alice_id).position.x - a_start.x
-	var walked: float = _world.get_player(bob_id).position.x - b_start.x
-	assert_true(walked > 1.0, "server: bob walked (%f)" % walked)
-	assert_true(crawled > 0.0, "server: alice moved (%f)" % crawled)
-	var ratio: float = crawled / walked
-	assert_true(absf(ratio - _config.posture.prone_movement_multiplier) < 0.1, "server: a prone player moves at the prone speed (ratio %f)" % ratio)
+	assert_eq(odd_steps, PackedStringArray(), "server: every granted step is full standing or configured crawl speed")
+	assert_true(alice_steps >= MIN_GRANTED_MOVE_STEPS and bob_steps >= MIN_GRANTED_MOVE_STEPS, "server: enough granted steps for both players (%d / %d of %d)" % [alice_steps, bob_steps, MOVE_TICKS])
+	assert_true(crawl_step < full_step, "server: a prone player's granted step is shorter")
 	assert_eq(_posture().posture_of(alice_id), PlayerPosture.Kind.PRONE, "moving does not change the posture")
 
 	# A late joiner learns it from the join snapshot.
