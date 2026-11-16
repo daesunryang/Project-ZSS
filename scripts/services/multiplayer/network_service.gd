@@ -93,6 +93,17 @@ const RATE_LIMITED: String = "rate_limited"
 const NOT_JOINED: String = "not_joined"
 
 const SNAPSHOT_MODULES_KEY: String = "modules"
+const MONITOR_TICK_MSEC: StringName = &"server/tick_time_ms"
+const MONITOR_ZOMBIE_MSEC: StringName = &"server/zombie_step_time_ms"
+const MONITOR_PLANNING_NODES: StringName = &"server/planning_nodes_per_tick"
+const MONITOR_LOADED_CELLS: StringName = &"server/loaded_cells"
+const MONITOR_ACTIVE_CELLS: StringName = &"server/active_cells"
+const MONITOR_SAVE_BUILD_MSEC: StringName = &"server/save_build_time_ms"
+const MONITOR_SAVE_WRITE_MSEC: StringName = &"server/save_write_time_ms"
+const MONITOR_SAVES_COALESCED: StringName = &"server/saves_coalesced"
+const PERFORMANCE_MONITORS: Array[StringName] = [MONITOR_TICK_MSEC, MONITOR_ZOMBIE_MSEC, MONITOR_PLANNING_NODES, MONITOR_LOADED_CELLS, MONITOR_ACTIVE_CELLS, MONITOR_SAVE_BUILD_MSEC, MONITOR_SAVE_WRITE_MSEC, MONITOR_SAVES_COALESCED]
+
+static var _performance_monitor_owner: WeakRef = null
 
 var client_state: ClientWorldState = ClientWorldState.new()
 ## Server (P3-2): which cells each joined peer is told about. Null (no
@@ -113,6 +124,8 @@ var _move_limiter: RateLimiter = null
 var _pickup_limiter: RateLimiter = null
 var _snapshot_elapsed: float = 0.0
 var _snapshot_tick: int = 0
+var _last_server_tick_msec: float = 0.0
+var _owns_performance_monitors: bool = false
 ## Rejected intents per reason code (diagnostics and tests).
 var _rejections: Dictionary[String, int] = {}
 # --- client state ---
@@ -216,7 +229,8 @@ func stop() -> void:
 		for peer_id: int in _peer_players.keys():
 			_world.leave(_peer_players[peer_id])
 		_peer_players.clear()
-		persist("shutdown")
+		persist("shutdown", true)
+		_remove_performance_monitors()
 		multiplayer.peer_connected.disconnect(_on_peer_connected)
 		multiplayer.peer_disconnected.disconnect(_on_peer_disconnected)
 	else:
@@ -313,6 +327,8 @@ func _process(delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	if _mode != Mode.SERVER:
 		return
+	_register_performance_monitors()
+	var started_usec: int = Time.get_ticks_usec()
 	_world.step_movement(delta, Time.get_ticks_msec(), int(_settings.move_input_timeout_sec * MSEC_PER_SEC))
 	_world.step_systems(delta)
 	for module: NetModule in _modules:
@@ -321,6 +337,54 @@ func _physics_process(delta: float) -> void:
 	if _snapshot_elapsed >= 1.0 / _settings.snapshot_rate_hz:
 		_snapshot_elapsed = 0.0
 		_broadcast_positions()
+	_last_server_tick_msec = float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+
+func _register_performance_monitors() -> void:
+	if _owns_performance_monitors:
+		return
+	var owner: Object = _performance_monitor_owner.get_ref() if _performance_monitor_owner != null else null
+	if owner != null and owner != self:
+		return
+	Performance.add_custom_monitor(MONITOR_TICK_MSEC, func() -> float: return _last_server_tick_msec)
+	Performance.add_custom_monitor(MONITOR_ZOMBIE_MSEC, _monitor_zombie_step_msec)
+	Performance.add_custom_monitor(MONITOR_PLANNING_NODES, _monitor_planning_nodes)
+	Performance.add_custom_monitor(MONITOR_LOADED_CELLS, _monitor_loaded_cells)
+	Performance.add_custom_monitor(MONITOR_ACTIVE_CELLS, _monitor_active_cells)
+	Performance.add_custom_monitor(MONITOR_SAVE_BUILD_MSEC, func() -> float: return _persistence.last_save_build_msec if _persistence != null else 0.0)
+	Performance.add_custom_monitor(MONITOR_SAVE_WRITE_MSEC, func() -> float: return _persistence.last_save_write_msec if _persistence != null else 0.0)
+	Performance.add_custom_monitor(MONITOR_SAVES_COALESCED, func() -> int: return _persistence.saves_coalesced if _persistence != null else 0)
+	_performance_monitor_owner = weakref(self)
+	_owns_performance_monitors = true
+
+
+func _remove_performance_monitors() -> void:
+	if not _owns_performance_monitors:
+		return
+	for monitor: StringName in PERFORMANCE_MONITORS:
+		Performance.remove_custom_monitor(monitor)
+	_owns_performance_monitors = false
+	_performance_monitor_owner = null
+
+
+func _monitor_zombie_step_msec() -> float:
+	var zombies: ZombieService = _world.get_system(ZombieService.SYSTEM_ID) as ZombieService if _world != null else null
+	return zombies.last_step_msec if zombies != null else 0.0
+
+
+func _monitor_planning_nodes() -> int:
+	var zombies: ZombieService = _world.get_system(ZombieService.SYSTEM_ID) as ZombieService if _world != null else null
+	return zombies.last_plan_node_count if zombies != null else 0
+
+
+func _monitor_loaded_cells() -> int:
+	var cells: WorldCellService = _world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService if _world != null else null
+	return cells.loaded_cell_ids().size() if cells != null else 0
+
+
+func _monitor_active_cells() -> int:
+	var cells: WorldCellService = _world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService if _world != null else null
+	return cells.active_cell_ids().size() if cells != null else 0
 
 
 # ============================================================ server side
@@ -564,12 +628,24 @@ func _build_join_snapshot(player_id: String) -> Dictionary:
 	return {"players": players, "world_items": items, "inventory": carried, SNAPSHOT_MODULES_KEY: modules}
 
 
-## Server: saves the whole world now (no-op without persistence).
-func persist(reason: String) -> void:
+## Server: captures the newest world state now (no-op without persistence).
+## Normal requests write in the background; shutdown uses `wait` so no worker
+## or coalesced newest state survives the server.
+func persist(reason: String, wait: bool = false) -> void:
 	if _persistence == null:
 		return
-	var error: Error = _persistence.save(_world)
+	var error: Error = OK
+	if wait:
+		error = _persistence.save_now_and_wait(_world)
+	else:
+		_persistence.request_save(_world, _on_persist_completed.bind(reason))
+		return
 	if error != OK:
+		GameLogger.error("save", "world save failed", {"world_id": _world.world_id, "reason": reason, "error": error_string(error), "operation": "persist"})
+
+
+func _on_persist_completed(error: Error, reason: String) -> void:
+	if error != OK and _world != null:
 		GameLogger.error("save", "world save failed", {"world_id": _world.world_id, "reason": reason, "error": error_string(error), "operation": "persist"})
 
 

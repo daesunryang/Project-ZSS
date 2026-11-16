@@ -8,3 +8,4 @@ log_level = "INFO"
 default_world_id = "dev_empty_world"
 save_root = "user://saves"
 save_backup_keep = 3
+background_world_saves = true

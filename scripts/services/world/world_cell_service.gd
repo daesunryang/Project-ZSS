@@ -11,9 +11,9 @@ extends ServerSystem
 ##   PRELOADED  cells within `preload_radius_cells`, and around the place
 ##              a player is heading for (look-ahead): in memory, frozen.
 ##   UNLOADED   everything else: saved and out of memory.
-## States and transitions are WorldCellLifecycle. Loading, saving and
-## releasing are synchronous for now, but every step is a state of its own
-## and is announced through `cell_state_changed`.
+## States and transitions are WorldCellLifecycle. A saved-world store writes
+## in the background; a cell stays SAVING until that generation completed.
+## Every step is announced through `cell_state_changed`.
 ##
 ## Rules:
 ##   - A cell a player needs now (the active area and one ring around it)
@@ -78,6 +78,8 @@ var _states: Dictionary[String, int] = {}
 var _idle_since: Dictionary[String, float] = {}
 ## cell_id -> action time before which a failed load / save is not retried.
 var _retry_at: Dictionary[String, float] = {}
+## Cells wanted again while their background save is running stay in memory.
+var _keep_after_save: Dictionary[String, bool] = {}
 ## player_id -> server position at the previous look (look-ahead).
 var _last_positions: Dictionary[String, Vector3] = {}
 var _last_refresh_time: float = 0.0
@@ -167,6 +169,8 @@ func refresh(world: ServerWorld) -> void:
 			_set_active(world, cell_id, true)
 	var unload: PackedStringArray = []
 	for cell_id: String in _states.keys():
+		if _states[cell_id] == WorldCellLifecycle.State.SAVING and wanted_loaded.has(cell_id):
+			_keep_after_save[cell_id] = true
 		if _states[cell_id] == WorldCellLifecycle.State.ACTIVE:
 			if wanted_active.has(cell_id):
 				_idle_since.erase(cell_id)
@@ -229,7 +233,7 @@ func release_cells_now(world: ServerWorld, cell_ids: PackedStringArray) -> Error
 		return OK
 	releasable.sort()
 	var failed_before: int = failed_save_count
-	_unload(world, releasable, world.clock.action_time_sec)
+	_unload(world, releasable, world.clock.action_time_sec, true)
 	return OK if failed_save_count == failed_before else ERR_CANT_CREATE
 
 
@@ -472,22 +476,39 @@ func _set_active(world: ServerWorld, cell_id: String, active: bool) -> void:
 ## has a saved document has nothing to save: its cells go through the same
 ## states without the store being asked (most cells of a map are empty, and
 ## a save writes the whole world).
-func _unload(world: ServerWorld, cell_ids: PackedStringArray, now: float) -> void:
+func _unload(world: ServerWorld, cell_ids: PackedStringArray, now: float, wait: bool = false) -> void:
 	var saved_ids: PackedStringArray = _store.saved_cell_ids()
 	var anything_to_save: bool = false
 	for cell_id: String in cell_ids:
 		_set_state(cell_id, WorldCellLifecycle.State.SAVING)
 		if world.cell_index.count_in_cell(cell_id) > 0 or saved_ids.has(cell_id):
 			anything_to_save = true
-	var error: Error = _store.save_cells(world, cell_ids) if anything_to_save else OK
+	if not anything_to_save:
+		_finish_unload(OK, world, cell_ids, now)
+	elif wait:
+		_finish_unload(_store.save_cells(world, cell_ids), world, cell_ids, now)
+	else:
+		_store.request_save_cells(world, cell_ids, _finish_unload.bind(world, cell_ids, now))
+
+
+## Main-thread completion of the save that contains these cells' latest
+## state. On failure no entity is released. If a player wanted a cell again
+## during the write, the successful save leaves it PRELOADED.
+func _finish_unload(error: Error, world: ServerWorld, cell_ids: PackedStringArray, now: float) -> void:
 	if error != OK:
 		failed_save_count += 1
 		GameLogger.error("cells", "cells could not be saved and stay in memory", {"world_id": world.world_id, "cell_ids": ", ".join(cell_ids), "error": error_string(error), "retry_in_sec": _settings.retry_delay_sec, "operation": "unload_cells"})
 		for cell_id: String in cell_ids:
+			_keep_after_save.erase(cell_id)
 			_retry_at[cell_id] = now + _settings.retry_delay_sec
 			_set_state(cell_id, WorldCellLifecycle.State.PRELOADED)
 		return
 	for cell_id: String in cell_ids:
+		if _keep_after_save.erase(cell_id) or _player_wants_cell_now(world, cell_id):
+			_idle_since.erase(cell_id)
+			_retry_at.erase(cell_id)
+			_set_state(cell_id, WorldCellLifecycle.State.PRELOADED)
+			continue
 		_set_state(cell_id, WorldCellLifecycle.State.UNLOADING)
 		cell_unloading.emit(cell_id)
 		var released: int = world.cell_index.count_in_cell(cell_id)
@@ -498,6 +519,19 @@ func _unload(world: ServerWorld, cell_ids: PackedStringArray, now: float) -> voi
 		_set_state(cell_id, WorldCellLifecycle.State.UNLOADED)
 		GameLogger.debug("cells", "cell unloaded", {"world_id": world.world_id, "cell_id": cell_id, "entities": released})
 		cell_unloaded.emit(cell_id)
+
+
+## Current server positions are checked again at write completion because a
+## player can enter the cell between periodic refreshes while the worker runs.
+func _player_wants_cell_now(world: ServerWorld, cell_id: String) -> bool:
+	var cell: Variant = WorldCellGrid.parse_id(cell_id)
+	if cell == null:
+		return false
+	for player_id: String in world.online_player_ids():
+		var player_cell: Vector2i = world.cell_grid.cell_of(world.get_player(player_id).position)
+		if WorldCellGrid.distance(player_cell, cell as Vector2i) <= _settings.preload_radius_cells:
+			return true
+	return false
 
 
 ## Applies one transition of WorldCellLifecycle; refuses (and logs) any

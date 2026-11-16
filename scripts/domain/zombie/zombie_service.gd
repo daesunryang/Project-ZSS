@@ -159,6 +159,7 @@ var last_plan_count: int = 0
 var total_plan_count: int = 0
 var last_plan_node_count: int = 0
 var last_plan_msec: float = 0.0
+var last_step_msec: float = 0.0
 var _plan_counts_by_zombie: Dictionary[String, int] = {}
 var _search_restart_counts_by_zombie: Dictionary[String, int] = {}
 var _search_completion_counts_by_zombie: Dictionary[String, int] = {}
@@ -377,6 +378,7 @@ func seed_new_world(world: ServerWorld) -> Error:
 
 
 func step(world: ServerWorld, action_delta: float, _world_delta: float) -> void:
+	var started_usec: int = Time.get_ticks_usec()
 	last_ai_update_count = 0
 	last_plan_count = 0
 	last_plan_node_count = 0
@@ -385,6 +387,7 @@ func step(world: ServerWorld, action_delta: float, _world_delta: float) -> void:
 	_step_zombies(world, action_delta)
 	_stepping = false
 	_spawn_pending_player_zombies(world)
+	last_step_msec = float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 
 ## Hook for SurvivalService.player_died (ServerComposition connects it;

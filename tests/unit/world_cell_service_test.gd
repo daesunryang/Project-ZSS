@@ -44,6 +44,33 @@ class FailingStore extends WorldCellStore:
 		return super.save_cells(world, cell_ids)
 
 
+## A deterministic stand-in for a background writer. Tests decide the exact
+## tick at which the completion callback runs; no wall-clock waiting.
+class DeferredStore extends WorldCellStore:
+	var callback: Callable
+	var pending_world: ServerWorld
+	var pending_ids: PackedStringArray
+	var save_calls: int = 0
+
+	func request_save_cells(world: ServerWorld, cell_ids: PackedStringArray, completed: Callable) -> void:
+		save_calls += 1
+		pending_world = world
+		pending_ids = cell_ids.duplicate()
+		callback = completed
+
+	## Drops the world and the callback (bound to the world) before calling
+	## it: the world owns this store through WorldCellService, so keeping
+	## them would be a world -> store -> world reference cycle (a leak).
+	func complete(error: Error) -> void:
+		var world: ServerWorld = pending_world
+		pending_world = null
+		if error == OK:
+			error = super.save_cells(world, pending_ids)
+		var completed: Callable = callback
+		callback = Callable()
+		completed.call(error)
+
+
 func before_each() -> void:
 	GameLogger.set_capture(true)
 	_transitions = []
@@ -448,6 +475,47 @@ func test_a_cell_that_cannot_be_saved_stays_in_memory() -> void:
 	assert_eq(_state(world, "cell_-2_0"), S["unloaded"])
 	assert_null(world.inventory.get_item(item_id), "released only after it was saved")
 	assert_false(WorldCellDocument.is_empty(store.document_of("cell_-2_0")))
+
+
+func test_a_cell_stays_saving_until_the_background_save_completes() -> void:
+	var store: DeferredStore = DeferredStore.new()
+	var world: ServerWorld = _world(store)
+	var player_id: String = world.join("alice").player_id
+	var item_id: String = world.inventory.spawn_world_item("dev_test_item", 1, "cell_-2_0", Vector3(-15.0, 0.0, 5.0))
+	_move(world, player_id, Vector3(25.0, 0.0, 5.0))
+	_run(world, 5.0)
+	assert_eq(_state(world, "cell_-2_0"), S["saving"], "not released when the request merely started")
+	assert_not_null(world.inventory.get_item(item_id))
+	assert_eq(store.save_calls, 1, "refreshes do not queue more saves while SAVING")
+	store.complete(OK)
+	assert_eq(_state(world, "cell_-2_0"), S["unloaded"], "released only after durable completion")
+	assert_null(world.inventory.get_item(item_id))
+
+	var failing: DeferredStore = DeferredStore.new()
+	var second: ServerWorld = _world(failing)
+	var second_player: String = second.join("bob").player_id
+	var kept: String = second.inventory.spawn_world_item("dev_test_item", 1, "cell_-2_0", Vector3(-15.0, 0.0, 5.0))
+	_move(second, second_player, Vector3(25.0, 0.0, 5.0))
+	_run(second, 5.0)
+	assert_eq(_state(second, "cell_-2_0"), S["saving"])
+	failing.complete(ERR_FILE_CANT_WRITE)
+	assert_eq(_state(second, "cell_-2_0"), S["preloaded"], "a failed generation keeps the cell in memory")
+	assert_not_null(second.inventory.get_item(kept))
+	assert_eq(_cells(second).failed_save_count, 1)
+
+	var returning: DeferredStore = DeferredStore.new()
+	var third: ServerWorld = _world(returning)
+	var third_player: String = third.join("carol").player_id
+	var still_here: String = third.inventory.spawn_world_item("dev_test_item", 1, "cell_-2_0", Vector3(-15.0, 0.0, 5.0))
+	_move(third, third_player, Vector3(25.0, 0.0, 5.0))
+	_run(third, 5.0)
+	assert_eq(_state(third, "cell_-2_0"), S["saving"])
+	# No refresh between this server-position change and completion: the
+	# completion path itself must notice that the cell is wanted again.
+	third.get_player(third_player).position = Vector3(-15.0, 0.0, 5.0)
+	returning.complete(OK)
+	assert_eq(_state(third, "cell_-2_0"), S["preloaded"])
+	assert_not_null(third.inventory.get_item(still_here))
 
 
 func test_without_a_store_no_cell_is_released() -> void:

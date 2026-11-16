@@ -1938,13 +1938,13 @@ Phase 3(docs/13 §5, §15) 티켓의 계약을 티켓마다 한 절씩 적는다
 - 입력은 `ServerWorld.online_player_ids()`와 그 플레이어들의 서버 위치뿐이다. 클라이언트가 보낸 값은 쓰지 않는다. 접속만 하고 캐릭터가 없는 플레이어, 오프라인 플레이어는 셀을 깨우지 않는다.
 - 살펴보기(`refresh`): `refresh_period_sec`마다, 그리고 플레이어가 월드에 들어오거나 새 캐릭터를 시작할 때 즉시. 플레이어 셀에서 활성 반경 안은 ACTIVE, 사전 로딩 반경 안과 미리보기 위치 주변은 메모리에 둔다. 플레이어에게 지금 필요한 셀(활성 영역과 그 바깥 한 줄)은 그 자리에서 로딩하고, 그 밖의 원하는 셀(더 바깥 줄, 미리보기 위치 주변)은 한 번에 `max_preload_loads_per_refresh`개씩 가까운 것부터 로딩한다. 기본값(활성 2, 사전 로딩 3)에서는 필요한 셀이 사전 로딩 영역 전체다.
 - 히스테리시스: 원하지 않게 된 ACTIVE 셀은 `deactivate_delay_sec` 뒤에 PRELOADED가 되고, 원하지 않게 된 PRELOADED 셀은 `unload_delay_sec` 뒤에 해제된다. 그 사이에 다시 원하게 되면 기다림은 취소된다. ACTIVE 셀과 맞닿은 셀은 해제하지 않는다.
-- 해제는 `WorldCellStore.save_cells`가 성공한 뒤에만 한다(SAVING → UNLOADING). 실패하면 PRELOADED로 돌아가고 `retry_delay_sec` 뒤에 다시 시도한다. 저장소가 없으면 해제하지 않는다. 엔티티도 저장 문서도 없는 셀만 내릴 때는 저장소를 부르지 않는다.
+- 해제는 `WorldCellStore.request_save_cells`의 완료가 성공한 뒤에만 한다(SAVING → UNLOADING). 전용 서버에서는 비동기 완료까지 SAVING으로 메모리에 남는다. 실패하면 PRELOADED로 돌아가고 `retry_delay_sec` 뒤에 다시 시도한다. 저장소가 없으면 해제하지 않는다. 엔티티도 저장 문서도 없는 셀만 내릴 때는 저장소를 부르지 않는다.
 - 로딩 실패: 그 셀은 UNLOADED로 남고(활성화되지 않는다) 셀 ID와 사유를 오류 로그에 남기며 `retry_delay_sec` 뒤에 다시 시도한다. 다른 셀과 플레이어는 영향을 받지 않는다.
 - 떠돌이: 로딩되지 않은 셀에 메모리 엔티티가 있으면(P3-1 전 저장, 새 월드의 시드, 플레이어에게서 먼 스폰) 다음 살펴보기와 모든 저장 직전에 그 셀을 로딩해(저장돼 있던 내용과 합쳐서) 정상 상태로 만든다.
 - 월드 시계가 멈춰 있으면(접속자 0명) 아무 셀도 바뀌지 않는다.
 - 시그널: `cell_state_changed(cell_id, from, to)`, `cell_loaded(cell_id)`, `cell_unloading(cell_id)`(저장은 끝났고 엔티티는 아직 읽을 수 있다), `cell_unloaded(cell_id)`. 조회: `state_of`, `is_loaded`, `is_simulated`, `loaded_cell_ids`, `active_cell_ids`. 도구·테스트: `load_all_saved_cells(world)`. 진단: `load_count`, `unload_count`, `failed_load_count`, `failed_save_count`, `refresh_count`.
 
-**`WorldCellStore`(해제한 셀을 두는 곳)**: `load_cell(cell_id) -> {error, document}`(문서가 비어 있으면 "저장된 것이 없는 셀"), `save_cells(world, cell_ids) -> Error`, `saved_cell_ids()`, `document_of`, `saves_loaded_cells()`. 기본 클래스는 메모리에 문서를 두는 구현(테스트·도구용, JSON 왕복 후 보관)이고, 전용 서버는 `SaveWorldCellStore`(`scripts/services/save/`)를 쓴다. `WorldPersistence.load_or_create`가 붙인다. `ServerComposition.create_world`만으로 만든 월드에는 저장소가 없어 셀을 해제하지 않는다(시뮬레이션 정지만 한다).
+**`WorldCellStore`(해제한 셀을 두는 곳)**: `load_cell(cell_id) -> {error, document}`(문서가 비어 있으면 "저장된 것이 없는 셀"), 동기 `save_cells(world, cell_ids) -> Error`, 완료 콜백을 받는 `request_save_cells(world, cell_ids, completed)`, `saved_cell_ids()`, `document_of`, `saves_loaded_cells()`. 기본 클래스는 메모리에 문서를 두는 구현(테스트·도구용, 즉시 완료)이고, 전용 서버의 `SaveWorldCellStore`는 `WorldPersistence.request_save`로 백그라운드 저장한다. `WorldPersistence.load_or_create`가 붙인다. `ServerComposition.create_world`만으로 만든 월드에는 저장소가 없어 셀을 해제하지 않는다(시뮬레이션 정지만 한다).
 
 **시뮬레이션 정지(좀비)**: `ZombieService`는 ACTIVE 셀의 좀비만 "깨어 있는" 목록에 두고, 틱마다 그 목록만 이동·AI 판단(시야·청각·공격)·시체 제거를 처리한다(`simulated_count()`). 다른 셀의 좀비는 상태·타이머·RNG까지 그대로 멈춘다.
 
@@ -1958,7 +1958,7 @@ Phase 3(docs/13 §5, §15) 티켓의 계약을 티켓마다 한 절씩 적는다
 
 - 엔티티는 셀 문서와 월드 문서 중 한 곳에만 있다. 저장된 월드(`SaveWorldCellStore`)에서는 메모리에 있는 셀의 엔티티가 전부 그 셀 문서로 가고, world_state에는 로딩되지 못한 셀의 떠돌이만 남는다(보통 없음). 메모리 저장소·저장소 없음에서는 메모리에 있는 엔티티가 world_state에 남는다(P3-1 전과 같은 모양). `ServerWorld.to_documents()`는 `{world_state, players, cells, replace_cells}`를 돌려주고 `restore_documents(world_state, players, cells = {})`의 `cells`는 메모리 저장소로 만든 문서에만 쓴다.
 - `SaveService.save_world(world_id, world_state, players, cells = {}, replace_cells = false)`, `load_cell(world_id, cell_id) -> {error, document, warnings}`, `saved_cell_ids(world_id)`, `load_world`의 결과에 `cell_ids`. 엔티티가 없는 셀 문서는 파일을 만들지 않고 있던 파일을 없앤다.
-- 셀 해제 = `WorldPersistence.save(world)` = 한 세대 전체 저장. 서버 시작은 셀을 하나도 메모리에 올리지 않는다.
+- 셀 해제 = `WorldPersistence.request_save(world)` = 한 세대 전체 저장 요청. 해당 세대의 성공 완료 뒤 해제한다. 서버 시작은 셀을 하나도 메모리에 올리지 않는다.
 - 셀을 로딩할 때 저장본보다 메모리가 우선이다: 이미 메모리에 있는 ID(주운 아이템 등)와 은퇴한 ID(다 쓴 아이템, 치운 시체)는 건너뛰고 경고를 남긴다. 그래서 셀 파일이 오래된 백업에서 복구돼도 아이템이 둘이 되거나 되살아나지 않는다.
 - 격자가 바뀐 저장(`systems.world_cells.grid`가 지금 설정과 다름): `WorldPersistence`가 셀 파일을 전부 읽어 `ServerWorld.repartition_from`으로 메모리에 올리고 위치로 셀을 다시 정한 뒤, 셀 파일 전체를 한 세대에 바꿔 쓴다. 읽지 못하는 셀 파일이 있으면 시작을 거부하고 저장은 그대로 둔다.
 
@@ -2461,3 +2461,15 @@ P3-3과 합친 뒤의 규칙: 건축 HUD(`%BuildLabel`)는 보관함 HUD(`%Conta
 새 RPC나 기존 행 필드는 없다. 구조물과 보관함은 각각 기존 `StructureNet`·`ContainerNet` 관심 셀 복제를 쓰고, 내용물은 연 플레이어에게만 간다. 철거 때 기존 `_rpc_containers_removed`를 이용하므로 `BuildInfo.PROTOCOL_VERSION`은 15 그대로다. 클라이언트는 키 4로 상자를 선택하고 `StructureVisuals`가 정의의 `visual_size_m`으로 그린다. 청사진은 다른 조각처럼 반투명이고 완공 뒤 기존 보관함 마커와 H/J/K/U/I HUD가 붙는다.
 
 검증은 `tests/unit/storage_box_test.gd`(청사진·완공·취소·철거·정확한 수량·셀 왕복·저장 재시작)와 `tests/integration/construction_net_test.gd`의 P3-3b 사례(A가 짓고 B가 넣고 A가 꺼냄, 원거리 비공개, 내용물 철거 거부와 빈 상자 철거), `build_presentation_test.gd`·`trade_presentation_test.gd`의 키 충돌 검사에 있다. 임시 수치와 미확인 항목은 docs/15 §15.8이다.
+
+## 16. 성능 기반 (2026-11-17)
+
+### 16.1 저장을 메인 스레드 밖으로 (PERF-1)
+
+`WorldPersistence`는 저장을 두 단계로 나눈다. 메인 스레드는 라이브 월드에서 `world_state`, 플레이어, 로딩된 셀 문서를 만들고 JSON 안전성을 검증한 뒤 깊은 복사한 스냅숏을 만든다. 워커는 저장 루트와 그 스냅숏만 받아 JSON 직렬화부터 docs/10의 임시 파일 검증·백업·rename·manifest-last 절차까지 수행한다. 워커는 Node, SceneTree, `ServerWorld`, 시스템 객체를 읽지 않는다. 결과 콜백, 로그, 셀 상태 전이는 메인 스레드에서만 한다.
+
+동시에 디스크에 쓰는 작업은 하나다. 진행 중 요청 뒤의 요청은 가장 최신 스냅숏 하나로 합쳐져 후속 저장 한 번이 된다. 각 요청 ID는 자신을 포함한 쓰기가 끝난 뒤 `save_completed(request_id, error)`로 완료된다. 워커 작업은 비동기 완료와 `save_now_and_wait` 양쪽 모두 `WorkerThreadPool.wait_for_task_completion`으로 회수한다. 종료는 마지막 상태를 새로 캡처해 진행 중 저장 뒤의 후속 저장으로 합친 다음 끝날 때까지 기다린다. 직접 만든 테스트·도구 `WorldPersistence`는 기존 즉시 디스크 계약을 보존하려고 생성자 기본을 동기로 두고, 전용 서버는 기본값이 켜진 `AppSettings.background_world_saves`를 명시적으로 넘긴다.
+
+셀 해제는 `PRELOADED → SAVING` 뒤 비동기 완료를 기다린다. 성공한 세대가 그 셀의 최신 상태를 포함한 뒤에만 `UNLOADING → UNLOADED`로 가며, 실패하면 `PRELOADED`로 돌아간다. 저장 중 다시 필요해진 셀도 성공 뒤 메모리에 남는다. 따라서 §15.1의 “저장 성공 전에는 해제하지 않는다” 규칙은 쓰기 스레드가 바뀌어도 그대로다.
+
+전용 서버의 `NetworkService`는 다음 사용자 정의 성능 모니터를 등록하고 종료 때 제거한다: `server/tick_time_ms`, `server/zombie_step_time_ms`, `server/planning_nodes_per_tick`, `server/loaded_cells`, `server/active_cells`, `server/save_build_time_ms`, `server/save_write_time_ms`, `server/saves_coalesced`. 모두 진단값이며 게임 규칙·예산·분기에 쓰지 않는다.

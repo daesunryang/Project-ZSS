@@ -43,6 +43,10 @@ func save_cells(world: ServerWorld, _cell_ids: PackedStringArray) -> Error:
 	return _persistence.save(world)
 
 
+func request_save_cells(world: ServerWorld, _cell_ids: PackedStringArray, completed: Callable) -> void:
+	_persistence.request_save(world, completed)
+
+
 func saved_cell_ids() -> PackedStringArray:
 	return PackedStringArray() if _discard_saved else _save.saved_cell_ids(_world_id)
 

@@ -7,6 +7,7 @@ func test_shipped_settings_load_and_validate() -> void:
 	var settings: AppSettings = AppSettings.load_or_default()
 	assert_not_null(settings)
 	assert_eq(settings.validate().size(), 0, ", ".join(settings.validate()))
+	assert_true(settings.background_world_saves, "PERF-1 ships background saves on")
 
 
 func test_invalid_values_are_reported() -> void:

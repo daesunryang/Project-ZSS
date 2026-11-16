@@ -17,6 +17,8 @@ const DEFAULT_PATH: String = "res://data/tuning/app_settings.tres"
 @export var save_root: String = "user://saves"
 ## Number of previous save generations kept in backups/ (PROVISIONAL).
 @export_range(1, 100) var save_backup_keep: int = 3
+## Writes save snapshots on WorkerThreadPool. False keeps synchronous writes.
+@export var background_world_saves: bool = true
 
 
 ## Returns a list of human readable validation errors (empty when valid).

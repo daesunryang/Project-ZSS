@@ -58,6 +58,13 @@ func save_cells(world: ServerWorld, cell_ids: PackedStringArray) -> Error:
 	return OK
 
 
+## Starts saving cells and calls `completed(error)` on the main thread when
+## the save is durable. The in-memory store completes immediately; the saved
+## world store overrides this with WorldPersistence's background request.
+func request_save_cells(world: ServerWorld, cell_ids: PackedStringArray, completed: Callable) -> void:
+	completed.call(save_cells(world, cell_ids))
+
+
 ## True while the next world save must replace every saved cell document
 ## (only a store of a saved world can ask for that, after the cell grid
 ## changed).

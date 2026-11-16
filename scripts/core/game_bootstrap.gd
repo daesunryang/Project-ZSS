@@ -123,7 +123,7 @@ func _start_network(config: LaunchConfig, settings: AppSettings, world_id: Strin
 
 func _start_server(config: LaunchConfig, settings: AppSettings, network_settings: NetworkSettings, composition: CompositionConfig, world_id: String) -> Error:
 	var save_root: String = config.save_root_override if not config.save_root_override.is_empty() else settings.save_root
-	var persistence: WorldPersistence = WorldPersistence.new(SaveService.new(save_root, settings.save_backup_keep), composition)
+	var persistence: WorldPersistence = WorldPersistence.new(SaveService.new(save_root, settings.save_backup_keep), composition, settings.background_world_saves)
 	var server_world: ServerWorld = persistence.load_or_create(world_id)
 	if server_world == null:
 		return ERR_FILE_CORRUPT
