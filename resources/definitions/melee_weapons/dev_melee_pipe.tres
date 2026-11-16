@@ -5,7 +5,7 @@
 [resource]
 script = ExtResource("1_weapon")
 weapon_id = "dev_melee_pipe"
-display_name = "Development Pipe"
+display_name = "쇠파이프"
 category = 1
 item_definition_id = "dev_melee_pipe"
 base_damage = 25.0

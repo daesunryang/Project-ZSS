@@ -5,7 +5,7 @@
 [resource]
 script = ExtResource("1_item")
 definition_id = "dev_food_ration"
-display_name = "Development Ration"
+display_name = "전투식량"
 max_stack = 5
 consume_hunger_reduction = 40.0
 consume_thirst_reduction = 0.0

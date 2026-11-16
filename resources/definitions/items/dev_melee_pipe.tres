@@ -5,5 +5,5 @@
 [resource]
 script = ExtResource("1_item")
 definition_id = "dev_melee_pipe"
-display_name = "Development Pipe"
+display_name = "쇠파이프"
 max_stack = 1

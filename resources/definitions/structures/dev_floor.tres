@@ -5,7 +5,7 @@
 [resource]
 script = ExtResource("1_structure")
 definition_id = "dev_floor"
-display_name = "Development Floor"
+display_name = "바닥"
 placement = 0
 blocks_movement = false
 is_door = false

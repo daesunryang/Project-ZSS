@@ -92,16 +92,25 @@ func label_of(item_instance_id: String) -> Label3D:
 
 func _update_labels() -> void:
 	var max_distance_sq: float = _settings.world_item_label_distance_m * _settings.world_item_label_distance_m
+	var candidates: Array[Dictionary] = []
+	for item_id: String in _ids:
+		var position: Vector3 = _entries[item_id][ClientWorldState.KEY_POSITION]
+		var distance_sq: float = position.distance_squared_to(_focus)
+		if distance_sq <= max_distance_sq:
+			candidates.append({"id": item_id, "distance_sq": distance_sq})
+	candidates.sort_custom(_label_candidate_before)
+	var shown_count: int = mini(candidates.size(), _settings.world_item_label_max_count)
+	var shown: Dictionary[String, bool] = {}
+	for index: int in range(shown_count):
+		shown[str(candidates[index]["id"])] = true
 	for item_id: String in _labels.keys():
-		var position: Vector3 = _entries.get(item_id, {}).get(ClientWorldState.KEY_POSITION, Vector3.INF)
-		if not _entries.has(item_id) or position.distance_squared_to(_focus) > max_distance_sq:
+		if not shown.has(item_id):
 			_labels[item_id].free()
 			_labels.erase(item_id)
-	for item_id: String in _ids:
+	for index: int in range(shown_count):
+		var item_id: String = str(candidates[index]["id"])
 		var entry: Dictionary = _entries[item_id]
 		var position: Vector3 = entry[ClientWorldState.KEY_POSITION]
-		if position.distance_squared_to(_focus) > max_distance_sq:
-			continue
 		var anchor: Node3D = _labels.get(item_id, null)
 		if anchor == null:
 			anchor = _make_label(item_id)
@@ -109,6 +118,14 @@ func _update_labels() -> void:
 			_labels[item_id] = anchor
 		anchor.position = position
 		(anchor.get_node(LABEL_NODE) as Label3D).text = ClientPresentationFormatter.world_item_label(entry, _catalog)
+
+
+func _label_candidate_before(a: Dictionary, b: Dictionary) -> bool:
+	var a_distance: float = float(a["distance_sq"])
+	var b_distance: float = float(b["distance_sq"])
+	if not is_equal_approx(a_distance, b_distance):
+		return a_distance < b_distance
+	return str(a["id"]) < str(b["id"])
 
 
 func _is_drawable(entry: Variant) -> bool:

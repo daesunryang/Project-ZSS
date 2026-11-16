@@ -5,7 +5,7 @@
 [resource]
 script = ExtResource("1_structure")
 definition_id = "dev_storage_box"
-display_name = "Development Storage Box"
+display_name = "보관 상자"
 placement = 0
 blocks_movement = false
 is_door = false

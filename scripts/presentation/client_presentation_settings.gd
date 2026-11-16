@@ -22,6 +22,13 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.01, 1.0) var attack_min_interval_sec: float = 0.15
 @export_range(0.1, 10.0) var attack_result_duration_sec: float = 2.0
 @export_range(1, 20) var hud_event_line_count: int = 5
+## Shared backdrop and text treatment for the two stacked HUD columns.
+@export var hud_panel_color: Color = Color(0.035, 0.045, 0.055, 0.82)
+@export_range(0, 32) var hud_panel_padding_px: int = 8
+@export_range(0, 32) var hud_panel_corner_radius_px: int = 6
+@export_range(0, 32) var hud_stack_separation_px: int = 6
+@export_range(0, 16) var hud_text_outline_size_px: int = 4
+@export var hud_text_outline_color: Color = Color(0.0, 0.0, 0.0, 0.95)
 @export var death_message: String = "사망했습니다. 이 캐릭터는 끝났습니다. 소지품은 죽은 자리에 남고, 잠시 뒤 새 캐릭터를 만들어 다시 시작합니다."
 
 ## Use keys (P2-T3, P2-T6, P2-T7; docs/15 P2-125, P2-144): each asks the server to
@@ -104,12 +111,13 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.01, 5.0) var world_item_marker_size_m: float = 0.25
 @export var world_item_marker_color: Color = Color(0.95, 0.80, 0.30, 1.0)
 @export_range(0.0, 5.0) var world_item_label_margin_m: float = 0.20
-@export_range(0.0001, 0.1) var world_item_label_pixel_size: float = 0.005
-@export_range(1, 256) var world_item_label_font_size: int = 32
+@export_range(0.0001, 0.1) var world_item_label_pixel_size: float = 0.004
+@export_range(1, 256) var world_item_label_font_size: int = 24
 @export var world_item_label_color: Color = Color(1.0, 0.95, 0.70, 1.0)
 ## Labels are nodes, unlike batched bodies. Only items within this distance
-## of the local player receive one.
+## of the local player receive one, up to the nearest configured count.
 @export_range(0.0, 100.0) var world_item_label_distance_m: float = 12.0
+@export_range(0, 256) var world_item_label_max_count: int = 8
 ## The pickup candidate shown in the HUD and named by the pickup key: the
 ## nearest world item within this distance of the local player, in the
 ## mirror. Only a suggestion: the server checks its own positions and range
@@ -237,6 +245,8 @@ func validate() -> PackedStringArray:
 		errors.append("attack_result_duration_sec must be > 0")
 	if hud_event_line_count <= 0:
 		errors.append("hud_event_line_count must be > 0")
+	if hud_panel_padding_px < 0 or hud_panel_corner_radius_px < 0 or hud_stack_separation_px < 0 or hud_text_outline_size_px < 0:
+		errors.append("HUD panel dimensions and text outline size must be >= 0")
 	if death_message.is_empty():
 		errors.append("death_message must not be empty")
 	if consume_key == KEY_NONE:
@@ -281,6 +291,8 @@ func validate() -> PackedStringArray:
 		errors.append("world item marker size and label pixel size must be > 0, label margin >= 0 and font size >= 1")
 	if world_item_label_distance_m < 0.0:
 		errors.append("world_item_label_distance_m must be >= 0")
+	if world_item_label_max_count < 0:
+		errors.append("world_item_label_max_count must be >= 0")
 	if not is_finite(pickup_candidate_range_m) or pickup_candidate_range_m <= 0.0:
 		errors.append("pickup_candidate_range_m must be > 0")
 	var trade_keys: Dictionary[String, Key] = {"trade_request_key": trade_request_key, "trade_accept_key": trade_accept_key, "trade_decline_key": trade_decline_key, "trade_offer_add_key": trade_offer_add_key, "trade_offer_remove_key": trade_offer_remove_key}

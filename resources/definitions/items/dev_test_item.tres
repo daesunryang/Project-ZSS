@@ -5,5 +5,5 @@
 [resource]
 script = ExtResource("1_item")
 definition_id = "dev_test_item"
-display_name = "Development Test Item"
+display_name = "시험용 물건"
 max_stack = 1

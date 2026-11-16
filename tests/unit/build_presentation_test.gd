@@ -19,6 +19,18 @@ func _row(definition_id: String = "dev_wall", tile: Vector2i = Vector2i.ZERO, ro
 	return [STRUCTURE_ID, definition_id, tile.x, tile.y, rotation, state, false, 0.0, 0.35, {}, definition.build_costs.duplicate()]
 
 
+func test_development_structure_display_names_are_korean() -> void:
+	var catalog: StructureCatalog = _catalog()
+	var expected: Dictionary[String, String] = {
+		"dev_floor": "바닥",
+		"dev_wall": "벽",
+		"dev_door": "문",
+		"dev_storage_box": "보관 상자",
+	}
+	for definition_id: String in expected:
+		assert_eq(catalog.get_definition(definition_id).display_name, expected[definition_id], definition_id)
+
+
 func test_ground_hit_tile_edge_rotation_and_preview_checks_are_pure() -> void:
 	var grid: StructureGrid = StructureGrid.new(1.0)
 	var catalog: StructureCatalog = _catalog()

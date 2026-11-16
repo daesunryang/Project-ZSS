@@ -10,6 +10,8 @@ extends Node3D
 @onready var _structures_root: Node3D = %Structures
 @onready var _world_map_root: Node3D = %WorldMap
 @onready var _map_label: Label = %MapLabel
+@onready var _left_hud_panel: PanelContainer = %LeftHudPanel
+@onready var _left_hud_stack: VBoxContainer = %LeftHudStack
 @onready var _survival_label: Label = %SurvivalLabel
 @onready var _event_log_label: Label = %EventLogLabel
 @onready var _attack_result_label: Label = %AttackResultLabel
@@ -19,6 +21,8 @@ extends Node3D
 @onready var _containers_root: Node3D = %Containers
 @onready var _container_label: Label = %ContainerLabel
 @onready var _build_label: Label = %BuildLabel
+@onready var _right_hud_panel: PanelContainer = %RightHudPanel
+@onready var _right_hud_stack: VBoxContainer = %RightHudStack
 @onready var _creation_screen: CharacterCreationScreen = %CharacterCreationScreen
 
 ## Children of a player's visual.
@@ -138,6 +142,7 @@ func _ready() -> void:
 	if not errors.is_empty():
 		GameLogger.error("presentation", "invalid client presentation settings; using built-in defaults", {"errors": "; ".join(errors), "operation": "client_view_ready"})
 		_presentation = ClientPresentationSettings.new()
+	_apply_hud_style()
 	_yaw = 0.0
 	_pitch = _settings.initial_pitch_rad
 	_intent_sender = MoveIntentSender.new(
@@ -168,6 +173,36 @@ func _ready() -> void:
 	_update_camera()
 	_bind_network.call_deferred()
 	GameLogger.info("presentation", "client view ready", {"display_driver": DisplayServer.get_name()})
+
+
+## Applies one data-driven treatment to the stacked HUD columns. The scene
+## owns layout; presentation settings own contrast and spacing.
+func _apply_hud_style() -> void:
+	var panel_style: StyleBoxFlat = StyleBoxFlat.new()
+	panel_style.bg_color = _presentation.hud_panel_color
+	panel_style.content_margin_left = float(_presentation.hud_panel_padding_px)
+	panel_style.content_margin_top = float(_presentation.hud_panel_padding_px)
+	panel_style.content_margin_right = float(_presentation.hud_panel_padding_px)
+	panel_style.content_margin_bottom = float(_presentation.hud_panel_padding_px)
+	panel_style.corner_radius_top_left = _presentation.hud_panel_corner_radius_px
+	panel_style.corner_radius_top_right = _presentation.hud_panel_corner_radius_px
+	panel_style.corner_radius_bottom_left = _presentation.hud_panel_corner_radius_px
+	panel_style.corner_radius_bottom_right = _presentation.hud_panel_corner_radius_px
+	for panel: PanelContainer in [_left_hud_panel, _right_hud_panel]:
+		panel.add_theme_stylebox_override(&"panel", panel_style.duplicate() as StyleBox)
+	for stack: VBoxContainer in [_left_hud_stack, _right_hud_stack]:
+		stack.add_theme_constant_override(&"separation", _presentation.hud_stack_separation_px)
+	var column_labels: Array[Label] = [
+		_survival_label,
+		_inventory_label,
+		_trade_label,
+		_event_log_label,
+		_container_label,
+		_build_label,
+	]
+	for label: Label in column_labels:
+		label.add_theme_color_override(&"font_outline_color", _presentation.hud_text_outline_color)
+		label.add_theme_constant_override(&"outline_size", _presentation.hud_text_outline_size_px)
 
 
 func _exit_tree() -> void:

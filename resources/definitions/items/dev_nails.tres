@@ -5,5 +5,5 @@
 [resource]
 script = ExtResource("1_item")
 definition_id = "dev_nails"
-display_name = "Development Nails"
+display_name = "못"
 max_stack = 50

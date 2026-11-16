@@ -5,7 +5,7 @@
 [resource]
 script = ExtResource("1_structure")
 definition_id = "dev_door"
-display_name = "Development Door"
+display_name = "문"
 placement = 1
 blocks_movement = true
 is_door = true

@@ -72,10 +72,27 @@ func test_shipped_presentation_settings_load_and_validate() -> void:
 	assert_true(settings.validate().is_empty())
 	assert_eq(settings.attack_mouse_button, MOUSE_BUTTON_LEFT)
 	assert_true(settings.hud_event_line_count > 0)
+	assert_true(settings.hud_panel_color.a >= 0.8, "the real-window HUD has a readable backdrop")
 	var invalid: ClientPresentationSettings = ClientPresentationSettings.new()
 	invalid.attack_min_interval_sec = 0.0
 	invalid.zombie_capsule_height_m = invalid.zombie_capsule_radius_m
 	assert_true(invalid.validate().size() >= 2)
+
+
+func test_client_view_stacks_the_left_hud_blocks_in_documented_order() -> void:
+	var scene: PackedScene = load("res://scenes/main/client_view.tscn") as PackedScene
+	var view: Node = scene.instantiate()
+	var stack: Node = view.get_node("Hud/LeftHudPanel/LeftHudStack")
+	assert_true(stack is VBoxContainer)
+	assert_eq(stack.get_child_count(), 3)
+	assert_eq([
+		stack.get_child(0).name,
+		stack.get_child(1).name,
+		stack.get_child(2).name,
+	], [&"SurvivalLabel", &"InventoryLabel", &"TradeLabel"])
+	assert_eq(view.get_node("%SurvivalLabel").get_parent(), stack)
+	assert_eq(view.get_node("%InventoryLabel").get_parent(), stack)
+	view.free()
 
 
 func test_attack_action_uses_settings_and_is_not_duplicated() -> void:

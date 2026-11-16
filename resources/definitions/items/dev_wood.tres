@@ -5,5 +5,5 @@
 [resource]
 script = ExtResource("1_item")
 definition_id = "dev_wood"
-display_name = "Development Wood"
+display_name = "목재"
 max_stack = 20

@@ -13,6 +13,22 @@ const EPSILON: float = 0.0001
 var _root: Node3D = null
 
 
+func test_development_item_display_names_are_korean() -> void:
+	var catalog: ItemCatalog = ItemCatalog.load_directory()
+	var expected: Dictionary[String, String] = {
+		"dev_bandage": "붕대",
+		"dev_cure": "치료제",
+		"dev_food_ration": "전투식량",
+		"dev_water_bottle": "생수",
+		"dev_melee_pipe": "쇠파이프",
+		"dev_nails": "못",
+		"dev_wood": "목재",
+		"dev_test_item": "시험용 물건",
+	}
+	for definition_id: String in expected:
+		assert_eq(catalog.get_definition(definition_id).display_name, expected[definition_id], definition_id)
+
+
 func after_each() -> void:
 	if _root != null and is_instance_valid(_root):
 		_root.free()
@@ -315,6 +331,7 @@ func test_every_item_lying_in_the_world_gets_a_marker_with_its_name_and_quantity
 	assert_eq(label.billboard, BaseMaterial3D.BILLBOARD_ENABLED, "the label faces the camera")
 	assert_true(label.position.y >= settings.world_item_marker_size_m + settings.world_item_label_margin_m - EPSILON, "above the box")
 	assert_eq(label.font_size, settings.world_item_label_font_size)
+	assert_true(absf(label.pixel_size - settings.world_item_label_pixel_size) < EPSILON)
 	assert_eq(label.modulate, settings.world_item_label_color)
 
 	# The mirror changes: a quantity, a position, an item gone, a new item.
@@ -338,9 +355,10 @@ func test_every_item_lying_in_the_world_gets_a_marker_with_its_name_and_quantity
 	assert_eq(_root.get_child_count(), 1, "the empty batch node is retained")
 
 
-func test_world_item_labels_follow_the_configured_distance_but_all_bodies_remain() -> void:
+func test_world_item_labels_keep_the_nearest_configured_count_and_all_bodies() -> void:
 	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
-	settings.world_item_label_distance_m = 1.1
+	settings.world_item_label_distance_m = 3.1
+	settings.world_item_label_max_count = 2
 	_root = Node3D.new()
 	tree.root.add_child(_root)
 	var markers := WorldItemMarkers.new(_root, ItemCatalog.load_directory(), settings)
@@ -348,11 +366,17 @@ func test_world_item_labels_follow_the_configured_distance_but_all_bodies_remain
 		"item_000001": _world_item("item_000001", FOOD_ID, 1, Vector3.ZERO),
 		"item_000002": _world_item("item_000002", FOOD_ID, 1, Vector3.RIGHT),
 		"item_000003": _world_item("item_000003", FOOD_ID, 1, Vector3.RIGHT * 3.0),
+		"item_000004": _world_item("item_000004", FOOD_ID, 1, Vector3.RIGHT * 10.0),
 	}
 	markers.sync(items, Vector3.ZERO)
-	assert_eq(markers.body_instance_count(), 3)
+	assert_eq(markers.body_instance_count(), 4)
 	assert_eq(markers.label_count(), 2)
+	assert_not_null(markers.label_of("item_000001"))
+	assert_not_null(markers.label_of("item_000002"))
+	assert_null(markers.label_of("item_000003"), "a farther in-range item loses to the cap")
+	assert_null(markers.label_of("item_000004"), "distance still limits labels")
 	markers.update_focus(Vector3.RIGHT * 3.0)
-	assert_eq(markers.body_instance_count(), 3, "moving label focus never removes bodies")
-	assert_eq(markers.label_count(), 1)
+	assert_eq(markers.body_instance_count(), 4, "moving label focus never removes bodies")
+	assert_eq(markers.label_count(), 2)
 	assert_not_null(markers.label_of("item_000003"))
+	assert_not_null(markers.label_of("item_000002"))

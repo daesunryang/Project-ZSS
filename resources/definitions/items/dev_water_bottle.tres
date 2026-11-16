@@ -5,7 +5,7 @@
 [resource]
 script = ExtResource("1_item")
 definition_id = "dev_water_bottle"
-display_name = "Development Water Bottle"
+display_name = "생수"
 max_stack = 5
 consume_hunger_reduction = 0.0
 consume_thirst_reduction = 50.0

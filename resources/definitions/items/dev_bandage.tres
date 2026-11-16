@@ -5,6 +5,6 @@
 [resource]
 script = ExtResource("1_item")
 definition_id = "dev_bandage"
-display_name = "Development Bandage"
+display_name = "붕대"
 max_stack = 5
 treat_bleeding_wound_count = 1
