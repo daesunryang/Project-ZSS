@@ -17,7 +17,7 @@ tools/run_client.sh     # 클라이언트 창(디스플레이 필요), 접속: -
 
 ## 문서
 
-- `CLAUDE.md` — 개발 작업 규칙
+- `AGENTS.md` — 개발 작업 규칙 (`CLAUDE.md`는 이 파일을 불러오는 한 줄)
 - `docs/00_scope_and_decisions.md` — 범위/결정/ADR (최우선 기준)
 - `docs/13_implementation_roadmap.md` — Phase별 로드맵
 - `docs/15_risks_and_open_questions.md` — 위험 요소, 미결정 사항, Phase 0 임시 가정
