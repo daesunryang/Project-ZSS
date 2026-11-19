@@ -31,6 +31,15 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(1, 256) var npc_name_tag_font_size: int = 34
 @export var npc_name_tag_color: Color = Color(0.70, 0.88, 1.0, 1.0)
 
+## P4-8 development overlay. F4 does not overlap the existing letter F
+## consume key or the F3 cell overlay.
+@export_group("NPC debug overlay")
+@export var npc_debug_overlay_key: Key = KEY_F4
+@export_range(1.0, 200.0) var npc_debug_target_max_distance_m: float = 50.0
+@export_range(1.0, 1000.0) var npc_debug_target_radius_px: float = 160.0
+@export_range(0.001, 5.0) var npc_debug_path_height_m: float = 0.08
+@export var npc_debug_path_color: Color = Color(1.0, 0.35, 0.1, 1.0)
+
 @export var attack_mouse_button: MouseButton = MOUSE_BUTTON_LEFT
 @export_range(0.01, 1.0) var attack_min_interval_sec: float = 0.15
 @export_range(0.1, 10.0) var attack_result_duration_sec: float = 2.0
@@ -263,6 +272,10 @@ func validate() -> PackedStringArray:
 		errors.append("npc_lying_tilt_rad must be within (0, PI]")
 	if npc_name_tag_margin_m < 0.0 or npc_name_tag_pixel_size <= 0.0 or npc_name_tag_font_size < 1:
 		errors.append("npc name tag margin must be >= 0, pixel size > 0 and font size >= 1")
+	if npc_debug_overlay_key == KEY_NONE:
+		errors.append("npc_debug_overlay_key must not be KEY_NONE")
+	if not is_finite(npc_debug_target_max_distance_m) or npc_debug_target_max_distance_m <= 0.0 or not is_finite(npc_debug_target_radius_px) or npc_debug_target_radius_px <= 0.0 or not is_finite(npc_debug_path_height_m) or npc_debug_path_height_m <= 0.0:
+		errors.append("npc debug target distance, radius and path height must be > 0")
 	if dead_tilt_rad <= 0.0 or dead_tilt_rad > PI:
 		errors.append("dead_tilt_rad must be within (0, PI]")
 	if attack_mouse_button == MOUSE_BUTTON_NONE:
@@ -374,7 +387,7 @@ func validate() -> PackedStringArray:
 	if structure_label_distance_m < 0.0:
 		errors.append("structure_label_distance_m must be >= 0")
 	if not _are_distinct(assigned_keys().values()):
-		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier, the trade keys, the cell overlay key, the container keys and the building keys must be different keys")
+		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier, the trade keys, the cell and NPC debug overlay keys, the container keys and the building keys must be different keys")
 	return errors
 
 
@@ -398,6 +411,7 @@ func assigned_keys() -> Dictionary[String, Key]:
 		"trade_offer_add_key": trade_offer_add_key,
 		"trade_offer_remove_key": trade_offer_remove_key,
 		"cell_overlay_key": cell_overlay_key,
+		"npc_debug_overlay_key": npc_debug_overlay_key,
 		"container_open_key": container_open_key,
 		"container_previous_key": container_previous_key,
 		"container_next_key": container_next_key,

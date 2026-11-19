@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="NpcDebugSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/debug/npc_debug_settings.gd" id="1_debug"]
+
+[resource]
+script = ExtResource("1_debug")
+enabled = false
+allow_all_player_keys = false
+allowed_player_keys = PackedStringArray()
+update_rate_hz = 2.0
+top_candidate_count = 5
+recent_memory_count = 5
+request_rate_per_sec = 4.0
+request_burst = 4

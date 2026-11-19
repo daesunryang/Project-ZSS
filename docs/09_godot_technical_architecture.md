@@ -3008,3 +3008,17 @@ systems.npc.stages.behaviours = {schema_version: 1, stocked: [spot_id]}
 **P4-7 행동 라벨**: `NpcDecisionComponent.label_of`가 이제 실제로 바뀐다(걷는 중 `walk`, 먹기·마시기 `eat`, 쉬기 `sleep`, 일하기 `work`, 도주 `flee`). `drink` 라벨은 프로토콜 변경이라 만들지 않았다(마시기는 `eat`로 보인다).
 
 **테스트**: `tests/unit/npc_behaviour_test.gd`(행동마다: 어디로 가는지, 보관함·인벤토리·욕구·활동의 변화, 보고와 이벤트, 실패, 구성 요소 문서의 텍스트 왕복과 거부, 재시작·셀 해제 뒤 소지품과 진행), `tests/unit/npc_behaviour_day_test.gd`(전용 서버와 같은 조립·개발 맵·개발 NPC 5명: 달력 하루 동안 지시 없이 먹고 마시고 쉬고 일함, 같은 seed 두 번의 결정·이벤트 일치, 저장 → 재시작 → 복구가 끊지 않은 실행과 일치, 일하던 NPC가 좀비를 보고 도주, 25명 비용 측정).
+
+### 17.9 NPC AI 디버그 오버레이(P4-8, NetModule `NpcDebugNet`)
+
+`NpcDebugQuery`는 서버 메모리에 있는 NPC 하나를 **읽기만** 하는 개발용 조회다. 상태·목표·관찰 행동, 최근 결정 기록의 상위 후보와 항별 점수, 욕구·감정·방향별 관계·최근 기억, 마지막 실패/취소, 실행기의 남은 waypoint와 목적지, LOD, 다음 결정 일정, 스케줄러·실행기 진단, NPC RNG seed/state와 결정 순번을 반환한다. 반환값은 벡터를 숫자 배열로 바꾼 JSON-safe Dictionary이고, 메모리에 없으면 `{schema_version: 1, found: false, npc_id}`다. 조회는 어떤 구성 요소도 갱신하지 않으며 `dump_npc`/`format_dump`는 같은 결과를 한국어 여러 줄 문자열로 만든다.
+
+`ServerComposition`은 이미 설치한 `NpcScheduler`와 `NpcExecutor`의 정확한 인스턴스를 조회에 주입하고 `ServerWorld`의 런타임 메타데이터에 붙인다. 기존 `root`·`needs`·`scheduling`·`decision`·`behaviours`·`mind` 계약은 바꾸지 않았다. `inspect_count`는 꺼진 서버에서 조회가 일어나지 않았음을 검증하는 진단값이며 게임 규칙이나 저장 데이터가 아니다.
+
+**개발 설정과 권한**: `CompositionConfig.npc_debug`는 `data/tuning/npc_debug_settings.tres`를 읽는다. 출하 기본값은 `enabled=false`, `allow_all_player_keys=false`, 허용 키 목록은 비어 있다. 서버가 명시적으로 켠 뒤 `allowed_player_keys`에 접속자의 `player_key`가 있거나 개발 조립에서 `allow_all_player_keys=true`일 때만 구독할 수 있다. 설정이 꺼져 있거나 권한이 없으면 구독을 지우고 상태/거부 사유만 그 peer에게 보내며 `NpcDebugQuery`를 호출하지 않는다. 일반 `NpcNet` 공개 행에는 이 정보가 추가되지 않는다.
+
+**구독과 전송**: 접속자 하나는 NPC ID 하나만 구독한다. `NpcDebugNet`의 네 RPC는 모두 ch0 reliable이다: C→S `_rpc_request_subscribe(npc_id)`, `_rpc_request_unsubscribe()`와 S→C `_rpc_debug_status(payload)`, `_rpc_debug_snapshot(npc_id, found, payload)`. 서버는 기본 2Hz로 돌되, 매 샘플 전에 접속·권한과 그 NPC의 메모리 존재 및 peer의 셀 관심 범위를 확인한다. 메모리/관심 범위 밖이면 조회하지 않고 `found=false`만 보낸다. 다른 peer에게는 보내지 않는다. 구독 해제·접속 종료·권한 상실 때 구독을 지우며 요청은 peer별 기본 4회/초, burst 4로 제한한다. 새 모듈과 RPC 때문에 `BuildInfo.PROTOCOL_VERSION`은 **16 → 17**이다.
+
+**클라이언트 표시**: `ClientView`의 F4는 `NpcDebugPresentation`을 켜고 끈다. 열린 동안 카메라 중심에서 설정 반경 안에 가장 가까운 공개 NPC 이름표 하나(기본 최대 50m)를 고르고 그 ID만 구독한다. 패널은 상태·행동·목표·LOD, 실패/취소 사유, 상위 후보의 합계/항별 점수, 욕구 막대, 남은 waypoint 수와 다음 결정 시간을 한국어로 표시한다. 남은 경로는 NPC의 현재 위치에서 waypoint를 잇는 월드 선이다. 서버가 꺼져 있으면 `서버에서 디버그가 꺼져 있음`, 권한이 없으면 별도 권한 문구, 관심/메모리 밖이면 `NPC 없음`을 표시하고 경로를 지운다. 이 화면은 개발 진단이며 게임 속 정보 공개나 저장 상태가 아니다.
+
+**비용·테스트**: 꺼진 서버, 구독 없음, 조회/서비스 없음이면 서버 물리 틱이 즉시 끝난다. `tests/unit/npc_debug_query_test.gd`는 공개 조회 원천을 한 스냅샷으로 모으고 조회 전후 NPC 저장 상태가 같으며 텍스트 덤프가 여러 줄임을 검사한다. `tests/integration/npc_debug_net_test.gd`는 실제 ENet 서버 1 + 클라이언트 2에서 꺼짐/권한 없음의 조회 0회, 허용된 한 peer만 2Hz 수신, 다른 peer 미수신, 관심 밖의 `found=false`와 조회 0회, 해제·접속 종료 정리를 고정 틱으로 검사한다. 실제 창의 글자 배치와 경로선 미술은 확인하지 않았다.

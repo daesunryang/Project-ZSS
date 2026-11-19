@@ -120,7 +120,10 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    npc_action_changed events on channel 0, and 5 Hz position snapshots
 ##    on channel 2. No client-to-server RPC. Public rows contain only id,
 ##    name, appearance, position, yaw, observable action label and posture.
-const PROTOCOL_VERSION: int = 16
+## 17: P4-8 (NPC AI debug overlay, docs/09 §17.9). New module NpcDebugNet:
+##    authorized development subscriptions and private 2 Hz snapshots on
+##    reliable channel 0. Dedicated-server defaults remain disabled.
+const PROTOCOL_VERSION: int = 17
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

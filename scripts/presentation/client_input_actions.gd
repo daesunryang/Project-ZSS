@@ -41,6 +41,8 @@ const TRADE_OFFER_REMOVE: StringName = &"trade_offer_remove"
 ## Show / hide the borders of the world cells around the player (P3-2; a
 ## testing aid, local only).
 const CELL_OVERLAY: StringName = &"toggle_cell_overlay"
+## P4-8 private NPC AI panel and remaining path line.
+const NPC_DEBUG_OVERLAY: StringName = &"toggle_npc_debug_overlay"
 ## Containers (P3-3): open the nearest container / close the open one; the
 ## cursor on the stacks inside; take the stack under that cursor; put the
 ## stack under the inventory cursor in. DROP_STACK held with take or put
@@ -96,6 +98,7 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 		_add_key_action(TRADE_OFFER_ADD, presentation.trade_offer_add_key, settings.input_deadzone)
 		_add_key_action(TRADE_OFFER_REMOVE, presentation.trade_offer_remove_key, settings.input_deadzone)
 		_add_key_action(CELL_OVERLAY, presentation.cell_overlay_key, settings.input_deadzone)
+		_add_key_action(NPC_DEBUG_OVERLAY, presentation.npc_debug_overlay_key, settings.input_deadzone)
 		_add_key_action(CONTAINER_OPEN, presentation.container_open_key, settings.input_deadzone)
 		_add_key_action(CONTAINER_PREVIOUS, presentation.container_previous_key, settings.input_deadzone)
 		_add_key_action(CONTAINER_NEXT, presentation.container_next_key, settings.input_deadzone)

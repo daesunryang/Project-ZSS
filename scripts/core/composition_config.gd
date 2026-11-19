@@ -78,6 +78,8 @@ var npc_needs: NpcNeedSettings
 var npc_mind: NpcMindSettings
 ## P4-7 (docs/09 §17.5): NPC public replication settings.
 var npc_net: NpcNetSettings
+## P4-8: development-only private NPC debug query and subscription.
+var npc_debug: NpcDebugSettings
 ## P4-1: the NPCs a world is given, once (NpcService). null (the default of
 ## from_defaults(): tests, tools) = the world gets no NPCs. A dedicated
 ## server sets the dev roster (NpcRoster.DEFAULT_PATH, GameBootstrap), which
@@ -142,6 +144,7 @@ static func from_defaults() -> CompositionConfig:
 	config.npc_needs = NpcNeedSettings.load_or_default()
 	config.npc_mind = NpcMindSettings.load_or_default()
 	config.npc_net = NpcNetSettings.load_or_default()
+	config.npc_debug = NpcDebugSettings.load_or_default()
 	config.npc_schedule = NpcScheduleSettings.load_or_default()
 	config.npc_decision = NpcDecisionSettings.load_or_default()
 	config.npc_actions = NpcActionCatalog.load_directory()
@@ -155,7 +158,7 @@ static func from_defaults() -> CompositionConfig:
 ## the world is to get one) against the definitions and the map content.
 func _validate_npcs() -> PackedStringArray:
 	var errors: PackedStringArray = []
-	if npc == null or npc_definitions == null or npc_needs == null or npc_mind == null or npc_net == null:
+	if npc == null or npc_definitions == null or npc_needs == null or npc_mind == null or npc_net == null or npc_debug == null:
 		errors.append("composition config is incomplete (npc)")
 		return errors
 	errors.append_array(npc.validate())
@@ -163,6 +166,7 @@ func _validate_npcs() -> PackedStringArray:
 	errors.append_array(npc_definitions.validate_against(appearance))
 	errors.append_array(npc_needs.validate())
 	errors.append_array(npc_net.validate())
+	errors.append_array(npc_debug.validate())
 	errors.append_array(npc_schedule.validate() if npc_schedule != null else PackedStringArray(["composition config is incomplete (npc_schedule)"]))
 	if npc_decision == null or npc_actions == null:
 		errors.append("composition config is incomplete (npc_decision)")

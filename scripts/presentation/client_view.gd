@@ -7,6 +7,7 @@ extends Node3D
 @onready var _players_root: Node3D = %Players
 @onready var _zombies_root: Node3D = %Zombies
 @onready var _npcs_root: Node3D = %Npcs
+@onready var _npc_debug_path_root: Node3D = %NpcDebugPathRoot
 @onready var _world_items_root: Node3D = %WorldItems
 @onready var _structures_root: Node3D = %Structures
 @onready var _world_map_root: Node3D = %WorldMap
@@ -24,6 +25,8 @@ extends Node3D
 @onready var _build_label: Label = %BuildLabel
 @onready var _right_hud_panel: PanelContainer = %RightHudPanel
 @onready var _right_hud_stack: VBoxContainer = %RightHudStack
+@onready var _npc_debug_panel: PanelContainer = %NpcDebugPanel
+@onready var _npc_debug_label: Label = %NpcDebugLabel
 @onready var _creation_screen: CharacterCreationScreen = %CharacterCreationScreen
 
 ## Children of a player's visual.
@@ -37,6 +40,8 @@ var _state: ClientWorldState = null
 var _zombie_state: ClientZombieState = null
 var _npc_state: ClientNpcState = null
 var _npc_visuals: NpcVisuals = null
+var _npc_debug_module: NpcDebugNetModule = null
+var _npc_debug_presentation: NpcDebugPresentation = null
 var _survival_state: ClientSurvivalState = null
 var _combat_module: CombatNetModule = null
 var _intent_sender: MoveIntentSender = null
@@ -197,7 +202,7 @@ func _apply_hud_style() -> void:
 	panel_style.corner_radius_top_right = _presentation.hud_panel_corner_radius_px
 	panel_style.corner_radius_bottom_left = _presentation.hud_panel_corner_radius_px
 	panel_style.corner_radius_bottom_right = _presentation.hud_panel_corner_radius_px
-	for panel: PanelContainer in [_left_hud_panel, _right_hud_panel]:
+	for panel: PanelContainer in [_left_hud_panel, _right_hud_panel, _npc_debug_panel]:
 		panel.add_theme_stylebox_override(&"panel", panel_style.duplicate() as StyleBox)
 	for stack: VBoxContainer in [_left_hud_stack, _right_hud_stack]:
 		stack.add_theme_constant_override(&"separation", _presentation.hud_stack_separation_px)
@@ -208,6 +213,7 @@ func _apply_hud_style() -> void:
 		_event_log_label,
 		_container_label,
 		_build_label,
+		_npc_debug_label,
 	]
 	for label: Label in column_labels:
 		label.add_theme_color_override(&"font_outline_color", _presentation.hud_text_outline_color)
@@ -217,6 +223,8 @@ func _apply_hud_style() -> void:
 
 
 func _exit_tree() -> void:
+	if _npc_debug_presentation != null:
+		_npc_debug_presentation.shutdown()
 	if DisplayServer.get_name() != "headless" and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
@@ -260,6 +268,11 @@ func _process(_delta: float) -> void:
 
 func _physics_process(_delta: float) -> void:
 	_update_camera()
+	if Input.is_action_just_pressed(ClientInputActions.NPC_DEBUG_OVERLAY) and _npc_debug_presentation != null:
+		_npc_debug_presentation.toggle()
+		_npc_debug_panel.visible = _npc_debug_presentation.is_open()
+	if _npc_debug_presentation != null:
+		_npc_debug_presentation.tick(_npc_state)
 	_update_batched_label_focus()
 	_update_treat_target()
 	_update_pickup_candidate()
@@ -364,6 +377,9 @@ func _bind_network() -> void:
 		_npc_state = npc_module.client_state
 		if not _npc_state.changed.is_connected(_on_npc_state_changed):
 			_npc_state.changed.connect(_on_npc_state_changed)
+	_npc_debug_module = _network.get_module(NpcDebugNetModule.MODULE_NAME) as NpcDebugNetModule
+	if _npc_debug_module != null:
+		_npc_debug_presentation = NpcDebugPresentation.new(_npc_debug_path_root, _npc_debug_label, _camera, _presentation, _npc_debug_module)
 	_survival_module = _network.get_module(SurvivalNetModule.MODULE_NAME) as SurvivalNetModule
 	if _survival_module != null:
 		_survival_state = _survival_module.client_state

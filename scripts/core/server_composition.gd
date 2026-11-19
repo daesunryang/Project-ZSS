@@ -132,6 +132,10 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 		# (A decider that was made with an executor of its own keeps it.)
 		if npc_decider is NpcUtilityDecider and (npc_decider as NpcUtilityDecider).executor() == null:
 			(npc_decider as NpcUtilityDecider).set_executor(npc_behaviours.action_executor())
+
+	# P4-8: a read-only query over the exact scheduler/executor instances.
+	# Metadata is runtime-only and avoids changing the established NPC APIs.
+	NpcDebugQuery.attach(world, NpcDebugQuery.new(world, npcs, npc_scheduler, npc_executor, config.npc_debug))
 	# P2-T16: trades between two players. Last, so its step sees what this
 	# tick did to its parties (a death, a rest, a move). It is told about
 	# every inventory transaction, to keep offers backed by what is carried.
@@ -168,6 +172,12 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	error = service.register_module(npc_net)
 	if error != OK:
 		npc_net.free()
+		return error
+	# P4-8: private, development-only debug subscription on reliable ch0.
+	var npc_debug_net: NpcDebugNetModule = NpcDebugNetModule.new(config.npc_debug)
+	error = service.register_module(npc_debug_net)
+	if error != OK:
+		npc_debug_net.free()
 		return error
 	# P3-1, P3-2 (docs/09 §15.1, §15.2): the map layout for the clients and
 	# the world items of the cells a peer gains or loses. No RPC of its own.
