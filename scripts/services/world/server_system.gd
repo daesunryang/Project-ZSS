@@ -99,6 +99,13 @@ func is_line_blocked(_from: Vector3, _to: Vector3) -> bool:
 	return false
 
 
+## True when is_line_blocked() can answer true. Asked once at registration
+## so high-frequency sight and path queries skip systems with the no-op
+## default. A system that overrides is_line_blocked() must opt in here too.
+func blocks_lines() -> bool:
+	return false
+
+
 ## "" when this system lets the player act (pick up, put down, use an item,
 ## attack), otherwise a stable reason code such as "player_dead" or
 ## "player_resting". ServerWorld asks every system before a pickup or a drop

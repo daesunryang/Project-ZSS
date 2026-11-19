@@ -94,6 +94,10 @@ var _system_order: Array[ServerSystem] = []
 ## The systems that can stop a mover (ServerSystem.constrains_movement), in
 ## registration order (P3-4a). Empty in a world without structures.
 var _movement_constraints: Array[ServerSystem] = []
+## Systems that can answer true from ServerSystem.is_line_blocked(), in
+## registration order. The explicit capability keeps hot queries from
+## calling the no-op base method on every unrelated system.
+var _line_blockers: Array[ServerSystem] = []
 ## Microsecond breakdown of the most recent to_documents() call.
 var last_document_build_usec: Dictionary[String, int] = {}
 
@@ -143,6 +147,8 @@ func register_system(system: ServerSystem) -> Error:
 	system.cell_save_dirty.connect(_on_cell_save_dirty)
 	if system.constrains_movement():
 		_movement_constraints.append(system)
+	if system.blocks_lines():
+		_line_blockers.append(system)
 	system.on_registered(self)
 	return OK
 
@@ -422,7 +428,7 @@ func resolve_movement(mover_kind: String, from: Vector3, to: Vector3) -> Vector3
 ## True when any registered system blocks the straight segment. This is the
 ## narrow geometry seam used by zombie sight and melee; noise is unaffected.
 func is_line_blocked(from: Vector3, to: Vector3) -> bool:
-	for system: ServerSystem in _system_order:
+	for system: ServerSystem in _line_blockers:
 		if system.is_line_blocked(from, to):
 			return true
 	return false

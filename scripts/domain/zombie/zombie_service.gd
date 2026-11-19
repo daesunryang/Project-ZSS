@@ -450,10 +450,19 @@ func _step_zombies(world: ServerWorld, action_delta: float) -> void:
 		return
 	var now: float = _clock.action_time_sec
 	_remove_old_corpses(now)
+	# Every mover uses the same registered navigation service. Looking it up
+	# once avoids one system-dictionary lookup per active zombie per tick.
+	var navigation: NavigationService = world.get_system(NavigationService.SYSTEM_ID) as NavigationService
+	# A dirty revision only has to change once before the next save request.
+	# Many zombies commonly share one active cell, so coalesce their signals.
+	var dirty_cells: Dictionary[String, bool] = {}
 	for zombie_id: String in _awake:
-		mark_cell_save_dirty(world.cell_index.cell_of(zombie_id))
-		_move(world, _zombies[zombie_id], action_delta)
-	_drain_navigation_plans(world)
+		var cell_id: String = world.cell_index.cell_of(zombie_id)
+		if not dirty_cells.has(cell_id):
+			dirty_cells[cell_id] = true
+			mark_cell_save_dirty(cell_id)
+		_move(world, _zombies[zombie_id], action_delta, navigation)
+	_drain_navigation_plans(world, navigation)
 	for zombie_id: String in _falling_asleep:
 		_sleep(zombie_id)
 	_falling_asleep.clear()
@@ -900,7 +909,7 @@ func _set_state(context: _Context, zombie: ZombieState, next: ZombieState.State,
 ## on the old straight-line path. When the segment is blocked, a bounded and
 ## budgeted grid path may provide intermediate waypoints; failure falls back
 ## to the same blocked straight step used before P3-6.
-func _move(world: ServerWorld, zombie: ZombieState, action_delta: float) -> void:
+func _move(world: ServerWorld, zombie: ZombieState, action_delta: float, navigation: NavigationService) -> void:
 	var goal: Vector3
 	var speed: float
 	var stop_distance: float = 0.0
@@ -938,7 +947,6 @@ func _move(world: ServerWorld, zombie: ZombieState, action_delta: float) -> void
 		return
 	var movement_goal: Vector3 = goal
 	var movement_stop_distance: float = stop_distance
-	var navigation: NavigationService = world.get_system(NavigationService.SYSTEM_ID) as NavigationService
 	var nav_state: _NavigationState = _navigation_states.get(zombie.zombie_id, null)
 	if nav_state != null and nav_state.has_path():
 		_advance_navigation_waypoint(nav_state, zombie.position)
@@ -1008,12 +1016,14 @@ func _try_plan(navigation: NavigationService, zombie: ZombieState, goal: Vector3
 	_navigation_plan_queue.append(zombie.zombie_id)
 
 
-func _drain_navigation_plans(world: ServerWorld) -> void:
-	var navigation: NavigationService = world.get_system(NavigationService.SYSTEM_ID) as NavigationService
+func _drain_navigation_plans(world: ServerWorld, navigation: NavigationService) -> void:
 	if navigation == null or _navigation_plan_queue.is_empty():
 		return
 	var started_usec: int = Time.get_ticks_usec()
 	var remaining_nodes: int = navigation.settings.max_planning_nodes_per_tick
+	# Building changes happen in a later system step, so the blocker revision
+	# is constant throughout this round of zombie planning.
+	var edge_count: int = navigation.blocking_edge_count()
 	# Only requests present at tick start receive a turn. Pending searches are
 	# appended to the tail and cannot consume a second slice in this tick.
 	var round_size: int = mini(_navigation_plan_queue.size(), navigation.settings.max_plans_per_tick)
@@ -1037,7 +1047,6 @@ func _drain_navigation_plans(world: ServerWorld) -> void:
 			_navigation_plan_goals.erase(zombie_id)
 			continue
 		last_plan_count += 1
-		var edge_count: int = navigation.blocking_edge_count()
 		var goal_changed: bool = state.search != null and ZombiePerception.flat_distance(state.search_goal, goal) > navigation.settings.replan_goal_distance_m
 		var blockers_changed: bool = state.search != null and state.search_blocking_edge_count != edge_count
 		if goal_changed or blockers_changed:
