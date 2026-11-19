@@ -8,6 +8,12 @@ const AIM_SAMPLE_STEP_FRACTION: float = 0.25
 const AIM_RANGE_EPSILON_M: float = 0.0001
 
 
+## Opacity multiplier for this client's player visual. Build mode is local
+## presentation only; leaving it restores the original opacity.
+static func local_player_alpha(build_mode: bool, build_mode_alpha: float) -> float:
+	return build_mode_alpha if build_mode else 1.0
+
+
 static func ground_hit(ray_origin: Vector3, ray_direction: Vector3, ground_y: float, ray_length_m: float) -> Variant:
 	if not ray_origin.is_finite() or not ray_direction.is_finite() or ray_length_m <= 0.0:
 		return null
@@ -21,11 +27,11 @@ static func ground_hit(ray_origin: Vector3, ray_direction: Vector3, ground_y: fl
 
 
 ## Picks the grid slot nearest the ground point under the centre ray while
-## keeping its anchor in placement range and off the tile/edges occupied by
-## the local player. This only moves the client ghost; the server still owns
-## placement validation.
-static func aimed_placement(ray_origin: Vector3, ray_direction: Vector3, ground_y: float, ray_length_m: float, player_position: Vector3, placement_range_m: float, definition: StructureDefinition, grid: StructureGrid, rotation_steps: int) -> Dictionary:
-	if definition == null or grid == null or placement_range_m <= 0.0 or not player_position.is_finite():
+## keeping its anchor between the preview minimum and placement range, and
+## off the tile/edges occupied by the local player. This only moves the client
+## ghost; the server still owns placement validation.
+static func aimed_placement(ray_origin: Vector3, ray_direction: Vector3, ground_y: float, ray_length_m: float, player_position: Vector3, minimum_distance_m: float, placement_range_m: float, definition: StructureDefinition, grid: StructureGrid, rotation_steps: int) -> Dictionary:
+	if definition == null or grid == null or minimum_distance_m < 0.0 or placement_range_m <= 0.0 or minimum_distance_m > placement_range_m or not player_position.is_finite():
 		return NO_HIT
 	var hit: Variant = ground_hit(ray_origin, ray_direction, ground_y, ray_length_m)
 	if not hit is Vector3:
@@ -37,11 +43,11 @@ static func aimed_placement(ray_origin: Vector3, ray_direction: Vector3, ground_
 	if flat_aim.is_zero_approx():
 		return NO_HIT
 	var forward: Vector2 = flat_aim.normalized()
-	var preferred_distance: float = minf(flat_aim.length(), placement_range_m)
+	var preferred_distance: float = clampf(flat_aim.length(), minimum_distance_m, placement_range_m)
 	var step_m: float = maxf(grid.module_m * AIM_SAMPLE_STEP_FRACTION, AIM_RANGE_EPSILON_M)
 	var step_count: int = ceili(placement_range_m / step_m) + 1
 	var candidate: Dictionary = _placement_at_distance(player_position, ground_y, forward, preferred_distance, definition, grid, rotation_steps)
-	if _candidate_fits_aim(candidate, definition, grid, player_position, placement_range_m):
+	if _candidate_fits_aim(candidate, definition, grid, player_position, minimum_distance_m, placement_range_m):
 		return candidate
 	# Search nearest to the intended point. A far intersection searches back
 	# toward the player; an intersection on the player searches forward.
@@ -50,12 +56,12 @@ static func aimed_placement(ray_origin: Vector3, ray_direction: Vector3, ground_
 		var inward_distance: float = preferred_distance - delta_m
 		if inward_distance >= 0.0:
 			candidate = _placement_at_distance(player_position, ground_y, forward, inward_distance, definition, grid, rotation_steps)
-			if _candidate_fits_aim(candidate, definition, grid, player_position, placement_range_m):
+			if _candidate_fits_aim(candidate, definition, grid, player_position, minimum_distance_m, placement_range_m):
 				return candidate
 		var outward_distance: float = preferred_distance + delta_m
 		if outward_distance <= placement_range_m:
 			candidate = _placement_at_distance(player_position, ground_y, forward, outward_distance, definition, grid, rotation_steps)
-			if _candidate_fits_aim(candidate, definition, grid, player_position, placement_range_m):
+			if _candidate_fits_aim(candidate, definition, grid, player_position, minimum_distance_m, placement_range_m):
 				return candidate
 	return NO_HIT
 
@@ -69,11 +75,12 @@ static func _placement_at_distance(player_position: Vector3, ground_y: float, fo
 	return placement_at(point, definition, grid, rotation_steps)
 
 
-static func _candidate_fits_aim(candidate: Dictionary, definition: StructureDefinition, grid: StructureGrid, player_position: Vector3, placement_range_m: float) -> bool:
+static func _candidate_fits_aim(candidate: Dictionary, definition: StructureDefinition, grid: StructureGrid, player_position: Vector3, minimum_distance_m: float, placement_range_m: float) -> bool:
 	if candidate.is_empty() or not bool(candidate.get("hit", false)):
 		return false
 	var anchor: Vector3 = candidate["anchor"]
-	if StructureGrid.flat_distance(player_position, anchor) > placement_range_m + AIM_RANGE_EPSILON_M:
+	var distance: float = StructureGrid.flat_distance(player_position, anchor)
+	if distance < minimum_distance_m - AIM_RANGE_EPSILON_M or distance > placement_range_m + AIM_RANGE_EPSILON_M:
 		return false
 	var player_tile: Vector2i = grid.tile_of(player_position)
 	if not definition.is_edge():

@@ -59,14 +59,23 @@ func test_default_camera_aim_pulls_a_wall_inside_range_and_off_the_player_edges(
 	var camera_position: Vector3 = CameraOrbitMath.camera_position(target, 0.0, camera.initial_pitch_rad, camera.camera_distance_m)
 	var direction: Vector3 = camera_position.direction_to(target)
 	var definition: StructureDefinition = _catalog().get_definition("dev_wall")
-	var candidate: Dictionary = BuildModePolicy.aimed_placement(camera_position, direction, 0.0, presentation.build_ray_length_m, player_position, presentation.build_preview_range_m, definition, grid, 0)
+	var candidate: Dictionary = BuildModePolicy.aimed_placement(camera_position, direction, 0.0, presentation.build_ray_length_m, player_position, presentation.build_preview_min_distance_m, presentation.build_preview_range_m, definition, grid, 0)
 	assert_true(bool(candidate.get("hit", false)))
-	assert_true(StructureGrid.flat_distance(player_position, candidate["anchor"]) <= presentation.build_preview_range_m)
+	var preview_distance: float = StructureGrid.flat_distance(player_position, candidate["anchor"])
+	assert_true(preview_distance >= presentation.build_preview_min_distance_m, "the default-camera ghost is clear of the player capsule")
+	assert_true(preview_distance <= presentation.build_preview_range_m, "the client ghost remains inside server placement reach")
 	var player_tile: Vector2i = grid.tile_of(player_position)
 	for rotation: int in range(StructureGrid.ROTATION_COUNT):
 		assert_ne(candidate["slot"], StructureGrid.slot_of(StructureDefinition.Placement.EDGE, player_tile, rotation), "the preview must not use an edge under the player")
 	var mirror: ClientStructureState = ClientStructureState.new(StructureNetSettings.new(), _catalog())
 	assert_true(BuildModePolicy.preview_is_valid(candidate, mirror, player_position, Vector2(-10.0, -10.0), Vector2(10.0, 10.0), presentation.build_preview_range_m, grid.module_m))
+
+
+func test_only_build_mode_uses_the_configured_local_player_alpha() -> void:
+	var presentation: ClientPresentationSettings = ClientPresentationSettings.new()
+	presentation.build_mode_local_player_alpha = 0.30
+	assert_eq(BuildModePolicy.local_player_alpha(false, presentation.build_mode_local_player_alpha), 1.0, "leaving build mode restores the original opacity")
+	assert_eq(BuildModePolicy.local_player_alpha(true, presentation.build_mode_local_player_alpha), 0.30, "build mode uses the presentation setting")
 
 
 func test_aim_at_the_players_position_moves_tile_and_edge_pieces_forward() -> void:
@@ -75,11 +84,13 @@ func test_aim_at_the_players_position_moves_tile_and_edge_pieces_forward() -> vo
 	var player_position: Vector3 = Vector3(0.5, 0.0, 0.5)
 	var camera_position: Vector3 = player_position + Vector3(0.0, 1.0, 1.0)
 	var direction: Vector3 = camera_position.direction_to(player_position)
-	var floor_candidate: Dictionary = BuildModePolicy.aimed_placement(camera_position, direction, 0.0, 100.0, player_position, 4.0, catalog.get_definition("dev_floor"), grid, 0)
+	var floor_candidate: Dictionary = BuildModePolicy.aimed_placement(camera_position, direction, 0.0, 100.0, player_position, 2.5, 4.0, catalog.get_definition("dev_floor"), grid, 0)
 	assert_true(bool(floor_candidate.get("hit", false)))
 	assert_ne(floor_candidate["tile"], grid.tile_of(player_position))
-	var wall_candidate: Dictionary = BuildModePolicy.aimed_placement(camera_position, direction, 0.0, 100.0, player_position, 4.0, catalog.get_definition("dev_wall"), grid, 0)
+	assert_true(StructureGrid.flat_distance(player_position, floor_candidate["anchor"]) >= 2.5)
+	var wall_candidate: Dictionary = BuildModePolicy.aimed_placement(camera_position, direction, 0.0, 100.0, player_position, 2.5, 4.0, catalog.get_definition("dev_wall"), grid, 0)
 	assert_true(bool(wall_candidate.get("hit", false)))
+	assert_true(StructureGrid.flat_distance(player_position, wall_candidate["anchor"]) >= 2.5)
 	for rotation: int in range(StructureGrid.ROTATION_COUNT):
 		assert_ne(wall_candidate["slot"], StructureGrid.slot_of(StructureDefinition.Placement.EDGE, grid.tile_of(player_position), rotation))
 
@@ -104,10 +115,18 @@ func test_build_keys_ranges_and_actions_come_from_the_presentation_resource() ->
 		var events: Array[InputEvent] = InputMap.action_get_events(action)
 		assert_eq(events.size(), 1, str(action))
 		assert_eq((events[0] as InputEventKey).physical_keycode, keys[action], str(action))
-	for range_value: float in [shipped.build_preview_range_m, shipped.structure_deliver_target_range_m, shipped.structure_work_target_range_m, shipped.structure_remove_target_range_m, shipped.structure_door_target_range_m, shipped.build_ray_length_m]:
+	for range_value: float in [shipped.build_preview_min_distance_m, shipped.build_preview_range_m, shipped.structure_deliver_target_range_m, shipped.structure_work_target_range_m, shipped.structure_remove_target_range_m, shipped.structure_door_target_range_m, shipped.build_ray_length_m]:
 		assert_true(range_value > 0.0)
+	assert_true(shipped.build_preview_min_distance_m <= shipped.build_preview_range_m)
+	assert_true(absf(shipped.build_mode_local_player_alpha - 0.30) < 0.0001)
 	var invalid: ClientPresentationSettings = ClientPresentationSettings.new()
 	invalid.build_mode_key = invalid.build_floor_key
+	assert_eq(invalid.validate().size(), 1, "; ".join(invalid.validate()))
+	invalid = ClientPresentationSettings.new()
+	invalid.build_preview_min_distance_m = invalid.build_preview_range_m + 0.1
+	assert_eq(invalid.validate().size(), 1, "; ".join(invalid.validate()))
+	invalid = ClientPresentationSettings.new()
+	invalid.build_mode_local_player_alpha = 1.0
 	assert_eq(invalid.validate().size(), 1, "; ".join(invalid.validate()))
 
 
@@ -123,6 +142,7 @@ func test_key_four_selects_the_storage_box_as_the_fourth_build_piece() -> void:
 	var world: ClientWorldState = ClientWorldState.new()
 	var hud: Label = Label.new()
 	var presentation: BuildPresentation = BuildPresentation.new(root, hud, settings, BuildingSettings.load_or_default(), catalog, ItemCatalog.load_directory(), module, world)
+	assert_true(hud.text.contains("카메라: 휠 줌 | 높이 [PageUp/PageDown]"))
 	# The preceding test proves BUILD_STORAGE_BOX is registered on KEY_4;
 	# this checks that the presentation offers the matching fourth piece.
 	presentation.call("_select", BuildPresentation.STORAGE_BOX_ID)

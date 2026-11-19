@@ -213,6 +213,12 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.1, 1000.0) var build_ray_length_m: float = 100.0
 @export_range(0.01, 5.0) var structure_target_radius_m: float = 0.8
 @export_range(0.1, 100.0) var build_preview_range_m: float = 4.0
+## Keeps the client-only ghost visibly in front of the local player. The
+## server still validates the requested grid slot against its own range.
+@export_range(0.0, 100.0) var build_preview_min_distance_m: float = 2.5
+## Opacity of this client's capsule and name tag while build mode is active.
+## Remote players keep their normal presentation.
+@export_range(0.01, 0.99, 0.01) var build_mode_local_player_alpha: float = 0.30
 @export_range(0.1, 100.0) var structure_deliver_target_range_m: float = 2.5
 @export_range(0.1, 100.0) var structure_work_target_range_m: float = 2.5
 @export_range(0.1, 100.0) var structure_remove_target_range_m: float = 4.0
@@ -338,6 +344,10 @@ func validate() -> PackedStringArray:
 			errors.append("%s must not be KEY_NONE" % key_name)
 	if build_ray_length_m <= 0.0 or structure_target_radius_m <= 0.0 or build_preview_range_m <= 0.0 or structure_deliver_target_range_m <= 0.0 or structure_work_target_range_m <= 0.0 or structure_remove_target_range_m <= 0.0 or structure_door_target_range_m <= 0.0:
 		errors.append("building ray length, preview and target ranges must be > 0")
+	if build_preview_min_distance_m < 0.0 or build_preview_min_distance_m > build_preview_range_m:
+		errors.append("build_preview_min_distance_m must be within [0, build_preview_range_m]")
+	if not is_finite(build_mode_local_player_alpha) or build_mode_local_player_alpha <= 0.0 or build_mode_local_player_alpha >= 1.0:
+		errors.append("build_mode_local_player_alpha must be within (0, 1)")
 	if structure_floor_scale <= 0.0 or structure_floor_height_m <= 0.0 or structure_edge_scale <= 0.0 or structure_wall_height_m <= 0.0 or structure_wall_thickness_m <= 0.0 or structure_door_thickness_m <= 0.0:
 		errors.append("structure placeholder dimensions must be > 0")
 	if structure_label_margin_m < 0.0 or structure_label_pixel_size <= 0.0 or structure_label_font_size < 1:
@@ -386,10 +396,10 @@ func assigned_keys() -> Dictionary[String, Key]:
 	}
 
 
-## Names of the settings of this resource whose key is also a movement or
-## pickup key of `camera` (CameraSettings assigns those). Empty = no clash.
+## Names of the settings of this resource whose key is also a movement,
+## pickup or camera-height key of `camera`. Empty = no clash.
 func keys_shared_with(camera: CameraSettings) -> PackedStringArray:
-	var taken: Array[Key] = [camera.move_forward_key, camera.move_backward_key, camera.move_left_key, camera.move_right_key, camera.pickup_key]
+	var taken: Array[Key] = [camera.move_forward_key, camera.move_backward_key, camera.move_left_key, camera.move_right_key, camera.pickup_key, camera.camera_height_up_key, camera.camera_height_down_key]
 	var shared: PackedStringArray = []
 	var own: Dictionary[String, Key] = assigned_keys()
 	for key_name: String in own:

@@ -7,6 +7,8 @@ const ACTIONS: Array[StringName] = [
 	ClientInputActions.MOVE_LEFT,
 	ClientInputActions.MOVE_RIGHT,
 	ClientInputActions.PICKUP,
+	ClientInputActions.CAMERA_HEIGHT_UP,
+	ClientInputActions.CAMERA_HEIGHT_DOWN,
 ]
 
 
@@ -46,13 +48,18 @@ func test_move_sender_changes_resends_and_sends_stop_once() -> void:
 func test_runtime_actions_use_settings_and_do_not_duplicate() -> void:
 	var settings: CameraSettings = CameraSettings.new()
 	settings.move_forward_key = KEY_UP
+	settings.camera_height_up_key = KEY_HOME
+	settings.camera_height_down_key = KEY_END
 	ClientInputActions.register(settings)
 	assert_true(InputMap.has_action(ClientInputActions.MOVE_FORWARD))
 	var events: Array[InputEvent] = InputMap.action_get_events(ClientInputActions.MOVE_FORWARD)
 	assert_eq(events.size(), 1)
 	assert_eq((events[0] as InputEventKey).physical_keycode, KEY_UP)
+	assert_eq((InputMap.action_get_events(ClientInputActions.CAMERA_HEIGHT_UP)[0] as InputEventKey).physical_keycode, KEY_HOME)
+	assert_eq((InputMap.action_get_events(ClientInputActions.CAMERA_HEIGHT_DOWN)[0] as InputEventKey).physical_keycode, KEY_END)
 	ClientInputActions.register(settings)
 	assert_eq(InputMap.action_get_events(ClientInputActions.MOVE_FORWARD).size(), 1)
+	assert_eq(InputMap.action_get_events(ClientInputActions.CAMERA_HEIGHT_UP).size(), 1)
 
 
 func test_nearest_pickup_candidate_uses_mirrored_positions_only() -> void:

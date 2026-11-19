@@ -40,6 +40,8 @@ var _intent_sender: MoveIntentSender = null
 var _attack_policy: AttackIntentPolicy = null
 var _yaw: float = 0.0
 var _pitch: float = 0.0
+var _camera_distance_m: float = 0.0
+var _target_height_offset_m: float = 0.0
 ## player_id -> Node3D "Player_<id>" with the children "Body" (the capsule,
 ## MeshInstance3D) and "NameTag" (Label3D).
 var _player_visuals: Dictionary[String, Node3D] = {}
@@ -145,6 +147,8 @@ func _ready() -> void:
 	_apply_hud_style()
 	_yaw = 0.0
 	_pitch = _settings.initial_pitch_rad
+	_camera_distance_m = _settings.camera_distance_m
+	_target_height_offset_m = 0.0
 	_intent_sender = MoveIntentSender.new(
 		_settings.move_resend_interval_sec,
 		_settings.direction_change_epsilon,
@@ -164,7 +168,7 @@ func _ready() -> void:
 	_container_markers = ContainerMarkers.new(_containers_root, _container_catalog, _presentation)
 	var shared_keys: PackedStringArray = _presentation.keys_shared_with(_settings)
 	if not shared_keys.is_empty():
-		GameLogger.error("presentation", "client keys are also movement or pickup keys", {"settings": ", ".join(shared_keys), "operation": "client_view_ready"})
+		GameLogger.error("presentation", "presentation keys are also movement, pickup or camera-height keys", {"settings": ", ".join(shared_keys), "operation": "client_view_ready"})
 	ClientInputActions.register(_settings, _presentation)
 	_prepare_player_resources()
 	_prepare_zombie_resources()
@@ -214,7 +218,9 @@ func _exit_tree() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		return
+	if event is InputEventMouseMotion:
 		var motion: InputEventMouseMotion = event as InputEventMouseMotion
 		var orbit: Vector2 = CameraOrbitMath.apply_mouse_delta(
 			_yaw,
@@ -228,6 +234,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		_pitch = orbit.y
 		_update_camera()
 		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+		var button: InputEventMouseButton = event as InputEventMouseButton
+		var steps_farther: int = 0
+		if button.button_index == MOUSE_BUTTON_WHEEL_UP:
+			steps_farther = -1
+		elif button.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			steps_farther = 1
+		if steps_farther != 0:
+			_camera_distance_m = CameraOrbitMath.zoom_distance(_camera_distance_m, steps_farther, _settings.zoom_step_m, _settings.min_camera_distance_m, _settings.max_camera_distance_m)
+			_update_camera()
+			get_viewport().set_input_as_handled()
 
 
 func _process(_delta: float) -> void:
@@ -247,6 +264,12 @@ func _physics_process(_delta: float) -> void:
 	# No game input while the character creation screen is open (P2-T9).
 	if not is_game_input_enabled():
 		return
+	if Input.is_action_just_pressed(ClientInputActions.CAMERA_HEIGHT_UP):
+		_target_height_offset_m = CameraOrbitMath.target_height_offset(_target_height_offset_m, 1, _settings.target_height_step_m, _settings.min_target_height_offset_m, _settings.max_target_height_offset_m)
+		_update_camera()
+	if Input.is_action_just_pressed(ClientInputActions.CAMERA_HEIGHT_DOWN):
+		_target_height_offset_m = CameraOrbitMath.target_height_offset(_target_height_offset_m, -1, _settings.target_height_step_m, _settings.min_target_height_offset_m, _settings.max_target_height_offset_m)
+		_update_camera()
 	# P3-3: the container keys. The cursor is local; the others ask the server.
 	if Input.is_action_just_pressed(ClientInputActions.CONTAINER_OPEN):
 		_press_container_open()
@@ -258,7 +281,12 @@ func _physics_process(_delta: float) -> void:
 		_request_container_take()
 	if Input.is_action_just_pressed(ClientInputActions.CONTAINER_PUT):
 		_request_container_put()
+	var was_build_mode: bool = _build_presentation != null and _build_presentation.is_build_mode()
 	var build_input: Dictionary = _build_presentation.tick(_camera, _map) if _build_presentation != null else {"attack": false, "pickup": false}
+	if _build_presentation != null and was_build_mode != _build_presentation.is_build_mode():
+		# Rebuild only the local look key so its private material override and
+		# name tag gain/lose the build-mode opacity immediately.
+		_sync_player_visuals()
 	# P3-2: the cell overlay, a testing aid (local only).
 	if Input.is_action_just_pressed(ClientInputActions.CELL_OVERLAY):
 		set_cell_overlay_visible(not is_cell_overlay_visible())
@@ -619,6 +647,7 @@ func _sync_player_visuals() -> void:
 		# leans forward, so it is told apart from a sleeper on its back.
 		var prone: bool = ClientPresentationFormatter.player_is_prone(alive, resting, posture)
 		var is_local: bool = player_id == _state.local_player_id
+		var presentation_alpha: float = BuildModePolicy.local_player_alpha(_build_presentation != null and _build_presentation.is_build_mode(), _presentation.build_mode_local_player_alpha) if is_local else 1.0
 		# Name and appearance (P2-T9): the top colour is the capsule colour,
 		# height and body type its size. Without a character row the usual
 		# capsule in the local / remote colour is shown and no name.
@@ -627,21 +656,26 @@ func _sync_player_visuals() -> void:
 		var mesh: CapsuleMesh = body.mesh as CapsuleMesh
 		# The mirrors change many times a second (positions): the capsule and
 		# the name are rebuilt only when what they show changed.
-		var look_key: String = "%s|%d|%s|%s" % [character_name, selection.hash(), str(alive), str(is_local)]
+		var look_key: String = "%s|%d|%s|%s|%.3f" % [character_name, selection.hash(), str(alive), str(is_local), presentation_alpha]
 		if _player_look_keys.get(player_id, "") != look_key:
 			_player_look_keys[player_id] = look_key
 			var look: Dictionary = CharacterCapsuleLook.build(_appearance_catalog, selection, _settings.capsule_radius_m, _settings.capsule_height_m, _settings.local_player_color if is_local else _settings.remote_player_color)
 			mesh.radius = float(look[CharacterCapsuleLook.KEY_RADIUS])
 			mesh.height = float(look[CharacterCapsuleLook.KEY_HEIGHT])
-			if alive:
+			if alive or is_local:
 				var material: StandardMaterial3D = StandardMaterial3D.new()
-				material.albedo_color = look[CharacterCapsuleLook.KEY_COLOR]
+				var body_color: Color = look[CharacterCapsuleLook.KEY_COLOR] if alive else _presentation.dead_player_color
+				body_color.a *= presentation_alpha
+				material.albedo_color = body_color
+				material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA if body_color.a < 1.0 else BaseMaterial3D.TRANSPARENCY_DISABLED
 				body.material_override = material
 			else:
 				body.material_override = _dead_player_material
 			tag.text = character_name
 			tag.visible = not character_name.is_empty()
-			tag.modulate = _presentation.name_tag_dead_color if not alive else (_presentation.name_tag_local_color if is_local else _presentation.name_tag_remote_color)
+			var tag_color: Color = _presentation.name_tag_dead_color if not alive else (_presentation.name_tag_local_color if is_local else _presentation.name_tag_remote_color)
+			tag_color.a *= presentation_alpha
+			tag.modulate = tag_color
 		var radius: float = mesh.radius
 		var height: float = mesh.height
 		visual.position = entry.get("position", Vector3.ZERO) as Vector3
@@ -868,10 +902,11 @@ func _refresh_event_log() -> void:
 func _update_camera() -> void:
 	if _camera == null or _settings == null:
 		return
-	var target: Vector3 = Vector3.UP * _settings.target_height_m
+	var player_position: Vector3 = Vector3.ZERO
 	if _state != null and not _state.local_player_id.is_empty():
-		target += _state.position_of(_state.local_player_id)
-	_camera.global_position = CameraOrbitMath.camera_position(target, _yaw, _pitch, _settings.camera_distance_m)
+		player_position = _state.position_of(_state.local_player_id)
+	var target: Vector3 = player_position + Vector3.UP * (_settings.target_height_m + _target_height_offset_m)
+	_camera.global_position = CameraOrbitMath.camera_position_above_ground(target, _yaw, _pitch, _camera_distance_m, player_position.y, _settings.minimum_ground_clearance_m)
 	_camera.look_at(target, Vector3.UP)
 
 

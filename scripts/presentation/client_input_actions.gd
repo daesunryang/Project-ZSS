@@ -7,6 +7,9 @@ const MOVE_BACKWARD: StringName = &"move_backward"
 const MOVE_LEFT: StringName = &"move_left"
 const MOVE_RIGHT: StringName = &"move_right"
 const PICKUP: StringName = &"pickup"
+## Raise / lower the local camera look target. No server intent is sent.
+const CAMERA_HEIGHT_UP: StringName = &"camera_height_up"
+const CAMERA_HEIGHT_DOWN: StringName = &"camera_height_down"
 const ATTACK: StringName = &"attack"
 ## Use keys, one per kind of item (P2-T6). CONSUME is the food key (the
 ## single consume key of P2-T3 kept its name and its setting `consume_key`).
@@ -72,6 +75,8 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 	_add_key_action(MOVE_LEFT, settings.move_left_key, settings.input_deadzone)
 	_add_key_action(MOVE_RIGHT, settings.move_right_key, settings.input_deadzone)
 	_add_key_action(PICKUP, settings.pickup_key, settings.input_deadzone)
+	_add_key_action(CAMERA_HEIGHT_UP, settings.camera_height_up_key, settings.input_deadzone)
+	_add_key_action(CAMERA_HEIGHT_DOWN, settings.camera_height_down_key, settings.input_deadzone)
 	if presentation != null:
 		_add_mouse_action(ATTACK, presentation.attack_mouse_button, settings.input_deadzone)
 		_add_key_action(CONSUME, presentation.consume_key, settings.input_deadzone)

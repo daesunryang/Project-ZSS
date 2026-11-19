@@ -76,6 +76,15 @@ func _press(button: Variant) -> void:
 	control.pressed.emit()
 
 
+func _press_action(action: StringName) -> void:
+	await tree.physics_frame
+	Input.action_press(action)
+	await tree.physics_frame
+	await tree.physics_frame
+	Input.action_release(action)
+	await tree.physics_frame
+
+
 func _name_edit(screen: CharacterCreationScreen) -> LineEdit:
 	return screen.get_node("%NameEdit") as LineEdit
 
@@ -399,11 +408,26 @@ func test_the_client_view_opens_the_screen_and_shows_the_created_character() -> 
 	var bob_body: MeshInstance3D = _visual(view, bob_id).get_node("Body") as MeshInstance3D
 	assert_eq((bob_body.material_override as StandardMaterial3D).albedo_color, top_slot.get_option("green").color)
 	assert_true((bob_body.mesh as CapsuleMesh).height < camera_settings.capsule_height_m)
+	# Build mode fades only this client's private capsule material and name tag;
+	# the remote player's presentation is untouched, and leaving restores both.
+	var presentation: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
+	await _press_action(ClientInputActions.BUILD_MODE)
+	var local_material: StandardMaterial3D = body.material_override as StandardMaterial3D
+	var bob_material: StandardMaterial3D = bob_body.material_override as StandardMaterial3D
+	assert_true(absf(local_material.albedo_color.a - presentation.build_mode_local_player_alpha) < EPSILON)
+	assert_eq(local_material.transparency, BaseMaterial3D.TRANSPARENCY_ALPHA)
+	assert_true(absf(tag.modulate.a - presentation.build_mode_local_player_alpha) < EPSILON)
+	assert_eq(bob_material.albedo_color.a, 1.0, "another player's capsule stays opaque")
+	assert_eq((_visual(view, bob_id).get_node("NameTag") as Label3D).modulate.a, 1.0, "another player's name stays opaque")
+	await _press_action(ClientInputActions.BUILD_MODE)
+	local_material = body.material_override as StandardMaterial3D
+	assert_eq(local_material.albedo_color.a, 1.0, "leaving build mode restores the capsule")
+	assert_eq(local_material.transparency, BaseMaterial3D.TRANSPARENCY_DISABLED)
+	assert_eq(tag.modulate.a, 1.0, "leaving build mode restores the name tag")
 
 	# Death: the capsule lies down in the dead colour and keeps its name; the
 	# screen opens again once the server allows the next character.
 	_kill(viewer_id)
-	var presentation: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
 	assert_true(await _wait(func() -> bool: return (body.material_override as StandardMaterial3D).albedo_color == presentation.dead_player_color), "the dead capsule is dark")
 	assert_true(absf(body.rotation.x - presentation.dead_tilt_rad) < EPSILON, "and lies down")
 	assert_eq(tag.text, "View Tester")

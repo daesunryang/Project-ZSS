@@ -134,7 +134,7 @@ func _update_preview(camera: Camera3D, map: ClientWorldMap) -> void:
 	if not _build_mode:
 		return
 	var definition: StructureDefinition = _catalog.get_definition(_selected_definition_id)
-	_candidate = BuildModePolicy.aimed_placement(camera.global_position, -camera.global_basis.z, 0.0, _settings.build_ray_length_m, _local_position(), _settings.build_preview_range_m, definition, _grid, _rotation_steps)
+	_candidate = BuildModePolicy.aimed_placement(camera.global_position, -camera.global_basis.z, 0.0, _settings.build_ray_length_m, _local_position(), _settings.build_preview_min_distance_m, _settings.build_preview_range_m, definition, _grid, _rotation_steps)
 	_candidate_valid = map != null and map.is_known() and BuildModePolicy.preview_is_valid(_candidate, _mirror, _local_position(), map.bounds_min, map.bounds_max, _settings.build_preview_range_m, _grid.module_m)
 	if not bool(_candidate.get("hit", false)):
 		_ghost.visible = false
@@ -197,6 +197,7 @@ func _refresh_hud() -> void:
 	var entry: Dictionary = _mirror.get_structure(_target_id) if not _target_id.is_empty() else {}
 	var shown_rotation: int = int(_candidate.get("rotation", _rotation_steps)) if _build_mode else _rotation_steps
 	var lines: PackedStringArray = PackedStringArray([
+		"카메라: 휠 줌 | 높이 [PageUp/PageDown]",
 		"건축 모드 [L]: %s | %s [1/2/3/4] | 회전 %d [.]" % [mode, piece, shown_rotation],
 		"비용: %s" % cost,
 		StructurePresentationFormatter.structure_summary(entry, _mirror.workers_of(_target_id).size(), _items),

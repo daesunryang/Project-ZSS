@@ -7,6 +7,8 @@ const ACTIONS: Array[StringName] = [
 	ClientInputActions.MOVE_LEFT,
 	ClientInputActions.MOVE_RIGHT,
 	ClientInputActions.PICKUP,
+	ClientInputActions.CAMERA_HEIGHT_UP,
+	ClientInputActions.CAMERA_HEIGHT_DOWN,
 	ClientInputActions.ATTACK,
 	ClientInputActions.CONSUME,
 	ClientInputActions.DRINK,
@@ -74,6 +76,10 @@ func test_shipped_presentation_settings_load_and_validate() -> void:
 	assert_true(settings.hud_event_line_count > 0)
 	assert_true(settings.hud_panel_color.a >= 0.8, "the real-window HUD has a readable backdrop")
 	assert_eq(settings.hud_left_column_width_px, 420)
+	assert_eq(settings.keys_shared_with(CameraSettings.load_or_default()).size(), 0)
+	var height_clash: ClientPresentationSettings = ClientPresentationSettings.new()
+	height_clash.rest_key = CameraSettings.new().camera_height_up_key
+	assert_true(height_clash.keys_shared_with(CameraSettings.new()).has("rest_key"))
 	var invalid: ClientPresentationSettings = ClientPresentationSettings.new()
 	invalid.attack_min_interval_sec = 0.0
 	invalid.zombie_capsule_height_m = invalid.zombie_capsule_radius_m
