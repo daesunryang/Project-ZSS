@@ -217,7 +217,7 @@ GODOT=/path/to/Godot_v4.7.2-stable tools/crash_recovery_check.sh
 | 단계 | 뜻 | 파일 수 (2026-11-19) |
 |---|---|---|
 | P0 | 깨지면 게임이 안 되는 것: 게임이 뜬다, 접속·참가·이동, 저장·복구, 위조 요청 거절, 핵심 거래(인벤토리 보존, ID), Phase 1·2·3 수용 시나리오 | 30 |
-| P1 | 게임 전반: 나머지 전부 (전투 봇 포함) | 97 |
+| P1 | 게임 전반: 나머지 전부 (전투 봇, 그림 루프·성능 벤치 도구 테스트 포함) | 100 |
 
 - 어느 파일이 어느 단계인지는 `tests/test_tiers.cfg` 한 곳에 있다(한 줄에 `<단계> <경로>`).
 - `tests/unit/test_tiers_test.gd`가 모든 테스트 파일이 정확히 한 번 들어 있는지 검사한다. 새 테스트 파일을 만들고 목록에 안 넣으면 이 테스트가 실패한다. 기본은 `p1`이고, 위 P0 항목을 지키는 파일만 `p0`으로 넣는다.
@@ -253,13 +253,15 @@ tools/test_changed.sh [<기준 커밋>] [--dry-run] [--list] [--no-smoke]
 | 전투·좀비·생존·내비게이션·자세 (도메인 코드, 그 네트워크 모듈과 미러, 조정값, 무기 정의), 소음, 이동 규칙, `tests/bot/` | 위에 더해 그 영역의 테스트와 **전투 봇** |
 | 저장 (`scripts/services/save/`, 월드 셀) | 위에 더해 저장·지속성 테스트 |
 | 건축·보관함·인벤토리·거래·맵·캐릭터·표시 | 위에 더해 그 영역의 테스트 |
+| 그림 루프 (`art/`, `tools/art_*`) | 위에 더해 그림 루프 테스트(`art_loop_test`, `art_metrics_test`) |
+| 성능 벤치 (`tools/perf_bench*`, `tools/perf_client.gd`) | 위에 더해 `perf_bench_digest_test` |
 | 바뀐 테스트 파일 | 그 파일 자신 |
 | `scripts/core/`, `server_world.gd`, `tests/framework/`, `tests/run_tests.gd`, `project.godot` | 전부 |
 | 네트워크 뼈대(`network_service.gd`, `net_module.gd` 등) | P0 + 통합·시나리오 테스트 전부 |
 
 - 바뀐 경로마다 어느 줄이 무엇을 골랐는지, 그리고 실제로 실행할 명령을 출력한다. `--dry-run`은 거기서 멈추고, `--list`는 고른 테스트 파일 목록까지 보여 준다.
 - 지도의 대상은 테스트 파일 경로에 들어 있는 글자다(`combat_` → `combat_rules_test.gd`, `combat_service_test.gd`, `combat_net_test.gd`). 특별한 대상은 `none`, `p0`, `all`, `bot`, `self` 다섯 개다.
-- `tools/test_changed_selftest.sh`가 알려진 경로에 대한 선택 결과를 Godot 없이 확인한다(문서만 → 없음, 모르는 경로 → P0, 전투·좀비·생존·내비게이션·자세 → 봇 포함 등 20가지). `test_tiers_test.gd`는 지도의 모든 대상이 실제 테스트 파일을 가리키는지 확인한다.
+- `tools/test_changed_selftest.sh`가 알려진 경로에 대한 선택 결과를 Godot 없이 확인한다(문서만 → 없음, 모르는 경로 → P0, 전투·좀비·생존·내비게이션·자세 → 봇 포함 등 24가지). `test_tiers_test.gd`는 지도의 모든 대상이 실제 테스트 파일을 가리키는지 확인한다.
 - 병합 전 전체 검사는 그대로 `tools/check.sh`다(선택 자체 점검 → 전체 테스트(봇 포함) → 스모크).
 
 ### 9.3 전투 봇
