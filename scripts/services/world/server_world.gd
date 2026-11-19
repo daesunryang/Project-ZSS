@@ -34,6 +34,11 @@ const KEY_SYSTEMS: String = "systems"
 ## time was added in schema v3 (P2-T1).
 const KEY_WORLD_TIME: String = "world_time_sec"
 const KEY_ACTION_TIME: String = "action_time_sec"
+## The two clocks again, with every bit (FloatBits): the JSON reader gives
+## a number with 17 digits back one unit in the last place off, and an NPC's
+## needs are computed from the calendar time (P4-Z, docs/15 P4-281).
+const KEY_WORLD_TIME_BITS: String = "world_time_sec_bits"
+const KEY_ACTION_TIME_BITS: String = "action_time_sec_bits"
 const SYSTEM_ID_PATTERN: String = "^[a-z][a-z0-9_]*$"
 const ENTITY_KIND_PLAYER: String = "player"
 const REASON_NOT_ONLINE: String = "not_online"
@@ -621,6 +626,8 @@ func to_documents() -> Dictionary:
 		"inventory": inventory_document,
 		KEY_WORLD_TIME: clock.world_time_sec,
 		KEY_ACTION_TIME: clock.action_time_sec,
+		KEY_WORLD_TIME_BITS: FloatBits.encode(clock.world_time_sec),
+		KEY_ACTION_TIME_BITS: FloatBits.encode(clock.action_time_sec),
 	}
 	var system_docs: Dictionary = {}
 	for system: ServerSystem in _system_order:
@@ -698,13 +705,13 @@ func restore_documents(world_state: Dictionary, players: Dictionary, cells: Dict
 	if ItemInstance.is_integer_value(next_sequence) and int(next_sequence) >= ids.get_next_sequence():
 		ids.restore_next_sequence(int(next_sequence))
 	var world_time: Variant = world_state.get(KEY_WORLD_TIME, 0.0)
-	if not (typeof(world_time) == TYPE_FLOAT or typeof(world_time) == TYPE_INT) or clock.restore(float(world_time)) != OK:
+	if not (typeof(world_time) == TYPE_FLOAT or typeof(world_time) == TYPE_INT) or clock.restore(FloatBits.restored(float(world_time), world_state.get(KEY_WORLD_TIME_BITS, null))) != OK:
 		errors.append("invalid world_time_sec")
 	# No default: saved action-time deadlines (zombies, respawn) are only
 	# valid against the clock they were written with. Older documents get
 	# the key from SaveMigrations.world_v2_to_v3.
 	var action_time: Variant = world_state.get(KEY_ACTION_TIME, null)
-	if not (typeof(action_time) == TYPE_FLOAT or typeof(action_time) == TYPE_INT) or clock.restore_action_time(float(action_time)) != OK:
+	if not (typeof(action_time) == TYPE_FLOAT or typeof(action_time) == TYPE_INT) or clock.restore_action_time(FloatBits.restored(float(action_time), world_state.get(KEY_ACTION_TIME_BITS, null))) != OK:
 		errors.append("invalid action_time_sec")
 	errors.append_array(_restore_systems(world_state, players))
 	if _cells != null:

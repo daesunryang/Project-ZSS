@@ -28,6 +28,9 @@ const KEY_NPC_ID: String = "npc_id"
 const KEY_DEFINITION_ID: String = "definition_id"
 const KEY_POSITION: String = "position"
 const KEY_YAW: String = "yaw"
+## {yaw, created_at}: FloatBits of those numbers
+## (optional: a document without it is read from the numbers).
+const KEY_EXACT: String = "exact"
 const KEY_CREATED_AT: String = "created_at"
 const KEY_LAST_SIMULATED: String = "last_simulated_world_time"
 const KEY_RNG_SEED: String = "rng_seed"
@@ -125,6 +128,10 @@ func to_dict() -> Dictionary:
 		KEY_YAW: yaw,
 		KEY_CREATED_AT: created_at,
 		KEY_LAST_SIMULATED: last_simulated_world_time,
+		# yaw and created_at with every bit (FloatBits, docs/15 P4-281). Not
+		# last_simulated_world_time: NpcService writes "now" over it for an
+		# awake NPC, and nothing is computed from it yet (D4).
+		KEY_EXACT: {KEY_YAW: FloatBits.encode(yaw), KEY_CREATED_AT: FloatBits.encode(created_at)},
 		# 64-bit values are stored as strings: JSON numbers would lose precision.
 		KEY_RNG_SEED: str(rng.seed),
 		KEY_RNG_STATE: str(rng.state),
@@ -169,8 +176,9 @@ static func from_dict(data: Dictionary) -> NpcState:
 	npc.npc_id = str(data[KEY_NPC_ID])
 	npc.definition_id = str(data[KEY_DEFINITION_ID])
 	npc.position = Vector3(float(raw_position[0]), float(raw_position[1]), float(raw_position[2]))
-	npc.yaw = float(data[KEY_YAW])
-	npc.created_at = float(data[KEY_CREATED_AT])
+	var exact: Dictionary = data[KEY_EXACT] if typeof(data.get(KEY_EXACT, null)) == TYPE_DICTIONARY else {}
+	npc.yaw = FloatBits.restored(float(data[KEY_YAW]), exact.get(KEY_YAW, null))
+	npc.created_at = FloatBits.restored(float(data[KEY_CREATED_AT]), exact.get(KEY_CREATED_AT, null))
 	npc.last_simulated_world_time = float(data[KEY_LAST_SIMULATED])
 	npc.rng.seed = str(data[KEY_RNG_SEED]).to_int()
 	npc.rng.state = str(data[KEY_RNG_STATE]).to_int()

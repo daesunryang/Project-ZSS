@@ -161,3 +161,59 @@ func test_live_npc_component_documents_keep_float_bits_through_json() -> void:
 			var round_tripped: Dictionary = _full_precision_json(original)
 			var difference: String = _first_bit_difference(original, round_tripped, component_id)
 			assert_eq(difference, "", difference)
+
+## P4-Z (docs/15 P4-281): Godot reads a JSON number with 17 digits one unit in
+## the last place off. The clocks and an NPC's yaw are saved a second time
+## as bits, so a restarted server has the very same values.
+func test_the_clocks_and_an_npcs_facing_come_back_from_a_save_with_every_bit() -> void:
+	# No behaviour layer: the NPC stands as it is put.
+	var world: ServerWorld = ServerComposition.create_world(WORLD, _still_config())
+	(world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).set_store(WorldCellStore.new())
+	world.join("alice")
+	world.step_systems(TICK)
+	var spawned: ActionResult = _npcs(world).spawn_npc(world, DEFINITION_ID, SPAWN)
+	assert_true(spawned.ok, spawned.reason)
+	var npc_id: String = str(spawned.event.get(NpcService.KEY_NPC_ID, ""))
+	# Until both clocks hold values the JSON reader does not give back.
+	var misread: Callable = func(value: float) -> bool: return float(JSON.parse_string(JSON.stringify(value, "", true, true))) != value
+	var steps: int = 0
+	while steps < 5000 and not (misread.call(world.clock.world_time_sec) and misread.call(world.clock.action_time_sec)):
+		world.step_systems(TICK)
+		steps += 1
+	assert_true(misread.call(world.clock.world_time_sec) and misread.call(world.clock.action_time_sec), "test setup: clock values the JSON reader misreads (after %d steps)" % steps)
+	var yaw: float = 1.0
+	while misread.call(yaw) == false:
+		yaw += 0.1234567
+	assert_true(_npcs(world).set_npc_transform(world, npc_id, SPAWN, yaw))
+	var saved: Dictionary = JSON.parse_string(JSON.stringify(world.to_documents(), "", true, true)) as Dictionary
+	var restored: ServerWorld = ServerComposition.create_world(WORLD, _still_config())
+	(restored.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).set_store(WorldCellStore.new())
+	assert_eq(restored.restore_documents(saved["world_state"], saved["players"], saved["cells"]).size(), 0)
+	restored.join("alice")
+	assert_true(var_to_bytes(restored.clock.world_time_sec) == var_to_bytes(world.clock.world_time_sec), "the calendar time: %s, saved from %s" % [var_to_str(restored.clock.world_time_sec), var_to_str(world.clock.world_time_sec)])
+	assert_true(var_to_bytes(restored.clock.action_time_sec) == var_to_bytes(world.clock.action_time_sec), "the action time")
+	restored.step_systems(TICK)
+	var npc: NpcState = _npcs(restored).get_npc(npc_id)
+	assert_not_null(npc, "the NPC is back")
+	if npc != null:
+		assert_true(var_to_bytes(npc.yaw) == var_to_bytes(yaw), "the facing: %s, saved from %s" % [var_to_str(npc.yaw), var_to_str(yaw)])
+	# A document without the bits (an older save) is read from the numbers.
+	var old: Dictionary = saved.duplicate(true)
+	(old["world_state"] as Dictionary).erase(ServerWorld.KEY_WORLD_TIME_BITS)
+	(old["world_state"] as Dictionary).erase(ServerWorld.KEY_ACTION_TIME_BITS)
+	var older: ServerWorld = ServerComposition.create_world(WORLD, _still_config())
+	(older.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).set_store(WorldCellStore.new())
+	assert_eq(older.restore_documents(old["world_state"], old["players"], old["cells"]).size(), 0)
+	assert_true(absf(older.clock.world_time_sec - world.clock.world_time_sec) < 0.000001, "an older save still loads")
+	assert_true(older.clock.world_time_sec != world.clock.world_time_sec, "and shows what the bits are for: the number alone comes back changed")
+	# Bits that do not agree with the number (a save edited by hand) lose.
+	assert_eq(FloatBits.restored(5.0, FloatBits.encode(7.0)), 5.0)
+	assert_eq(FloatBits.restored(5.0, "not bits"), 5.0)
+	assert_eq(FloatBits.restored(5.0, null), 5.0)
+	assert_eq(FloatBits.restored(0.1 + 0.2, FloatBits.encode(0.1 + 0.2)), 0.1 + 0.2)
+
+
+func _still_config() -> CompositionConfig:
+	var config: CompositionConfig = _config()
+	config.npc_behaviour = null
+	return config
