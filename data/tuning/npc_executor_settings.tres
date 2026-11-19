@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="NpcExecutorSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/behaviours/npc_executor_settings.gd" id="1_npc_executor"]
+
+[resource]
+script = ExtResource("1_npc_executor")
+walk_speed_mps = 1.4
+run_speed_mps = 3.6
+max_planning_nodes_per_tick = 24
+max_search_nodes_per_tick = 8
+max_plans_per_tick = 4
+max_search_nodes = 2048
+min_replan_interval_sec = 1.0
+max_replans_per_action = 3
+door_pause_sec = 0.3

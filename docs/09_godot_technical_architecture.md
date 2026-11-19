@@ -2878,3 +2878,78 @@ func cancel(world: ServerWorld, npcs: NpcService, npc: NpcState) -> void
 **결정론(D11)**: 후보는 ID 순으로 보고, 평가당 난수 개수가 일정하고, 최소 지속·쿨다운·Recover는 정수 시계로 센다. 같은 시드의 두 실행은 결정 기록이 글자까지 같다. 저장 → 복구한 실행은 끊지 않은 실행과 같은 결정을 같은 틱에 내린다(테스트). 단, 저장은 float(달력 시각·욕구 값)를 14자리로 반올림하므로 복구한 실행의 점수는 끝자리가 다르다. 욕구가 문턱을 넘는 바로 그 순간에 결정이 걸려도 끝자리에 따라 갈리지 않도록 여유값을 뒀다(경계 타이머 +1ms, 지금 지나는 경계는 예약 안 함, 문턱 판정 여유, 시간대 판정 여유). 점수가 끝자리까지 같은 두 후보(`score_jitter`가 0이 아니면 사실상 없다)는 이 보장 밖이다(docs/15 P4-166).
 
 **테스트(`tests/unit/npc_decision_test.gd`, 19개)**: 출하 데이터 검증과 잘못된 데이터 거부, 전이 표 전체, 항 자르기와 합산식, 구성 요소 저장·잘못된 문서 거부, 실행기 없는 기본 조립은 아무것도 정하지 않음, 배고픈 NPC의 먹기 선택과 기록·라벨, 동점 해소 순서, 흔들림은 NPC RNG만, 유지 보너스(보너스 0이면 뒤집히는 것과 대조)와 20초 진동 없음, 최소 지속 시간, 대체 행동과 Idle, 선행조건, 실패 → Recover → 쿨다운 두 배 → 성공 시 초기화 → `executor_lost` → 잘못된 코드, 욕구 경계 타이머, 좀비를 보면 업무 중단·도주하고 벽 뒤 좀비는 못 봄, 시야 밖 좀비와 도주 실패, 같은 실행 두 번의 기록 일치, 다섯 시점의 저장 → 복구 뒤 결정 일치와 끝 상태·RNG 일치, 25명 측정. 실행기는 요청만 적는 스텁이다.
+
+### 17.7 NPC 행동 실행 계층(P4-5a, 단계 `executor`, 구성 요소 `executor`)
+
+결정된 행동을 **어떻게** 수행하는지만 맡는다: 이동(경로·걸음), 닫힌 문, 지점 예약, 실패 사유. **무엇을** 할지는 결정 계층(P4-4)이, 그 자리에서 하는 일(먹기·마시기·쉬기·일하기)은 P4-5b가 맡는다. 프로토콜·`PROTOCOL_VERSION`은 바꾸지 않았다(위치는 P4-7이 `set_npc_transform` 결과를 그대로 보낸다). `NpcState`·`NpcService`·스케줄러(P4-1·P4-3)는 고치지 않았다. 수치와 규칙은 전부 PROVISIONAL(docs/15 §17.7, docs/13 §16.4)이다.
+
+**파일(`scripts/domain/npc/behaviours/`, 노드 없음)**
+
+| 구성 요소 | 계약 |
+|---|---|
+| `NpcExecutorSettings` (`data/tuning/npc_executor_settings.tres`) | `walk_speed_mps`(1.4), `run_speed_mps`(3.6), `max_planning_nodes_per_tick`(24), `max_search_nodes_per_tick`(8), `max_plans_per_tick`(4), `max_search_nodes`(2048), `min_replan_interval_sec`(1.0), `max_replans_per_action`(3), `door_pause_sec`(0.3). 전부 행동 시간(D10). `validate()` |
+| `NpcSpotDefinition`·`NpcSpotSet` (`resources/definitions/npc_spots/dev_test_map_spots.tres`) | D7의 NPC 지점 데이터. 아래 "지점 데이터" |
+| `NpcReservations` | "지점 → NPC", "NPC → 지점" 표(한 지점 한 NPC, 한 NPC 한 지점). 규칙은 없고 실행기만 쓴다. 저장하지 않는다(저장되는 것은 NPC 쪽 `reserved_spot_id`) |
+| `NpcExecutorState` (`executor`) | NPC 한 명이 하던 일. 아래 "저장" |
+| `NpcExecutor` (`NpcStage`, `executor`) | 아래 |
+
+**조립**: `ServerComposition`에서 `NpcScheduler.install` **바로 뒤**에 `NpcExecutor.install(npcs, config.npc_executor, npc_scheduler, config.structures, StructureGrid, config.npc_spots, config.map_content)`. 스케줄러 단계 뒤라서, 결정이 시작한 행동은 같은 틱에 계획·출발한다. `CompositionConfig`에 필드 둘: `npc_executor`(`from_defaults()`가 읽고 `validate()`가 검사), `npc_spots`(`from_defaults()`가 기본 지점 파일을 읽는다. 건물을 가리키는 지점은 그 맵 콘텐츠(`map_id` 일치)가 있을 때만 쓰이고, 맵 콘텐츠가 없는 테스트 조립에서는 자리가 없는 지점이 된다). 결정 함수에 `on_executor_attached(executor)` 메서드가 있으면 조립이 실행기를 넘겨 준다(`NpcExecutor.DECIDER_HOOK`. `NpcDecider`를 고치지 않으려고 메서드 이름으로 찾는다). 그래서 **기본 조립의 모든 NPC는 `executor` 구성 요소를 갖고**, 아무도 행동을 시작하지 않으면 그 문서는 바뀌지 않으며 단계도 아무것도 저장하지 않는다.
+
+**실행기 API(`NpcExecutor`)**. 행동은 NPC당 하나다. `begin_*`은 `ActionResult`를 돌려주고, 거부(`reason`)는 **그 자리의 대답**이다(아무것도 시작하지 않고 인터럽트도 없다).
+
+| 함수 | 뜻 |
+|---|---|
+| `begin_move(npc_id, target, run = false, target_entity_id = "")` | 위치까지 걷는다(`run`이면 달린다). `target_entity_id`를 주면 그 엔티티가 월드 등록부에서 사라질 때 `target_gone`으로 실패한다. 거부: `unknown_npc`, `npc_not_awake`, `npc_busy`, `bad_target`(유한하지 않음·플레이 영역 밖·이미 없는 대상) |
+| `begin_use_spot(npc_id, spot_id, duration_sec, run = false)` | 지점까지 걸어가 `duration_sec`(행동 시간) 동안 머문다. `NpcExecutor.HOLD`(-1)는 취소할 때까지. 독점 지점은 시작하는 순간 예약된다. 거부: 위 셋 + `unknown_spot`, `bad_duration`, `spot_reserved`(다른 NPC가 쥐고 있음) |
+| `cancel(npc_id) -> bool` | 깨어 있는 NPC의 행동을 그 자리에서 끝낸다(연 문은 닫고, 행동이 잡은 예약은 푼다). 아무에게도 알리지 않는다 |
+| `is_busy(npc_id)`, `phase_of(npc_id)`, `action_info(npc_id)`, `last_outcome(npc_id)` | 조회. 단계 `idle`·`planning`·`moving`·`using`. `action_info`는 남은 waypoint(`Array[Vector3]`, P4-8 경로선용)를 포함한다. `last_outcome` = `{result: ""/"done"/"failed"/"cancelled", code}`(저장됨) |
+| `reserve(npc_id, spot_id)`, `release(npc_id)` | 손으로 하는 예약. `release`까지 유지된다(행동이 끝나도). 다른 지점을 예약하면 앞의 것은 풀린다 |
+| `holder_of(spot_id)`, `reserved_spot_of(npc_id)`, `is_spot_free(spot_id, for_npc_id = "")`, `free_spot_ids(kind = "", building_id = "")` | 예약 조회(P4-4의 선행조건·후보 고르기용). `free_spot_ids`는 ID순 |
+| `has_spot`, `spot_position`, `spot_definition` | 지점 조회 |
+| `queued_npc_ids()`, `diagnostics()`와 공개 진단 변수 | 계획 대기열(다음 차례가 앞), 틱의 계획 노드·차례 수, 걸음 수, 검색·재계획·문 여닫기 누계 |
+
+**결정 계층에 알리는 것**(`NpcScheduler.request_interrupt(npc_id, reason)`: 다음 틱의 결정에 사유로 들어온다). 스케줄러의 사유 이름은 snake_case만 받는다(`:`를 쓸 수 없다). 그래서 실패 코드는 **밑줄로** 붙인다: 조정자 지시의 `"action_failed:<code>"`는 `"action_failed_<code>"`가 됐다(`NpcExecutor.failure_code_of(reason)`이 코드를 떼어 준다).
+
+| 사유 | 때 |
+|---|---|
+| `action_arrived` | `begin_use_spot`의 NPC가 지점에 도착해 머물기 시작했다(P4-4의 Navigate → Perform) |
+| `action_done` | 행동이 끝났다(이동은 도착, 지점 사용은 시간이 다 됨) |
+| `action_failed_path_not_found` | 검색 한도(검색당 2048노드·반경 60m) 안에 길이 없다 |
+| `action_failed_path_blocked` | 걷다가 막힌 횟수가 `max_replans_per_action`을 넘었다 |
+| `action_failed_target_gone` | 대상 엔티티가 사라졌다, 또는 (복구 뒤) 지점이 데이터에 없다 |
+| `action_failed_spot_reserved` | 자는 동안 다른 NPC가 그 지점을 가져갔다 |
+| `reservation_lost` | 손으로 예약해 둔 지점을 자는 동안 빼앗겼다(실패한 행동은 없다) |
+
+취소는 알리지 않는다. 인터럽트가 거부되면(그 NPC가 이미 16개를 기다림) `dropped_interrupt_count`와 경고 로그가 남고, 결과는 `last_outcome`으로 읽을 수 있다.
+
+**걷기(D12)**: NPC는 점이고 서로 통과한다. 걷는 NPC는 틱마다 다음 waypoint 쪽으로 **한 걸음**(속도 × 행동 delta, waypoint를 넘지 않는다)을 `ServerWorld.resolve_movement("npc", from, to)` **한 번**으로 확인하고 `NpcService.set_npc_transform`으로 옮긴다. 방향(yaw)은 좀비와 같은 규칙이다. waypoint는 검색이 준 타일 중심들이고 마지막은 정확한 목표다. 걸음이 원한 곳에서 끝나지 않으면(새 벽, 메모리에 없는 셀) 서서 `min_replan_interval_sec`을 기다린 뒤 다시 검색하고, 한 행동에서 `max_replans_per_action`번을 넘으면 `path_blocked`다. 다음 타일로 넘어가는 변이 벽이면 부딪히기 전에 같은 처리를 한다. 시뮬레이션되지 않는 셀로 걸어 들어간 NPC는 거기서 언다(P4-1 규칙).
+
+**닫힌 문(D8)**: `GridPathSearch`에 옵션 "문은 지나갈 수 있음"을 더했다(**기본 꺼짐**: 생성자의 마지막 선택 인자 `is_door_edge`, 또는 첫 조각 전의 `set_door_query(callable)`. `GridPathFinder.begin_search`도 같은 선택 인자를 받는다). 켠 검색은 문 질의가 "문"이라고 답한 변을 **직선으로만**(타일 중심 → 옆 타일 중심) 지나갈 수 있는 변으로 보고, 그 변의 모서리를 대각선으로 스치지 않는다. 문이 지금 열려 있든 닫혀 있든 같게 취급하므로 NPC의 경로는 문 상태에 좌우되지 않는다. 옵션이 없는 검색(좀비, `NavigationService.find_path`)은 문 질의를 한 번도 부르지 않고 결과가 전과 같다. 실행기는 `NavigationService.begin_search`로 검색을 만들고 `set_door_query`로 "서 있는 문"을 답한다. 걷다가 자기 타일과 다음 waypoint 타일 사이의 변이 닫힌 문이면 서버 규칙 `BuildingService.set_door_open(world, id, true)`로 열고(`structure_changed` 이벤트가 플레이어가 연 것과 똑같이 공개된다), `door_pause_sec` 동안 서 있다가 지나가고, **문 너머 첫 waypoint에 닿으면 닫는다**. 행동이 끝나거나(완료·실패·취소) 다시 계획할 때도 닫는다. 자기가 연 문만 닫는다(누가 열어 둔 문은 그대로 둔다). 닫으려는데 누가 문에 서 있으면(`blocked_by_entity`) 열어 둔 채 포기하고 `doors_left_open_count`에 센다.
+
+**계획 예산(docs/13 §16.4)**: 검색은 NPC 전용 FIFO에서 기다린다. 틱마다 틱 시작에 기다리던 것 중 앞의 `max_plans_per_tick`(4)개가 차례를 받고, 한 차례는 `max_search_nodes_per_tick`(8)노드까지, 틱 전체는 `max_planning_nodes_per_tick`(24)노드까지다. 끝나지 않은 검색은 맨 뒤로 간다(같은 틱에 두 번 차례를 받지 않는다). 검색당 누적 한도는 `max_search_nodes`와 `NavigationSettings.max_expanded_nodes` 중 작은 값, 반경은 `NavigationSettings.max_search_radius_m`(좀비 설정을 같이 쓴다). 새 행동의 첫 검색은 바로 줄을 서고, `min_replan_interval_sec`은 **한 행동 안의 재검색**에만 걸린다. 좀비의 계획 예산(틱 48노드)과는 따로 센다.
+
+**지점 데이터(D7)**: `NpcSpotSet`(`spot_set_id`, `map_id`, `spots`)의 `NpcSpotDefinition` = `spot_id`(snake_case, 저장에 들어가므로 바꾸지 않는다), `kind`(`bed`·`work`·`water`·`food`), `building_id` + `tile_offset`(맵 건물 안 타일. `building_id`가 비면 월드 타일: 야외 지점·테스트용), `exclusive`(기본 true. false면 여럿이 쓰고 예약하지 않는다). NPC는 그 타일 중심에 선다. 월드에 놓이는 것은 없다(이름 붙은 타일일 뿐이다). `food`는 그 건물의 **보관함이 놓인 타일**이어야 하고(보관함 ID는 월드마다 달라서 데이터에 적을 수 없다: P4-5b가 그 타일의 보관함을 찾는다), 나머지 종류는 보관함 타일이면 안 된다. `validate()`(이름·종류·중복·같은 타일의 독점 지점 둘), `validate_against(map_content, grid, half_extent)`(건물 존재·타일이 건물 안·food 규칙·야외 지점이 플레이 영역 안). 개발 맵 파일은 16곳이다: 침대 5(개발 NPC 다섯의 집 타일), 급수 3(집마다 하나), 식량 보관함 3(집마다 하나), 작업 지점 5(개발 NPC 다섯의 작업 타일). 소유권·배급 규칙은 없다(D7).
+
+**예약 규칙**: 독점 지점은 한 NPC만, NPC 한 명은 한 지점만 쥔다. `begin_use_spot`이 잡은 예약은 그 행동이 끝날 때(완료·실패·취소) 풀린다. 손으로 한 예약(`reserve`)은 `release`까지 남는다(그 지점을 쓰는 행동이 끝나도). **깨어 있는 NPC만 지점을 쥔다**: 잠든(셀이 시뮬레이션되지 않는) NPC의 지점은 그동안 비어 있고, 깨어날 때 되찾는다. 그 사이 남이 가져갔으면 되찾지 못하고 `action_failed_spot_reserved`(그 지점을 쓰던 행동) 또는 `reservation_lost`를 듣는다. 같은 틱에 깨어난 둘이 같은 지점을 원하면 ID가 작은 쪽이 갖는다. 제거된 NPC는 아무것도 쥐지 않는다.
+
+**저장(D11)**: NPC가 하던 일은 전부 구성 요소 문서에 있다.
+
+```text
+components.executor = {schema_version: 1,
+  phase: "idle"/"planning"/"moving"/"using", kind: ""/"move"/"use_spot",
+  target: [x, y, z], run, spot_id, target_entity_id,
+  waypoints: [[x, y, z], ...],       남은 것만, 다음 것이 앞
+  timer_usec,                        using: 남은 시간(-1 = 취소까지) / moving: 문 앞 대기 / planning: 재검색 대기
+  use_usec, plan_seq, plan_expanded, replans,
+  opened_doors: [structure_id],      열었고 아직 닫아야 하는 문
+  reserved_spot_id, reservation_auto, last_result, last_code}
+systems.npc.stages.executor = {schema_version: 1, next_plan_seq}
+```
+
+시간은 전부 정수 마이크로초의 남은 양(틱마다 행동 delta를 반올림해 뺀다), 위치는 32비트 float 셋이라 저장을 거쳐도 값이 그대로다. 그래서 걷던 NPC는 복구 뒤 **다시 계획하지 않고** 같은 waypoint를 같은 틱에 밟는다. 진행 중이던 **검색**은 저장하지 않는다(D11). 대신 대기열 순번(`plan_seq`)과 그때까지 확장한 노드 수(`plan_expanded`)를 저장하고, 복구 뒤 그 NPC의 차례가 오면 같은 입력으로 검색을 그 노드 수만큼 한 번에 다시 돌린 뒤 이어 간다(같은 입력의 검색은 조각 크기와 무관하게 같은 상태가 된다). 그래서 검색 중에 저장한 실행도 끊지 않은 실행과 **같은 틱에** 검색이 끝난다(D11이 허용한 "새로 검색"보다 강하다). NPC는 항상 ID 순서로 처리하고, 깨어난 NPC의 예약·대기열 복귀도 ID 순서로 한꺼번에 정리한다(메모리에 올라온 순서에 기대지 않는다). 잠든 NPC의 행동은 그대로 얼어 있다가(타이머도 멈춘다) 깨어나면 이어 가고, 검색 중이었다면 처음부터 다시 검색한다(대기열 자리는 유지). 단계 문서는 대기열 순번 하나뿐이고, 한 번도 계획하지 않은 월드는 저장하지 않는다. `restore_document`는 모양·범위·이름을 검증하고 틀리면 그 NPC를 올리지 않는다(P4-1 규칙). 복구했는데 지점이 데이터에서 사라졌으면 그 행동은 `target_gone`으로 끝난다.
+
+**비용**: 행동 중인 NPC가 없는 틱은 아무것도 보지 않는다. 걷는 NPC 한 명은 틱당 `resolve_movement` 한 번과 변 조회 한 번이다. 실제 시간은 재지 않았다(P4-Z, docs/15 §17.7).
+
+**P4-4·P4-5b가 쓰는 법**: 결정 함수는 `on_executor_attached`로 실행기를 받아 약한 참조로 쥔다. 후보의 선행조건은 `is_spot_free`/`free_spot_ids`, 실행은 `begin_*`의 반환값(거부면 다른 후보), 진행은 인터럽트 사유(`action_arrived` → Perform, `action_done` → Evaluate, `action_failed_*` → Recover)와 `last_outcome`으로 본다. 하드 인터럽트(도주)는 `cancel` 뒤 `begin_move(..., true)`. P4-5b의 쉬기는 `begin_use_spot(침대, HOLD)` 뒤 `action_arrived`에서 회복을 시작하고 끝낼 때 `cancel`, 먹기는 `begin_use_spot(food 지점, 먹는 시간)` 뒤 `action_done`에서 그 타일의 보관함과 거래한다. P4-7의 행동 라벨(걷기 등)은 `phase_of`·`action_info`로 만들 수 있다.
+
+**테스트**: `tests/unit/npc_executor_test.gd`(설정·지점 데이터, 벽 돌아 걷기와 걸음당 `resolve_movement` 한 번, 문 열고 지나가 닫기와 좀비 기본 검색에는 여전히 막힘, FIFO와 노드 예산, 예약의 독점과 완료·실패·취소·잠듦·제거 때 해제, 같은 틱에 깨어난 둘의 지점 다툼, 실패 사유와 인터럽트, 저장 → 재시작 → 복구가 끊지 않은 실행과 틱 단위로 같은 것(걷는 중·문 앞·문간·검색 중·지점 사용 중·잠든 채·메모리 밖에서 저장), 붐비는 계획 대기열의 저장 복구, 같은 대본 두 번 실행이 같은 것, 잘못된 문서 거부), `tests/unit/npc_executor_search_test.gd`(검색 옵션: 꺼져 있으면 결과가 전과 같고 문 질의를 부르지 않음, 켜면 닫힌 문을 직선으로 통과, 모서리 대각선 금지, 문 상태와 무관).

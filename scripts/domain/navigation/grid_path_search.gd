@@ -2,6 +2,14 @@ class_name GridPathSearch
 extends RefCounted
 ## Incremental bounded weighted A* search. Every instance owns its frontier,
 ## scores, parents and edge memo so it can be resumed on a later server tick.
+##
+## Option "doors are passable" (P4-5a, docs/09 §17.7), OFF by default: a
+## search that was given a door query (the constructor's last argument, or
+## set_door_query before the first slice) treats every edge that query
+## names as an edge a walker opens: it may be crossed straight (tile centre
+## to the next tile's centre), whether the door is open or closed right now,
+## and never diagonally past its corners. Without a door query nothing
+## changes: every edge is what `is_edge_blocked` says (zombies).
 
 const SQRT_TWO: float = 1.4142135623730951
 const HEURISTIC_WEIGHT: float = 1000000.0
@@ -11,6 +19,8 @@ var last_advance_expanded_nodes: int = 0
 
 var _grid: StructureGrid
 var _query: Callable
+## Optional: slot -> bool, "this edge holds a door a walker opens".
+var _door_query: Callable = Callable()
 var _start: Vector2i
 var _goal: Vector2i
 var _exact_goal: Vector3
@@ -24,14 +34,16 @@ var _g_scores: Dictionary = {}
 var _came_from: Dictionary = {}
 var _closed: Dictionary = {}
 var _edge_cache: Dictionary = {}
+var _door_cache: Dictionary = {}
 var _heap_nodes: Array[Vector2i] = []
 var _heap_scores: PackedFloat64Array = PackedFloat64Array()
 var _popped_node: Vector2i = Vector2i.ZERO
 
 
-func _init(grid: StructureGrid, from: Vector3, to: Vector3, is_edge_blocked: Callable, max_expanded_nodes: int, max_search_radius_m: float, max_search_msec: float = 0.0) -> void:
+func _init(grid: StructureGrid, from: Vector3, to: Vector3, is_edge_blocked: Callable, max_expanded_nodes: int, max_search_radius_m: float, max_search_msec: float = 0.0, is_door_edge: Callable = Callable()) -> void:
 	_grid = grid
 	_query = is_edge_blocked
+	_door_query = is_door_edge
 	_exact_goal = to
 	_max_expanded_nodes = max_expanded_nodes
 	_max_search_msec = max_search_msec
@@ -57,6 +69,15 @@ func _init(grid: StructureGrid, from: Vector3, to: Vector3, is_edge_blocked: Cal
 
 func is_finished() -> bool:
 	return _finished
+
+
+## Turns the option "doors are passable" on (see the header) for a search
+## that has not looked at an edge yet. False (nothing changes) afterwards.
+func set_door_query(is_door_edge: Callable) -> bool:
+	if result.expanded_nodes > 0 or not _edge_cache.is_empty():
+		return false
+	_door_query = is_door_edge
+	return true
 
 
 ## Expands at most `node_budget` nodes and preserves all state when the slice
@@ -102,6 +123,26 @@ func _expand(current: Vector2i) -> void:
 	var east_blocked: bool = _is_edge_blocked(Vector3i(current.x + 1, current.y, StructureGrid.Layer.EDGE_LOW_X))
 	var north_blocked: bool = _is_edge_blocked(Vector3i(current.x, current.y, StructureGrid.Layer.EDGE_LOW_Z))
 	var south_blocked: bool = _is_edge_blocked(Vector3i(current.x, current.y + 1, StructureGrid.Layer.EDGE_LOW_Z))
+	# Without a door query "straight" and "diagonal" are the same four flags.
+	var doors: bool = _door_query.is_valid()
+	var west_closed: bool = west_blocked
+	var east_closed: bool = east_blocked
+	var north_closed: bool = north_blocked
+	var south_closed: bool = south_blocked
+	if doors:
+		var west_door: bool = _is_door_edge(Vector3i(current.x, current.y, StructureGrid.Layer.EDGE_LOW_X))
+		var east_door: bool = _is_door_edge(Vector3i(current.x + 1, current.y, StructureGrid.Layer.EDGE_LOW_X))
+		var north_door: bool = _is_door_edge(Vector3i(current.x, current.y, StructureGrid.Layer.EDGE_LOW_Z))
+		var south_door: bool = _is_door_edge(Vector3i(current.x, current.y + 1, StructureGrid.Layer.EDGE_LOW_Z))
+		# Diagonal: a door edge is closed, open or not. Straight: it is open.
+		west_closed = west_blocked or west_door
+		east_closed = east_blocked or east_door
+		north_closed = north_blocked or north_door
+		south_closed = south_blocked or south_door
+		west_blocked = west_blocked and not west_door
+		east_blocked = east_blocked and not east_door
+		north_blocked = north_blocked and not north_door
+		south_blocked = south_blocked and not south_door
 	var current_g: float = float(_g_scores[current])
 	for direction_index: int in 8:
 		var blocked: bool
@@ -111,10 +152,10 @@ func _expand(current: Vector2i) -> void:
 			1: blocked = west_blocked; direction = Vector2i(-1, 0)
 			2: blocked = south_blocked; direction = Vector2i(0, 1)
 			3: blocked = north_blocked; direction = Vector2i(0, -1)
-			4: blocked = east_blocked or south_blocked; direction = Vector2i(1, 1)
-			5: blocked = east_blocked or north_blocked; direction = Vector2i(1, -1)
-			6: blocked = west_blocked or south_blocked; direction = Vector2i(-1, 1)
-			_: blocked = west_blocked or north_blocked; direction = Vector2i(-1, -1)
+			4: blocked = east_closed or south_closed; direction = Vector2i(1, 1)
+			5: blocked = east_closed or north_closed; direction = Vector2i(1, -1)
+			6: blocked = west_closed or south_closed; direction = Vector2i(-1, 1)
+			_: blocked = west_closed or north_closed; direction = Vector2i(-1, -1)
 		if blocked:
 			continue
 		var next: Vector2i = current + direction
@@ -124,6 +165,8 @@ func _expand(current: Vector2i) -> void:
 			var entry_x: Vector3i = Vector3i(current.x + 1 if direction.x > 0 else current.x, next.y, StructureGrid.Layer.EDGE_LOW_X)
 			var entry_z: Vector3i = Vector3i(next.x, current.y + 1 if direction.y > 0 else current.y, StructureGrid.Layer.EDGE_LOW_Z)
 			if _is_edge_blocked(entry_x) or _is_edge_blocked(entry_z):
+				continue
+			if doors and (_is_door_edge(entry_x) or _is_door_edge(entry_z)):
 				continue
 		var relative: Vector2i = next - _start
 		if float(relative.length_squared()) > _radius_squared:
@@ -145,6 +188,13 @@ func _is_edge_blocked(slot: Vector3i) -> bool:
 	if not _edge_cache.has(key):
 		_edge_cache[key] = bool(_query.call(slot))
 	return bool(_edge_cache[key])
+
+
+func _is_door_edge(slot: Vector3i) -> bool:
+	var key: int = StructureGrid.slot_key(slot)
+	if not _door_cache.has(key):
+		_door_cache[key] = bool(_door_query.call(slot))
+	return bool(_door_cache[key])
 
 
 func _heap_push(node: Vector2i, score: float) -> void:

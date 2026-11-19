@@ -93,6 +93,11 @@ var npc_decider: NpcDecider = null
 ## choose from.
 var npc_decision: NpcDecisionSettings
 var npc_actions: NpcActionCatalog
+## P4-5a (docs/09 §17.7): how NPCs carry out actions (NpcExecutor), and the
+## NPC spots (beds, work places, water, food containers) of the map. Spots
+## that name a building are only used with the map content they belong to.
+var npc_executor: NpcExecutorSettings
+var npc_spots: NpcSpotSet = null
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -136,6 +141,8 @@ static func from_defaults() -> CompositionConfig:
 	config.npc_schedule = NpcScheduleSettings.load_or_default()
 	config.npc_decision = NpcDecisionSettings.load_or_default()
 	config.npc_actions = NpcActionCatalog.load_directory()
+	config.npc_executor = NpcExecutorSettings.load_or_default()
+	config.npc_spots = NpcSpotSet.load_or_null()
 	return config
 
 
@@ -157,6 +164,10 @@ func _validate_npcs() -> PackedStringArray:
 	else:
 		errors.append_array(npc_decision.validate())
 		errors.append_array(npc_decision.validate_against(npc_actions))
+	errors.append_array(npc_executor.validate() if npc_executor != null else PackedStringArray(["composition config is incomplete (npc_executor)"]))
+	if npc_spots != null:
+		errors.append_array(npc_spots.validate())
+		errors.append_array(npc_spots.validate_against(map_content, StructureGrid.new(building.grid_module_m), gameplay.world_half_extent_m))
 	if npc_roster != null:
 		errors.append_array(npc_roster.validate())
 		errors.append_array(npc_roster.validate_against(npc_definitions, map_content, StructureGrid.new(building.grid_module_m), npc.max_npcs))

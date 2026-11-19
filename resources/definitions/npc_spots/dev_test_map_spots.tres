@@ -1,0 +1,138 @@
+[gd_resource type="Resource" script_class="NpcSpotSet" load_steps=19 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/behaviours/npc_spot_set.gd" id="1_set"]
+[ext_resource type="Script" path="res://scripts/domain/npc/behaviours/npc_spot_definition.gd" id="2_spot"]
+
+[sub_resource type="Resource" id="s_bed_house_a_1"]
+script = ExtResource("2_spot")
+spot_id = "bed_house_a_1"
+kind = "bed"
+building_id = "house_a"
+tile_offset = Vector2i(1, 1)
+exclusive = true
+
+[sub_resource type="Resource" id="s_bed_house_a_2"]
+script = ExtResource("2_spot")
+spot_id = "bed_house_a_2"
+kind = "bed"
+building_id = "house_a"
+tile_offset = Vector2i(3, 1)
+exclusive = true
+
+[sub_resource type="Resource" id="s_bed_house_b_1"]
+script = ExtResource("2_spot")
+spot_id = "bed_house_b_1"
+kind = "bed"
+building_id = "house_b"
+tile_offset = Vector2i(1, 1)
+exclusive = true
+
+[sub_resource type="Resource" id="s_bed_house_b_2"]
+script = ExtResource("2_spot")
+spot_id = "bed_house_b_2"
+kind = "bed"
+building_id = "house_b"
+tile_offset = Vector2i(3, 2)
+exclusive = true
+
+[sub_resource type="Resource" id="s_bed_house_c_1"]
+script = ExtResource("2_spot")
+spot_id = "bed_house_c_1"
+kind = "bed"
+building_id = "house_c"
+tile_offset = Vector2i(2, 2)
+exclusive = true
+
+[sub_resource type="Resource" id="s_water_house_a"]
+script = ExtResource("2_spot")
+spot_id = "water_house_a"
+kind = "water"
+building_id = "house_a"
+tile_offset = Vector2i(0, 0)
+exclusive = true
+
+[sub_resource type="Resource" id="s_water_house_b"]
+script = ExtResource("2_spot")
+spot_id = "water_house_b"
+kind = "water"
+building_id = "house_b"
+tile_offset = Vector2i(0, 3)
+exclusive = true
+
+[sub_resource type="Resource" id="s_water_house_c"]
+script = ExtResource("2_spot")
+spot_id = "water_house_c"
+kind = "water"
+building_id = "house_c"
+tile_offset = Vector2i(3, 0)
+exclusive = true
+
+[sub_resource type="Resource" id="s_food_house_a"]
+script = ExtResource("2_spot")
+spot_id = "food_house_a"
+kind = "food"
+building_id = "house_a"
+tile_offset = Vector2i(0, 3)
+exclusive = false
+
+[sub_resource type="Resource" id="s_food_house_b"]
+script = ExtResource("2_spot")
+spot_id = "food_house_b"
+kind = "food"
+building_id = "house_b"
+tile_offset = Vector2i(2, 3)
+exclusive = false
+
+[sub_resource type="Resource" id="s_food_house_c"]
+script = ExtResource("2_spot")
+spot_id = "food_house_c"
+kind = "food"
+building_id = "house_c"
+tile_offset = Vector2i(0, 0)
+exclusive = false
+
+[sub_resource type="Resource" id="s_work_clinic"]
+script = ExtResource("2_spot")
+spot_id = "work_clinic"
+kind = "work"
+building_id = "clinic"
+tile_offset = Vector2i(2, 2)
+exclusive = true
+
+[sub_resource type="Resource" id="s_work_warehouse"]
+script = ExtResource("2_spot")
+spot_id = "work_warehouse"
+kind = "work"
+building_id = "warehouse"
+tile_offset = Vector2i(3, 3)
+exclusive = true
+
+[sub_resource type="Resource" id="s_work_store"]
+script = ExtResource("2_spot")
+spot_id = "work_store"
+kind = "work"
+building_id = "store"
+tile_offset = Vector2i(2, 2)
+exclusive = true
+
+[sub_resource type="Resource" id="s_work_shed"]
+script = ExtResource("2_spot")
+spot_id = "work_shed"
+kind = "work"
+building_id = "shed"
+tile_offset = Vector2i(2, 1)
+exclusive = true
+
+[sub_resource type="Resource" id="s_work_garage"]
+script = ExtResource("2_spot")
+spot_id = "work_garage"
+kind = "work"
+building_id = "garage"
+tile_offset = Vector2i(2, 2)
+exclusive = true
+
+[resource]
+script = ExtResource("1_set")
+spot_set_id = "dev_test_map_spots"
+map_id = "dev_test_map"
+spots = Array[ExtResource("2_spot")]([SubResource("s_bed_house_a_1"), SubResource("s_bed_house_a_2"), SubResource("s_bed_house_b_1"), SubResource("s_bed_house_b_2"), SubResource("s_bed_house_c_1"), SubResource("s_water_house_a"), SubResource("s_water_house_b"), SubResource("s_water_house_c"), SubResource("s_food_house_a"), SubResource("s_food_house_b"), SubResource("s_food_house_c"), SubResource("s_work_clinic"), SubResource("s_work_warehouse"), SubResource("s_work_store"), SubResource("s_work_shed"), SubResource("s_work_garage")])
