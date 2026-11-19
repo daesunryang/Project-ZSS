@@ -178,6 +178,7 @@ func _ready() -> void:
 ## Applies one data-driven treatment to the stacked HUD columns. The scene
 ## owns layout; presentation settings own contrast and spacing.
 func _apply_hud_style() -> void:
+	_left_hud_panel.offset_right = _left_hud_panel.offset_left + float(_presentation.hud_left_column_width_px)
 	var panel_style: StyleBoxFlat = StyleBoxFlat.new()
 	panel_style.bg_color = _presentation.hud_panel_color
 	panel_style.content_margin_left = float(_presentation.hud_panel_padding_px)
@@ -203,6 +204,8 @@ func _apply_hud_style() -> void:
 	for label: Label in column_labels:
 		label.add_theme_color_override(&"font_outline_color", _presentation.hud_text_outline_color)
 		label.add_theme_constant_override(&"outline_size", _presentation.hud_text_outline_size_px)
+	for label: Label in [_survival_label, _inventory_label, _trade_label]:
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 
 func _exit_tree() -> void:

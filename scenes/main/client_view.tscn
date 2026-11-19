@@ -72,7 +72,7 @@ text = "현재 셀"
 unique_name_in_owner = true
 offset_left = 8.0
 offset_top = 36.0
-offset_right = 608.0
+offset_right = 428.0
 offset_bottom = 36.0
 
 [node name="LeftHudStack" type="VBoxContainer" parent="Hud/LeftHudPanel"]
@@ -83,18 +83,21 @@ layout_mode = 2
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
+autowrap_mode = 3
 text = "생존 상태"
 
 [node name="InventoryLabel" type="Label" parent="Hud/LeftHudPanel/LeftHudStack"]
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
+autowrap_mode = 3
 text = "소지품"
 
 [node name="TradeLabel" type="Label" parent="Hud/LeftHudPanel/LeftHudStack"]
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
+autowrap_mode = 3
 text = "거래"
 
 [node name="RightHudPanel" type="PanelContainer" parent="Hud"]

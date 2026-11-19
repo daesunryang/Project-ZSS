@@ -73,6 +73,7 @@ func test_shipped_presentation_settings_load_and_validate() -> void:
 	assert_eq(settings.attack_mouse_button, MOUSE_BUTTON_LEFT)
 	assert_true(settings.hud_event_line_count > 0)
 	assert_true(settings.hud_panel_color.a >= 0.8, "the real-window HUD has a readable backdrop")
+	assert_eq(settings.hud_left_column_width_px, 420)
 	var invalid: ClientPresentationSettings = ClientPresentationSettings.new()
 	invalid.attack_min_interval_sec = 0.0
 	invalid.zombie_capsule_height_m = invalid.zombie_capsule_radius_m
@@ -92,6 +93,14 @@ func test_client_view_stacks_the_left_hud_blocks_in_documented_order() -> void:
 	], [&"SurvivalLabel", &"InventoryLabel", &"TradeLabel"])
 	assert_eq(view.get_node("%SurvivalLabel").get_parent(), stack)
 	assert_eq(view.get_node("%InventoryLabel").get_parent(), stack)
+	var panel: PanelContainer = view.get_node("%LeftHudPanel") as PanelContainer
+	var settings: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
+	assert_eq(int(panel.offset_right - panel.offset_left), settings.hud_left_column_width_px)
+	assert_eq((view.get_node("%SurvivalLabel") as Label).autowrap_mode, TextServer.AUTOWRAP_WORD_SMART)
+	# At the 1280px reference viewport the narrowed left panel ends before
+	# the right panel begins, even before either stack gets any text.
+	var right_panel: PanelContainer = view.get_node("%RightHudPanel") as PanelContainer
+	assert_true(panel.offset_right < 1280.0 + right_panel.offset_left)
 	view.free()
 
 

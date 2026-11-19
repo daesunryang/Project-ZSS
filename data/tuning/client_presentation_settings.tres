@@ -20,6 +20,7 @@ attack_min_interval_sec = 0.15
 attack_result_duration_sec = 2.0
 hud_event_line_count = 5
 hud_panel_color = Color(0.035, 0.045, 0.055, 0.82)
+hud_left_column_width_px = 420
 hud_panel_padding_px = 8
 hud_panel_corner_radius_px = 6
 hud_stack_separation_px = 6

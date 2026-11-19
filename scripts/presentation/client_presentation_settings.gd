@@ -24,6 +24,9 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(1, 20) var hud_event_line_count: int = 5
 ## Shared backdrop and text treatment for the two stacked HUD columns.
 @export var hud_panel_color: Color = Color(0.035, 0.045, 0.055, 0.82)
+## Fixed left-column width at the 1280px reference viewport. Its labels wrap
+## inside this width instead of expanding toward the right HUD column.
+@export_range(240, 600) var hud_left_column_width_px: int = 420
 @export_range(0, 32) var hud_panel_padding_px: int = 8
 @export_range(0, 32) var hud_panel_corner_radius_px: int = 6
 @export_range(0, 32) var hud_stack_separation_px: int = 6
@@ -245,6 +248,8 @@ func validate() -> PackedStringArray:
 		errors.append("attack_result_duration_sec must be > 0")
 	if hud_event_line_count <= 0:
 		errors.append("hud_event_line_count must be > 0")
+	if hud_left_column_width_px <= 0:
+		errors.append("hud_left_column_width_px must be > 0")
 	if hud_panel_padding_px < 0 or hud_panel_corner_radius_px < 0 or hud_stack_separation_px < 0 or hud_text_outline_size_px < 0:
 		errors.append("HUD panel dimensions and text outline size must be >= 0")
 	if death_message.is_empty():

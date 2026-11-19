@@ -50,6 +50,40 @@ func test_ground_hit_tile_edge_rotation_and_preview_checks_are_pure() -> void:
 	assert_false(BuildModePolicy.preview_is_valid(wall, mirror, Vector3.ZERO, Vector2(-2.0, -2.0), Vector2(2.0, 2.0), 4.0, 1.0), "mirror occupancy makes the ghost red")
 
 
+func test_default_camera_aim_pulls_a_wall_inside_range_and_off_the_player_edges() -> void:
+	var camera: CameraSettings = CameraSettings.load_or_default()
+	var presentation: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
+	var grid: StructureGrid = StructureGrid.new(1.0)
+	var player_position: Vector3 = Vector3(0.5, 0.0, 0.5)
+	var target: Vector3 = player_position + Vector3.UP * camera.target_height_m
+	var camera_position: Vector3 = CameraOrbitMath.camera_position(target, 0.0, camera.initial_pitch_rad, camera.camera_distance_m)
+	var direction: Vector3 = camera_position.direction_to(target)
+	var definition: StructureDefinition = _catalog().get_definition("dev_wall")
+	var candidate: Dictionary = BuildModePolicy.aimed_placement(camera_position, direction, 0.0, presentation.build_ray_length_m, player_position, presentation.build_preview_range_m, definition, grid, 0)
+	assert_true(bool(candidate.get("hit", false)))
+	assert_true(StructureGrid.flat_distance(player_position, candidate["anchor"]) <= presentation.build_preview_range_m)
+	var player_tile: Vector2i = grid.tile_of(player_position)
+	for rotation: int in range(StructureGrid.ROTATION_COUNT):
+		assert_ne(candidate["slot"], StructureGrid.slot_of(StructureDefinition.Placement.EDGE, player_tile, rotation), "the preview must not use an edge under the player")
+	var mirror: ClientStructureState = ClientStructureState.new(StructureNetSettings.new(), _catalog())
+	assert_true(BuildModePolicy.preview_is_valid(candidate, mirror, player_position, Vector2(-10.0, -10.0), Vector2(10.0, 10.0), presentation.build_preview_range_m, grid.module_m))
+
+
+func test_aim_at_the_players_position_moves_tile_and_edge_pieces_forward() -> void:
+	var grid: StructureGrid = StructureGrid.new(1.0)
+	var catalog: StructureCatalog = _catalog()
+	var player_position: Vector3 = Vector3(0.5, 0.0, 0.5)
+	var camera_position: Vector3 = player_position + Vector3(0.0, 1.0, 1.0)
+	var direction: Vector3 = camera_position.direction_to(player_position)
+	var floor_candidate: Dictionary = BuildModePolicy.aimed_placement(camera_position, direction, 0.0, 100.0, player_position, 4.0, catalog.get_definition("dev_floor"), grid, 0)
+	assert_true(bool(floor_candidate.get("hit", false)))
+	assert_ne(floor_candidate["tile"], grid.tile_of(player_position))
+	var wall_candidate: Dictionary = BuildModePolicy.aimed_placement(camera_position, direction, 0.0, 100.0, player_position, 4.0, catalog.get_definition("dev_wall"), grid, 0)
+	assert_true(bool(wall_candidate.get("hit", false)))
+	for rotation: int in range(StructureGrid.ROTATION_COUNT):
+		assert_ne(wall_candidate["slot"], StructureGrid.slot_of(StructureDefinition.Placement.EDGE, grid.tile_of(player_position), rotation))
+
+
 func test_build_keys_ranges_and_actions_come_from_the_presentation_resource() -> void:
 	var shipped: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
 	assert_eq(shipped.validate().size(), 0, "; ".join(shipped.validate()))

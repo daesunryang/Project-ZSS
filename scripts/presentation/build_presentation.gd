@@ -134,8 +134,7 @@ func _update_preview(camera: Camera3D, map: ClientWorldMap) -> void:
 	if not _build_mode:
 		return
 	var definition: StructureDefinition = _catalog.get_definition(_selected_definition_id)
-	var hit: Variant = BuildModePolicy.ground_hit(camera.global_position, -camera.global_basis.z, 0.0, _settings.build_ray_length_m)
-	_candidate = BuildModePolicy.placement_at(hit as Vector3, definition, _grid, _rotation_steps) if hit is Vector3 else BuildModePolicy.NO_HIT
+	_candidate = BuildModePolicy.aimed_placement(camera.global_position, -camera.global_basis.z, 0.0, _settings.build_ray_length_m, _local_position(), _settings.build_preview_range_m, definition, _grid, _rotation_steps)
 	_candidate_valid = map != null and map.is_known() and BuildModePolicy.preview_is_valid(_candidate, _mirror, _local_position(), map.bounds_min, map.bounds_max, _settings.build_preview_range_m, _grid.module_m)
 	if not bool(_candidate.get("hit", false)):
 		_ghost.visible = false
