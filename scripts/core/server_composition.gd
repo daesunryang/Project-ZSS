@@ -100,7 +100,7 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# P4-3 (docs/09 §17.3): the schedule component and the scheduler stage.
 	# P4-4 (docs/09 §17.6): what the NPCs decide, its component and the threat
 	# sensor stage. The decider chooses nothing until it has an executor
-	# (P4-5a: NpcUtilityDecider.set_executor, here).
+	# (P4-5b gives it one below; without config.npc_behaviour it has none).
 	var npc_decider: NpcDecider = config.npc_decider
 	if npc_decider == null and config.npc_decision != null and config.npc_actions != null:
 		npc_decider = NpcUtilityDecider.new(config.npc_decision, config.npc_actions, config.npc_needs)
@@ -112,14 +112,26 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# P4-5a (docs/09 §17.7): the executor component and stage, AFTER the
 	# scheduler: what an NPC decides in a tick it starts doing in that tick.
 	# A decider that has on_executor_attached(executor) is given the stage
-	# (test deciders). NpcUtilityDecider has no such method and takes an
-	# NpcActionExecutor through set_executor: the two are NOT connected yet
-	# (P4-5b), so the NPCs of the default composition still stand still.
+	# (test deciders that drive the movement executor themselves).
 	var npc_executor: NpcExecutor = NpcExecutor.install(npcs, config.npc_executor, npc_scheduler, config.structures, StructureGrid.new(config.building.grid_module_m), config.npc_spots, config.map_content)
 	if npc_executor == null:
 		return null
 	if config.npc_decider != null and config.npc_decider.has_method(NpcExecutor.DECIDER_HOOK):
 		config.npc_decider.call(NpcExecutor.DECIDER_HOOK, npc_executor)
+	# P4-5b (docs/09 §17.8): the behaviour component and stage, after the
+	# executor, and the join of the two layers: the utility decider gets its
+	# executor, so the NPCs decide and act from here on. Without
+	# config.npc_behaviour (tests that want NPCs to stand still) nothing is
+	# installed and the decider chooses nothing.
+	if config.npc_behaviour != null:
+		var npc_behaviours: NpcBehaviours = NpcBehaviours.install(npcs, config.npc_behaviour, npc_executor, config.catalog, StructureGrid.new(config.building.grid_module_m), config.npc_spots, config.map_content)
+		if npc_behaviours == null:
+			return null
+		if config.npc_decider != null and config.npc_decider.has_method(NpcBehaviours.DECIDER_HOOK):
+			config.npc_decider.call(NpcBehaviours.DECIDER_HOOK, npc_behaviours)
+		# (A decider that was made with an executor of its own keeps it.)
+		if npc_decider is NpcUtilityDecider and (npc_decider as NpcUtilityDecider).executor() == null:
+			(npc_decider as NpcUtilityDecider).set_executor(npc_behaviours.action_executor())
 	# P2-T16: trades between two players. Last, so its step sees what this
 	# tick did to its parties (a death, a rest, a move). It is told about
 	# every inventory transaction, to keep offers backed by what is carried.

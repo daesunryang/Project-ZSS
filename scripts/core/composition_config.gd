@@ -98,6 +98,10 @@ var npc_actions: NpcActionCatalog
 ## that name a building are only used with the map content they belong to.
 var npc_executor: NpcExecutorSettings
 var npc_spots: NpcSpotSet = null
+## P4-5b (docs/09 §17.8): what the basic NPC actions do (NpcBehaviours).
+## null = no behaviour layer: the utility decider gets no executor and the
+## NPCs stand still (tests of other things than what NPCs do).
+var npc_behaviour: NpcBehaviourSettings = null
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -143,6 +147,7 @@ static func from_defaults() -> CompositionConfig:
 	config.npc_actions = NpcActionCatalog.load_directory()
 	config.npc_executor = NpcExecutorSettings.load_or_default()
 	config.npc_spots = NpcSpotSet.load_or_null()
+	config.npc_behaviour = NpcBehaviourSettings.load_or_default()
 	return config
 
 
@@ -167,7 +172,9 @@ func _validate_npcs() -> PackedStringArray:
 	errors.append_array(npc_executor.validate() if npc_executor != null else PackedStringArray(["composition config is incomplete (npc_executor)"]))
 	if npc_spots != null:
 		errors.append_array(npc_spots.validate())
-		errors.append_array(npc_spots.validate_against(map_content, StructureGrid.new(building.grid_module_m), gameplay.world_half_extent_m))
+		errors.append_array(npc_spots.validate_against(map_content, StructureGrid.new(building.grid_module_m), gameplay.world_half_extent_m, catalog))
+	if npc_behaviour != null:
+		errors.append_array(npc_behaviour.validate())
 	if npc_roster != null:
 		errors.append_array(npc_roster.validate())
 		errors.append_array(npc_roster.validate_against(npc_definitions, map_content, StructureGrid.new(building.grid_module_m), npc.max_npcs))

@@ -92,6 +92,9 @@ func _definition(definition_id: String, display_name: String) -> NpcDefinition:
 ## moves by itself.
 func _config() -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# P4-5b: no behaviour layer here, so the NPCs decide nothing and stand
+	# still (what NPCs do is tested in npc_behaviour_test.gd).
+	config.npc_behaviour = null
 	# from_defaults() returns cached, shared resources: replace, never edit.
 	config.gameplay = GameplaySettings.new()
 	config.gameplay.world_half_extent_m = 50.0
@@ -115,6 +118,9 @@ func _config() -> CompositionConfig:
 ## dev roster) and nothing that moves by itself.
 func _shipped_config(with_roster: bool = true) -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# P4-5b: no behaviour layer here, so the NPCs decide nothing and stand
+	# still (what NPCs do is tested in npc_behaviour_test.gd).
+	config.npc_behaviour = null
 	config.clock = WorldClockSettings.new()
 	config.survival = SurvivalSettings.new()
 	config.survival.health_recovery_per_world_sec = 0.0

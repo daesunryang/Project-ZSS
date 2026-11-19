@@ -27,6 +27,12 @@ const KINDS: PackedStringArray = [KIND_BED, KIND_WORK, KIND_WATER, KIND_FOOD]
 ## True: one NPC at a time (it must be reserved to be used). False: any
 ## number of NPCs (a food container).
 @export var exclusive: bool = true
+## A food spot only (P4-5b): what the container on this tile is given once
+## per world, the first time an NPC comes to eat there: `stock_units` units
+## of the item `stock_item_id` ("" or 0 = nothing). PROVISIONAL (docs/15
+## P4-213): the map's loot alone does not feed anybody for days.
+@export var stock_item_id: String = ""
+@export_range(0, 10000) var stock_units: int = 0
 
 
 func validate() -> PackedStringArray:
@@ -37,4 +43,8 @@ func validate() -> PackedStringArray:
 		errors.append("spot %s: unknown kind '%s'" % [spot_id, kind])
 	if not building_id.is_empty() and not ItemInstance.is_valid_definition_id(building_id):
 		errors.append("spot %s: building_id '%s' must be snake_case" % [spot_id, building_id])
+	if stock_units < 0 or (stock_units > 0) != (not stock_item_id.is_empty()):
+		errors.append("spot %s: stock_item_id and stock_units go together" % spot_id)
+	elif stock_units > 0 and (kind != KIND_FOOD or not ItemInstance.is_valid_definition_id(stock_item_id)):
+		errors.append("spot %s: only a food spot is stocked, with an item id" % spot_id)
 	return errors

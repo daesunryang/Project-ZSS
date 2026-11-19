@@ -247,6 +247,9 @@ func test_the_default_composition_schedules_every_npc_and_decides_nothing() -> v
 	# No decider (the default before P4-4): the turns still come.
 	var config: CompositionConfig = _config(_recorder)
 	config.npc_decider = null
+	# P4-5b: and no behaviour layer, so the composition's own decider has no
+	# executor and decides nothing.
+	config.npc_behaviour = null
 	var world: ServerWorld = ServerComposition.create_world(WORLD, config)
 	world.join("alice")
 	world.step_systems(TICK)

@@ -99,12 +99,17 @@ func validate() -> PackedStringArray:
 ## exists, every tile lies inside its building (or, outdoors, inside the
 ## play area), and a food spot is the tile of a container of its building.
 ## A set of another map is not checked (it is not used).
-func validate_against(map_content: MapContentDefinition, grid: StructureGrid, world_half_extent_m: float) -> PackedStringArray:
+## With `items`: what a food spot is stocked with is food of that catalog.
+func validate_against(map_content: MapContentDefinition, grid: StructureGrid, world_half_extent_m: float, items: ItemCatalog = null) -> PackedStringArray:
 	var errors: PackedStringArray = []
 	for spot: NpcSpotDefinition in spots:
 		if spot == null:
 			continue
 		var label: String = "spot set %s: %s" % [spot_set_id, spot.spot_id]
+		if items != null and spot.stock_units > 0:
+			var stock: ItemDefinition = items.get_definition(spot.stock_item_id)
+			if stock == null or stock.consume_hunger_reduction <= 0.0:
+				errors.append("%s: stock item %s must be food" % [label, spot.stock_item_id])
 		if spot.building_id.is_empty():
 			if grid != null and not grid.is_tile_inside(spot.tile_offset, world_half_extent_m):
 				errors.append("%s: lies outside the play area" % label)

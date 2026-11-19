@@ -74,6 +74,8 @@ kind = "food"
 building_id = "house_a"
 tile_offset = Vector2i(0, 3)
 exclusive = false
+stock_item_id = "dev_food_ration"
+stock_units = 20
 
 [sub_resource type="Resource" id="s_food_house_b"]
 script = ExtResource("2_spot")
@@ -82,6 +84,8 @@ kind = "food"
 building_id = "house_b"
 tile_offset = Vector2i(2, 3)
 exclusive = false
+stock_item_id = "dev_food_ration"
+stock_units = 20
 
 [sub_resource type="Resource" id="s_food_house_c"]
 script = ExtResource("2_spot")
@@ -90,6 +94,8 @@ kind = "food"
 building_id = "house_c"
 tile_offset = Vector2i(0, 0)
 exclusive = false
+stock_item_id = "dev_food_ration"
+stock_units = 20
 
 [sub_resource type="Resource" id="s_work_clinic"]
 script = ExtResource("2_spot")

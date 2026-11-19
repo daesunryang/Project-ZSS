@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="NpcBehaviourSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/behaviours/npc_behaviour_settings.gd" id="1_npc_behaviour"]
+
+[resource]
+script = ExtResource("1_npc_behaviour")
+inventory_slots = 4
+eat_duration_sec = 6.0
+drink_duration_sec = 4.0
+drink_thirst_reduction = 60.0
+rest_until_fatigue = 5.0
+rest_check_period_sec = 2.0
+work_shift_sec = 120.0
+wander_radius_m = 8.0
+wander_linger_sec = 5.0
+flee_distance_m = 12.0

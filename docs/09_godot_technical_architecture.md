@@ -2953,3 +2953,58 @@ systems.npc.stages.executor = {schema_version: 1, next_plan_seq}
 **P4-4·P4-5b가 쓰는 법**: 결정 함수는 `on_executor_attached`로 실행기를 받아 약한 참조로 쥔다. 후보의 선행조건은 `is_spot_free`/`free_spot_ids`, 실행은 `begin_*`의 반환값(거부면 다른 후보), 진행은 인터럽트 사유(`action_arrived` → Perform, `action_done` → Evaluate, `action_failed_*` → Recover)와 `last_outcome`으로 본다. 하드 인터럽트(도주)는 `cancel` 뒤 `begin_move(..., true)`. P4-5b의 쉬기는 `begin_use_spot(침대, HOLD)` 뒤 `action_arrived`에서 회복을 시작하고 끝낼 때 `cancel`, 먹기는 `begin_use_spot(food 지점, 먹는 시간)` 뒤 `action_done`에서 그 타일의 보관함과 거래한다. P4-7의 행동 라벨(걷기 등)은 `phase_of`·`action_info`로 만들 수 있다.
 
 **테스트**: `tests/unit/npc_executor_test.gd`(설정·지점 데이터, 벽 돌아 걷기와 걸음당 `resolve_movement` 한 번, 문 열고 지나가 닫기와 좀비 기본 검색에는 여전히 막힘, FIFO와 노드 예산, 예약의 독점과 완료·실패·취소·잠듦·제거 때 해제, 같은 틱에 깨어난 둘의 지점 다툼, 실패 사유와 인터럽트, 저장 → 재시작 → 복구가 끊지 않은 실행과 틱 단위로 같은 것(걷는 중·문 앞·문간·검색 중·지점 사용 중·잠든 채·메모리 밖에서 저장), 붐비는 계획 대기열의 저장 복구, 같은 대본 두 번 실행이 같은 것, 잘못된 문서 거부), `tests/unit/npc_executor_search_test.gd`(검색 옵션: 꺼져 있으면 결과가 전과 같고 문 질의를 부르지 않음, 켜면 닫힌 문을 직선으로 통과, 모서리 대각선 금지, 문 상태와 무관).
+
+### 17.8 NPC 기본 행동과 결정·실행 연결(P4-5b, 단계 `behaviours`, 구성 요소 `behaviour`)
+
+결정 계층(P4-4, §17.6)이 고른 행동을 **실제로 하는 것**이다: 먹기·마시기·쉬기·일하기·배회·도주. 이동과 지점 예약은 실행기(P4-5a, §17.7)가 하고, 이 계층은 "어디로 갈지"와 "거기서 무슨 일이 일어나는지"를 맡는다. 이 티켓부터 **기본 조립의 NPC가 스스로 결정하고 움직인다**. 프로토콜·`PROTOCOL_VERSION`은 바꾸지 않았다. `needs/`·`scheduling/`·`mind/`·`decision/`의 코드는 고치지 않았다. 수치와 규칙은 전부 PROVISIONAL(docs/15 §17.8)이다.
+
+**파일(`scripts/domain/npc/behaviours/`, 노드 없음)**
+
+| 구성 요소 | 계약 |
+|---|---|
+| `NpcBehaviourSettings` (`data/tuning/npc_behaviour_settings.tres`) | `inventory_slots`(4), `eat_duration_sec`(6), `drink_duration_sec`(4), `drink_thirst_reduction`(60), `rest_until_fatigue`(5), `rest_check_period_sec`(2), `work_shift_sec`(120), `wander_radius_m`(8), `wander_linger_sec`(5), `flee_distance_m`(12). 시간은 행동 시간(D10). `validate()` |
+| `NpcBehaviourState` (`behaviour`) | NPC 한 명의 행동 진행·소지품·한 일. 아래 "저장" |
+| `NpcBehaviours` (`NpcStage`, `behaviours`) | 행동 여섯의 규칙. 아래 |
+| `NpcBehaviourExecutor` (`NpcActionExecutor`) | P4-4의 실행기 계약(`begin`·`is_running`·`cancel`)을 `NpcBehaviours`로 넘기는 이음매. 결정 함수가 쥐고, 단계는 약한 참조로만 본다 |
+| `NpcSpotDefinition`의 새 필드 `stock_item_id`·`stock_units` | food 지점의 보관함에 월드마다 한 번 넣는 초기 식량(아래 "식량") |
+
+**연결(조립)**: `ServerComposition`에서 `NpcExecutor.install` 뒤에 `NpcBehaviours.install(npcs, config.npc_behaviour, npc_executor, config.catalog, StructureGrid, config.npc_spots, config.map_content)`, 이어서 결정 함수가 `NpcUtilityDecider`이고 아직 실행기가 없으면 `set_executor(npc_behaviours.action_executor())`. 단계 순서는 scheduler → threat_sensor → executor → behaviours다. `CompositionConfig.npc_behaviour`(`from_defaults()`가 읽고 `validate()`가 검사)가 **null이면 행동 계층을 넣지 않는다**: 결정 함수에 실행기가 없어 NPC는 아무것도 정하지 않고 서 있다(NPC의 행동이 아닌 것을 보는 테스트가 쓰는 스위치). 실행기를 직접 들고 만든 결정 함수(테스트의 가짜 실행기)는 그대로 둔다. 테스트용 결정 함수에 `on_behaviours_attached(behaviours)` 메서드가 있으면 단계를 넘겨 준다(`on_executor_attached`와 같은 방식).
+
+**실행기와의 접점**: `NpcExecutor`에 `set_listener(callable)`과 `tell_scheduler(npc_id, reason)`을 더했다. 듣는 쪽이 있으면 실행기의 보고(`action_arrived`·`action_done`·`action_failed_<code>`·`reservation_lost`)는 스케줄러가 아니라 듣는 쪽으로 간다. `NpcBehaviours`가 듣고, **자기가 시작한 행동의 NPC**는 아래 규칙대로 처리한 뒤 결정 계층에 알리고, 그 밖의 NPC(누가 실행기를 직접 부른 경우)의 보고는 그대로 스케줄러에 넘긴다.
+
+**행동 여섯**(`NpcActionDefinition.action_id`로 고른다. 다른 ID는 `unsupported_action`으로 거부)
+
+| 행동 | 어디로 | 거기서 | 끝 |
+|---|---|---|---|
+| `eat` | 음식을 들고 있으면 제자리. 아니면 food 지점(집 건물 것 먼저, 그다음 가까운 것. 비어 있다고 알려진 보관함은 건너뛴다) | 도착하면 그 타일의 보관함에서 음식 **한 단위**를 NPC 인벤토리로 `InventoryService.transfer_item`. `eat_duration_sec` 뒤 그 단위를 없애고(`remove_item`) 아이템 정의의 소비 효과(`consume_hunger_reduction`·`consume_thirst_reduction`)만큼 `NpcNeeds.satisfy` | `action_done`. 음식이 없으면 `no_resource` |
+| `drink` | 비어 있는 water 지점(집 건물 먼저) | `drink_duration_sec` 머문다. 물은 무한 | thirst를 `drink_thirst_reduction`만큼 `satisfy`, `action_done` |
+| `rest` | 비어 있는 bed 지점(집 타일에 가까운 것). 없으면 **제자리** | 도착하면 `NpcNeeds.set_activity(resting)`: fatigue가 달력 시간으로 내려간다(P4-2) | `rest_check_period_sec`마다 보고 fatigue ≤ `rest_until_fatigue`면 스스로 일어나 `action_done`. 결정 계층이 먼저 취소할 수 있다(도주 인터럽트, 더 급한 행동) |
+| `work` | 작업 건물의 work 지점 | `set_activity(working)`(fatigue가 빨리 오른다). 머무는 동안 `worked_usec`를 틱마다 더한다. 생산은 없다(Phase 6) | `work_shift_sec` 뒤 `action_done`(다음 결정이 다시 일을 고를 수 있다) |
+| `wander` | 집 타일(없으면 지금 자리)에서 `wander_radius_m` 안의 무작위 위치. NPC 자신의 난수 두 개 | `wander_linger_sec` 서 있는다 | `action_done`(`action_arrived`는 내지 않는다: 계약이 허용) |
+| `flee` | 결정 계층이 준 `target.threat_position`의 정반대로 `flee_distance_m`, 달려서 | 없음 | 도착하면 `action_done`(좀비가 아직 보이면 결정 계층이 다시 도주를 시작한다) |
+
+지점을 쓰는 행동은 실행기의 `begin_use_spot`(독점 지점은 걷는 동안부터 예약, 끝나면 해제)이고, 배회·도주는 `begin_move`다. 행동이 끝나면(완료·실패·취소) 욕구 모델의 활동은 `idle`로 돌아간다.
+
+**결정 계층이 듣는 것**(P4-4의 이름 그대로): `action_arrived`(그 자리에서 행동을 시작함: Navigate → Perform), `action_done`, `action_failed_<code>`. 코드는 `no_path`(실행기의 `path_not_found`·`path_blocked`), `target_gone`(그런 지점이 없음, 지점이 사라짐), `reserved`(자는 동안 지점을 빼앗김), `no_resource`(도착해 보니 음식이 없음). `begin`이 바로 돌려주는 거부 코드는 같은 코드와 `not_ready`(NPC가 깨어 있지 않음), `unsupported_action`이다. 취소는 아무것도 알리지 않는다.
+
+**이벤트(시그널)**: `behaviour_started(npc_id, action_id, info)`, `behaviour_finished(npc_id, action_id, info)`(먹기는 `item_definition_id`·`hunger`, 마시기는 `thirst`, 쉬기는 `fatigue`, 일하기는 `worked_usec`), `behaviour_failed(npc_id, action_id, code)`, `behaviour_cancelled(npc_id, action_id)`. 아직 듣는 쪽은 테스트뿐이다(기억·감정 기록은 Phase 5).
+
+**NPC 인벤토리(D2)**: NPC마다 `InventoryService`의 detached inventory 하나(보관함과 같은 종류, `inventory_slots`칸). 구성 요소가 메모리에 올라올 때(`on_attached`) 만들거나 저장된 ID·아이템으로 되살리고, 내려갈 때(`on_detached`) 돌려준다. 완전히 제거되는 NPC의 소지품은 게임에서 사라진다(ID 은퇴). 지금 들 수 있는 것은 먹으려고 꺼낸 음식 한 단위뿐이다: 먹는 도중 취소되면 그대로 들고 있다가 다음 `eat` 때 제자리에서 먹는다. 줍기·거래·절도는 없다.
+
+**식량**: NPC는 보관함을 "수색"하지 않는다(전리품 표를 굴리지 않고, 들어 있는 것만 본다). 개발 맵의 전리품만으로는 며칠을 못 먹으므로 food 지점에 초기 식량(`stock_item_id`·`stock_units`: 개발 맵은 집마다 `dev_food_ration` 20단위)을 적고, 그 지점에 NPC가 처음 먹으러 **도착했을 때 한 번** 그 타일의 보관함에 넣는다(월드마다 한 번: 넣은 지점 목록이 단계의 월드 문서). 보충은 없다. 맵 콘텐츠 파일은 바꾸지 않았다.
+
+**저장(D11)**
+
+```text
+components.behaviour = {schema_version: 1,
+  action_id, step: ""/"going"/"performing", timer_usec(-1 = 자기 타이머 없음), spot_id,
+  counts: {eat, drink, rest, work, wander, flee, failed, <action>_cut: 정수},
+  worked_usec, inventory_id, items: [ItemInstance.to_dict()]}
+systems.npc.stages.behaviours = {schema_version: 1, stocked: [spot_id]}
+```
+
+이 구성 요소의 수는 전부 정수(마이크로초·횟수)와 이름이다(아이템 문서는 인벤토리의 형식). `counts`는 완료한 행동, 실패(`failed`), 하던 중에 끊긴 행동(`<action>_cut`)의 횟수다. 걷기·예약은 `executor`, 고른 행동은 `decision` 구성 요소가 저장하므로, 복구 뒤 `is_running`은 저장 전과 같이 답하고 먹던 NPC는 남은 시간만큼 먹고 끝낸다. 저장된 행동이 실행기가 모르는 이동을 가리키면(다른 빌드의 저장) 그 행동은 `target_gone`으로 끝난다.
+
+**P4-7 행동 라벨**: `NpcDecisionComponent.label_of`가 이제 실제로 바뀐다(걷는 중 `walk`, 먹기·마시기 `eat`, 쉬기 `sleep`, 일하기 `work`, 도주 `flee`). `drink` 라벨은 프로토콜 변경이라 만들지 않았다(마시기는 `eat`로 보인다).
+
+**테스트**: `tests/unit/npc_behaviour_test.gd`(행동마다: 어디로 가는지, 보관함·인벤토리·욕구·활동의 변화, 보고와 이벤트, 실패, 구성 요소 문서의 텍스트 왕복과 거부, 재시작·셀 해제 뒤 소지품과 진행), `tests/unit/npc_behaviour_day_test.gd`(전용 서버와 같은 조립·개발 맵·개발 NPC 5명: 달력 하루 동안 지시 없이 먹고 마시고 쉬고 일함, 같은 seed 두 번의 결정·이벤트 일치, 저장 → 재시작 → 복구가 끊지 않은 실행과 일치, 일하던 NPC가 좀비를 보고 도주, 25명 비용 측정).

@@ -531,10 +531,12 @@ func test_a_decision_component_saves_what_it_holds_and_refuses_a_broken_document
 
 func test_without_an_executor_the_default_decider_decides_nothing() -> void:
 	# The composition's own decider (config.npc_decider null), the shipped
-	# actions and settings: until P4-5a gives it an executor, NPCs stand.
+	# actions and settings: without an executor NPCs stand. Since P4-5b the
+	# behaviour layer gives it one, so this composition has no such layer.
 	_settings = NpcDecisionSettings.load_or_default()
 	_catalog = NpcActionCatalog.load_directory()
 	var config: CompositionConfig = _config(null)
+	config.npc_behaviour = null
 	var world: ServerWorld = ServerComposition.create_world(WORLD, config)
 	(world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).set_store(WorldCellStore.new())
 	world.join("alice")

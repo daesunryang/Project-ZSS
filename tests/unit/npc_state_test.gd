@@ -137,6 +137,9 @@ func _definition(definition_id: String, display_name: String) -> NpcDefinition:
 
 func _config() -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# P4-5b: no behaviour layer here, so the NPCs decide nothing and stand
+	# still (what NPCs do is tested in npc_behaviour_test.gd).
+	config.npc_behaviour = null
 	# from_defaults() returns cached, shared resources: replace, never edit.
 	config.gameplay = GameplaySettings.new()
 	config.gameplay.world_half_extent_m = 50.0
@@ -201,6 +204,9 @@ func _late() -> NpcComponent:
 
 func test_the_shipped_dev_roster_is_five_valid_npcs_in_test_map_buildings() -> void:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# P4-5b: no behaviour layer here, so the NPCs decide nothing and stand
+	# still (what NPCs do is tested in npc_behaviour_test.gd).
+	config.npc_behaviour = null
 	assert_null(config.npc_roster, "tests and tools: no NPCs by default")
 	var roster: NpcRoster = NpcRoster.load_or_null()
 	assert_not_null(roster, "the dev roster ships")
@@ -262,6 +268,9 @@ func test_definition_and_roster_validation_refuses_bad_data() -> void:
 	# A roster must name definitions that exist, with home spots inside
 	# buildings of its map, one NPC per spot, and fit the population limit.
 	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# P4-5b: no behaviour layer here, so the NPCs decide nothing and stand
+	# still (what NPCs do is tested in npc_behaviour_test.gd).
+	config.npc_behaviour = null
 	var map: MapContentDefinition = MapContentDefinition.load_or_null()
 	var grid: StructureGrid = StructureGrid.new(config.building.grid_module_m)
 	var roster: NpcRoster = NpcRoster.new()

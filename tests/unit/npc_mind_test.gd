@@ -42,6 +42,9 @@ func _definition() -> NpcDefinition:
 
 func _config() -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# P4-5b: no behaviour layer here, so the NPCs decide nothing and stand
+	# still (what NPCs do is tested in npc_behaviour_test.gd).
+	config.npc_behaviour = null
 	config.gameplay = GameplaySettings.new()
 	config.gameplay.world_half_extent_m = 50.0
 	config.gameplay.player_spawn_position = SPAWN

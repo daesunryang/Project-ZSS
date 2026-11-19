@@ -34,6 +34,8 @@ extends NpcStage
 ##   "reservation_lost"      a spot reserved by hand was taken while this
 ##                           NPC slept (no action failed)
 ## A cancelled action tells nobody. last_outcome() keeps the last result.
+## With a listener (set_listener: the behaviour layer of P4-5b) these go to
+## the listener instead, which decides what the decision layer hears.
 ##
 ## Walking (D12): NPCs are points and pass through each other. Every tick a
 ## walking NPC takes ONE step towards its next waypoint, asks
@@ -146,6 +148,8 @@ var _spots: NpcSpotSet = null
 var _spot_positions: Dictionary[String, Vector3] = {}
 var _reservations: NpcReservations = NpcReservations.new()
 var _scheduler_ref: WeakRef = null
+## Optional: (npc_id, reason) is called instead of the scheduler.
+var _listener: Callable = Callable()
 var _npcs_ref: WeakRef = null
 var _world_ref: WeakRef = null
 ## Awake NPCs: npc_id -> its state.
@@ -191,6 +195,24 @@ static func install(npcs: NpcService, settings: NpcExecutorSettings, scheduler: 
 
 func stage_id() -> String:
 	return STAGE_ID
+
+
+## Who hears what the actions report (see the header) instead of the
+## scheduler: `listener.call(npc_id, reason)`. An invalid Callable gives the
+## reports back to the scheduler.
+func set_listener(listener: Callable) -> void:
+	_listener = listener
+
+
+## Asks the scheduler for a decision of `npc_id` with `reason`, as a report
+## without a listener would (the listener's way to pass a report on).
+func tell_scheduler(npc_id: String, reason: String) -> void:
+	var scheduler: NpcScheduler = _scheduler_ref.get_ref() as NpcScheduler if _scheduler_ref != null else null
+	if scheduler == null:
+		return
+	if not scheduler.request_interrupt(npc_id, reason):
+		dropped_interrupt_count += 1
+		GameLogger.warning("npc", "the scheduler did not take an action result", {"entity_id": npc_id, "reason": reason, "operation": "tell"})
 
 
 ## The failure code of an "action_failed_<code>" interrupt reason ("" for
@@ -786,7 +808,8 @@ func _arrive(world: ServerWorld, npc_id: String, state: NpcExecutorState) -> voi
 	state.timer_usec = state.use_usec
 	_mark_dirty(npc_id)
 	_tell(npc_id, INTERRUPT_ARRIVED)
-	if state.use_usec == 0:
+	# (Whoever was told may have cancelled the action.)
+	if state.phase == NpcExecutorState.PHASE_USING and state.use_usec == 0:
 		_finish(npc_id, state, NpcExecutorState.RESULT_DONE, "")
 
 
@@ -852,11 +875,10 @@ func _drop_reservation(npc_id: String, state: NpcExecutorState) -> void:
 	_mark_dirty(npc_id)
 
 
-## Asks the scheduler for a decision of `npc_id` in the next tick.
+## Reports `reason` about `npc_id`: to the listener, or else to the
+## scheduler (a decision in the next tick).
 func _tell(npc_id: String, reason: String) -> void:
-	var scheduler: NpcScheduler = _scheduler_ref.get_ref() as NpcScheduler if _scheduler_ref != null else null
-	if scheduler == null:
-		return
-	if not scheduler.request_interrupt(npc_id, reason):
-		dropped_interrupt_count += 1
-		GameLogger.warning("npc", "the scheduler did not take an action result", {"entity_id": npc_id, "reason": reason, "operation": "tell"})
+	if _listener.is_valid():
+		_listener.call(npc_id, reason)
+	else:
+		tell_scheduler(npc_id, reason)
