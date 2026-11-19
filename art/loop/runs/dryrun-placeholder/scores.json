@@ -1,0 +1,29 @@
+{
+	"decision": {
+		"best_round": 0,
+		"details": [],
+		"reasons": [],
+		"rounds_done": 1,
+		"status": "score_pending"
+	},
+	"job": "dryrun-placeholder",
+	"rounds": [
+		{
+			"at": "2026-11-19 10:19:19",
+			"metrics": {
+				"colors_exact": 3082,
+				"colors_quantized": 63,
+				"halo_px": 0,
+				"line_breaks": 0,
+				"specks": 2
+			},
+			"reviews": [],
+			"round": 1,
+			"scores": null,
+			"signature": "placeholder_view.png 1280x720",
+			"snapshots": [
+				"placeholder_view.png"
+			]
+		}
+	]
+}

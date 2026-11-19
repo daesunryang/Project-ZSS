@@ -1,0 +1,43 @@
+{
+	"schema_version": 1,
+	"loop": {
+		"max_rounds": 5,
+		"patience_rounds": 2,
+		"min_improvement": 0.25,
+		"reviewers": 2,
+		"score_min": 1,
+		"score_max": 5,
+		"criteria": ["ai_look", "style_fit"]
+	},
+	"metrics": {
+		"specks": {
+			"join_tolerance": 24,
+			"max_px": 6,
+			"min_contrast": 48,
+			"ring_max_spread": 16
+		},
+		"line_breaks": {
+			"dark_max_luma": 80,
+			"min_alpha": 128,
+			"thinning_passes": 3,
+			"gap_max_px": 6,
+			"min_stroke_px": 6,
+			"direction_walk_px": 4,
+			"min_alignment": 0.5
+		},
+		"halo": {
+			"transparent_max_alpha": 8,
+			"opaque_min_alpha": 247,
+			"radius_px": 2,
+			"min_color_diff": 48
+		},
+		"colors": {
+			"quantize_bits": 4
+		}
+	},
+	"regression": {
+		"specks": {"abs": 2, "rel": 0.1},
+		"line_breaks": {"abs": 1, "rel": 0.1},
+		"halo_px": {"abs": 4, "rel": 0.1}
+	}
+}
