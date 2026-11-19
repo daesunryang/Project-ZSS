@@ -115,5 +115,9 @@
 - **검사는 한 번에 하나**: 실제 프로세스를 띄우는 검사(스모크, 강제 종료 점검, 측정)는 동시에 돌리지 않는다. 같은 PC에서 다른 프로젝트의 Godot이 돌면 측정값이 몇 배로 뛸 수 있다.
 - **테스트와 시간**: 테스트 결과는 실제 시간·프레임 수에 기대지 않는다(docs/12 §1.1). 측정 테스트의 실제 시간 상한은 `assert_time_bound`로 건다(기본은 경고, `ZSS_STRICT_TIMING=1`이면 실패).
 - **Godot API 확인**: 낯선 엔진 API는 Godot 4.7 공식 문서(context7 `/websites/godotengine_en/4.7`)로 확인한다.
-- **이 PC의 도구**: Python은 Windows 스토어 바로가기뿐이라 쓰지 않는다. 스크립트는 bash, Godot 스크립트, Node.js로 쓴다.
+- **실행 환경**: 사용자의 Windows PC(Git Bash, `GODOT`를 Windows 경로로 지정, Python은 스토어 바로가기뿐이라 쓰지 않음)와 클라우드 세션(Ubuntu, `tools/cloud/setup_godot.sh`로 Godot을 기본 경로에 설치하면 `GODOT` 없이 동작) 두 곳에서 일한다. 스크립트는 두 곳 모두에서 도는 bash, Godot 스크립트, Node.js로 쓴다. 화면·GPU가 필요한 일(실제 창 캡처, FPS 측정)은 Windows PC에서만 한다. 클라우드 안내는 `docs/20_cloud_work.md`.
+- **부분 테스트**: Godot을 직접 부르지 말고 `tools/run_tests.sh --filter=<이름>`을 쓴다. 이 스크립트가 먼저 import를 해서, 클래스 캐시가 낡았을 때의 "not declared" 로드 오류를 막는다.
+- **병렬 작업 함정**: 각자 통과한 브랜치도 합치면 깨질 수 있으니 main 위로 옮긴 뒤 다시 검사한다. 문서(`docs/09`·`13`·`15`)와 조립 파일(`composition_config.gd`, `server_composition.gd`)은 거의 매번 충돌하므로, 작업마다 절 번호와 PROVISIONAL 번호 범위를 미리 나눠 준다. `BuildInfo.PROTOCOL_VERSION`은 동시에 진행하는 브랜치 중 한쪽만 올리고, 나머지는 병합할 때 올린다.
+- **테스트의 공유 설정**: `CompositionConfig.from_defaults()`가 주는 설정은 캐시된 공유 Resource다. 테스트에서 직접 바꾸면 다른 테스트로 샌다. `XxxSettings.new()`나 `duplicate()`를 쓴다.
+- **이어지는 작업 묶기**: 서로 이어지는 티켓 여럿은 에이전트 하나에 worktree 하나를 주고 "티켓마다 커밋 하나, 매번 check.sh"로 차례로 시키면 충돌이 적다. 그래도 조정자가 check.sh를 다시 돌린 뒤 병합한다.
 - **보고**: 단계마다 한국어로, 구현한 것, 바뀐 파일, 실제로 돌린 검사와 결과, 확인하지 못한 것, 다음 작업을 쓴다(§11). 실패하거나 건너뛴 것도 그대로 적는다.
