@@ -174,7 +174,7 @@ func _write_snapshot(snapshot: Dictionary) -> Dictionary:
 	# every file costs several disk operations (docs/15 P3-021).
 	var texts: Dictionary[String, String] = {}
 	for rel_path: String in documents:
-		var text: String = JSON.stringify(documents[rel_path], JSON_INDENT, true)
+		var text: String = JSON.stringify(documents[rel_path], JSON_INDENT, true, true)
 		var is_cell: bool = rel_path.begins_with(CELLS_DIR + "/")
 		if not (is_cell and old_files.has(rel_path) and _read_text(base.path_join(rel_path)) == text):
 			texts[rel_path] = text
@@ -231,7 +231,7 @@ func _write_snapshot(snapshot: Dictionary) -> Dictionary:
 		"game_version": str(snapshot["game_version"]),
 		"files": Array(files),
 	}
-	var manifest_text: String = JSON.stringify(manifest, JSON_INDENT, true)
+	var manifest_text: String = JSON.stringify(manifest, JSON_INDENT, true, true)
 	var manifest_tmp: String = base.path_join(MANIFEST_FILE + TMP_SUFFIX)
 	if not _write_text(manifest_tmp, manifest_text) or DirAccess.rename_absolute(manifest_tmp, base.path_join(MANIFEST_FILE)) != OK:
 		return _write_failure("manifest write failed", ERR_FILE_CANT_WRITE)

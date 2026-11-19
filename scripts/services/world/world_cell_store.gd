@@ -37,6 +37,14 @@ func load_cell(cell_id: String) -> Dictionary:
 	return {KEY_ERROR: OK, KEY_DOCUMENT: document.duplicate(true)}
 
 
+## A JSON round trip of `document`, as a save file would give it back, with
+## floats at full precision: the default 14 significant digits made a
+## released cell come back with slightly different numbers, enough for an
+## NPC to decide differently at a need threshold (P4-4).
+static func json_copy(document: Dictionary) -> Variant:
+	return JSON.parse_string(JSON.stringify(document, "", false, true))
+
+
 ## Saves these cells of `world` (they are in memory) so that they can be
 ## released. All or nothing: on an error no saved document changed.
 func save_cells(world: ServerWorld, cell_ids: PackedStringArray) -> Error:
@@ -46,7 +54,7 @@ func save_cells(world: ServerWorld, cell_ids: PackedStringArray) -> Error:
 		if not SaveService.is_json_safe(document):
 			GameLogger.error("cells", "cell document contains non-JSON values", {"world_id": world.world_id, "cell_id": cell_id, "operation": "save_cells"})
 			return ERR_INVALID_DATA
-		var copy: Variant = JSON.parse_string(JSON.stringify(document))
+		var copy: Variant = json_copy(document)
 		if typeof(copy) != TYPE_DICTIONARY:
 			return ERR_INVALID_DATA
 		saved[cell_id] = copy as Dictionary

@@ -45,6 +45,36 @@ func test_save_then_load_in_new_service_instance() -> void:
 	assert_eq((loaded["warnings"] as PackedStringArray).size(), 0)
 
 
+## Floats must come back bit-for-bit (P4-4 found that 14 significant digits
+## changed an NPC decision at a need threshold after a restore). Godot 4.7.2's
+## JSON parser still reads numbers written in exponent form (|x| < 1e-4 or
+## very large, e.g. 3.3333333333333334e-13) back inexactly, so the samples are
+## plain-decimal values like the game's times, needs and positions.
+const PRECISION_SAMPLES: Array[float] = [1.0 / 3.0, 0.1 + 0.2, 123456.789012345678, -2.0 / 7.0e-5, 2.0 / 3.0 * 100.0]
+
+
+func test_saved_floats_come_back_exactly() -> void:
+	var world_doc: Dictionary = {"schema_version": SaveMigrations.WORLD_SCHEMA_VERSION, "world_id": WORLD, "samples": PRECISION_SAMPLES.duplicate()}
+	var cells: Dictionary = {"cell_0_0": WorldCellDocument.create("cell_0_0", {}, {"samples": PRECISION_SAMPLES.duplicate()})}
+	assert_eq(SaveService.new(_root).save_world(WORLD, world_doc, {}, cells), OK)
+	var service: SaveService = SaveService.new(_root)
+	var loaded: Dictionary = service.load_world(WORLD)
+	assert_eq(loaded["error"], OK)
+	var cell: Dictionary = service.load_cell(WORLD, "cell_0_0")
+	assert_eq(cell["error"], OK)
+	var world_samples: Array = (loaded["world_state"] as Dictionary)["samples"]
+	var cell_samples: Array = ((cell["document"] as Dictionary)[WorldCellDocument.KEY_SYSTEMS] as Dictionary)["samples"]
+	for index: int in range(PRECISION_SAMPLES.size()):
+		assert_true(float(world_samples[index]) == PRECISION_SAMPLES[index], "world float %d exact" % index)
+		assert_true(float(cell_samples[index]) == PRECISION_SAMPLES[index], "cell float %d exact" % index)
+
+
+func test_released_cell_copy_keeps_floats_exactly() -> void:
+	var copy: Dictionary = WorldCellStore.json_copy({"samples": PRECISION_SAMPLES.duplicate()}) as Dictionary
+	for index: int in range(PRECISION_SAMPLES.size()):
+		assert_true(float((copy["samples"] as Array)[index]) == PRECISION_SAMPLES[index], "released float %d exact" % index)
+
+
 func test_missing_save_reports_not_found() -> void:
 	assert_eq(SaveService.new(_root).load_world(WORLD)["error"], ERR_FILE_NOT_FOUND)
 
