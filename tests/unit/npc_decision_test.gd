@@ -763,6 +763,82 @@ func test_an_action_is_not_replaced_before_its_minimum_duration() -> void:
 	assert_eq(_stub.begun.size(), 2)
 
 
+## P4-Z (docs/15 P4-172): the rest was only ever a nap, because its own
+## precondition (min_need_urgency) ended it as soon as the fatigue fell
+## below the level that had started it.
+func test_an_action_that_runs_until_done_outlives_its_own_precondition() -> void:
+	var nap: NpcActionDefinition = _need_action("nap", NpcNeedKind.FATIGUE)
+	nap.min_need_urgency = 0.3
+	_add(nap)
+	_add(_action("idle_work", 0.2))
+	var flee: NpcActionDefinition = _action(FLEE, 1.0)
+	flee.selectable = false
+	_add(flee)
+	# Without the flag (every other action): the nap ends once the need that
+	# started it is below its minimum.
+	var started: Dictionary = _start()
+	var world: ServerWorld = started["world"]
+	var npc_id: String = started["id"]
+	_set_needs(world, npc_id, 0.0, 0.0, 0.8)
+	assert_eq(_decide_now(world, npc_id)[NpcUtilityDecider.KEY_CHOSEN], "nap")
+	_report(world, npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	_set_needs(world, npc_id, 0.0, 0.0, 0.29)
+	var record: Dictionary = _decide_now(world, npc_id)
+	assert_eq(record[NpcUtilityDecider.KEY_OUTCOME], NpcUtilityDecider.OUTCOME_SWITCHED, "the default: its precondition is looked at while it runs")
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], "idle_work")
+	assert_eq(_rejection(record, "nap"), NpcUtilityDecider.REJECT_NEED_LOW)
+	# With the flag: it goes on, whatever the need and the other candidates.
+	nap.runs_until_done = true
+	started = _start()
+	world = started["world"]
+	npc_id = started["id"]
+	var state: NpcDecisionComponent = _state(world, npc_id)
+	_set_needs(world, npc_id, 0.0, 0.0, 0.8)
+	assert_eq(_decide_now(world, npc_id)[NpcUtilityDecider.KEY_CHOSEN], "nap")
+	_report(world, npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	_set_needs(world, npc_id, 0.0, 0.0, 0.06)
+	record = _decide_now(world, npc_id)
+	assert_eq(record[NpcUtilityDecider.KEY_OUTCOME], NpcUtilityDecider.OUTCOME_UNTIL_DONE)
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], "nap")
+	assert_eq(_path(record), "perform", "the candidates were not looked at")
+	assert_eq((record[NpcUtilityDecider.KEY_CANDIDATES] as Array).size(), 0)
+	_run(world, 200)
+	assert_eq(state.action_id, "nap", "ten seconds of turns later it still runs")
+	assert_eq(state.state, NpcDecisionState.PERFORM)
+	assert_eq(_stub.cancelled.size(), 0)
+	# Another need in the danger category: the ordinary choice decides again
+	# (the nap's own precondition fails, so something else is started).
+	_set_needs(world, npc_id, 0.0, 0.76, 0.06)
+	record = _decide_now(world, npc_id)
+	assert_eq(record[NpcUtilityDecider.KEY_OUTCOME], NpcUtilityDecider.OUTCOME_SWITCHED, "thirst in danger wakes it")
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], "idle_work")
+	assert_eq(_stub.cancelled.size(), 1)
+	# Its own need in the danger category does not (that is what it is for).
+	_set_needs(world, npc_id, 0.0, 0.0, 0.9)
+	_run(world, 40)
+	assert_eq(state.action_id, "nap", "test setup: it naps again")
+	_set_needs(world, npc_id, 0.0, 0.0, 0.76)
+	assert_eq(_decide_now(world, npc_id)[NpcUtilityDecider.KEY_OUTCOME], NpcUtilityDecider.OUTCOME_UNTIL_DONE)
+	# The executor's report ends it.
+	_set_needs(world, npc_id, 0.0, 0.0, 0.0)
+	record = _report(world, npc_id, NpcActionExecutor.REPORT_DONE)
+	assert_eq(record[NpcUtilityDecider.KEY_COMPLETED], "nap")
+	assert_ne(state.action_id, "nap")
+	# And so does a zombie it sees (the hard interrupt is before the choice).
+	_set_needs(world, npc_id, 0.0, 0.0, 0.9)
+	_run(world, 40)
+	assert_eq(state.action_id, "nap", "test setup: it naps once more")
+	_set_needs(world, npc_id, 0.0, 0.0, 0.06)
+	_spawn_zombie(world, Vector3(2.5, 0.0, 12.5))
+	_run(world, 12)
+	assert_eq(state.action_id, FLEE, "a visible zombie ends the nap")
+	assert_eq(state.last_record()[NpcUtilityDecider.KEY_HARD_INTERRUPT], NpcUtilityDecider.HARD_THREAT)
+	# The shipped rest is such an action; nothing else is.
+	var shipped: NpcActionCatalog = NpcActionCatalog.load_directory()
+	for action_id: String in shipped.action_ids():
+		assert_eq(shipped.get_action(action_id).runs_until_done, action_id == REST, "shipped %s" % action_id)
+
+
 func test_an_npc_without_a_candidate_falls_back_or_stands_idle() -> void:
 	# No candidate at or above the minimum score, no fallback: idle.
 	_settings.min_action_score = 0.2

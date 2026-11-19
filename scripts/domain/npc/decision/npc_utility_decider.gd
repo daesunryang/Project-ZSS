@@ -16,7 +16,10 @@ extends NpcDecider
 ##      action is on its retry cooldown.
 ##   4. Recover: until its cooldown is over nothing is chosen.
 ##   5. Minimum duration: a running action that started less than its
-##      min_duration ago is kept without looking at the candidates.
+##      min_duration ago is kept without looking at the candidates. So is,
+##      for as long as it runs, an action with `runs_until_done` (the
+##      rest): only the executor's report, a hard interrupt, or another
+##      need of the NPC in the DANGER category ends it (docs/15 P4-172).
 ##   6. Utility choice (NpcUtilityScorer): every action whose preconditions
 ##      hold is scored; the best one at or above `min_action_score` is
 ##      started, or kept when it is the running one (which has the
@@ -70,6 +73,8 @@ const OUTCOME_STARTED: String = "started"
 const OUTCOME_SWITCHED: String = "switched"
 const OUTCOME_KEPT: String = "kept"
 const OUTCOME_MIN_DURATION: String = "min_duration"
+## The running action has `runs_until_done` and nothing ends it yet.
+const OUTCOME_UNTIL_DONE: String = "until_done"
 const OUTCOME_RECOVERING: String = "recovering"
 const OUTCOME_NOTHING: String = "nothing"
 const OUTCOME_FAILED: String = "failed"
@@ -308,6 +313,13 @@ func _choose(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcDeci
 		record[KEY_CHOSEN] = current.action_id
 		record[KEY_OUTCOME] = OUTCOME_MIN_DURATION
 		return
+	if current != null and current.runs_until_done and not _other_need_in_danger(needs, current.need_kind):
+		# It goes on until the executor says it is over: its own preconditions
+		# (the need that started it has dropped) and the other candidates are
+		# not looked at. No number is drawn, as in the minimum duration.
+		record[KEY_CHOSEN] = current.action_id
+		record[KEY_OUTCOME] = OUTCOME_UNTIL_DONE
+		return
 	var origin: String = state.state
 	_move(state, NpcDecisionState.EVALUATE, record)
 	var definition: NpcDefinition = npcs.definition_of(npc.npc_id)
@@ -479,6 +491,17 @@ func _relationship_context(_npc: NpcState, _action: NpcActionDefinition) -> floa
 ## Phase 5 (docs/05 §9.2 memory_context): 0 until memories do.
 func _memory_context(_npc: NpcState, _action: NpcActionDefinition) -> float:
 	return 0.0
+
+
+## True when a simulated need other than `own_kind` is in the DANGER
+## category: what ends an action that otherwise runs until it is done.
+func _other_need_in_danger(needs: NpcNeeds, own_kind: String) -> bool:
+	if needs == null:
+		return false
+	for kind: String in NpcNeedKind.SIMULATED_KINDS:
+		if kind != own_kind and needs.value(kind) + NEED_VALUE_EPSILON >= _need_settings.danger_threshold:
+			return true
+	return false
 
 
 func _flee_action() -> NpcActionDefinition:

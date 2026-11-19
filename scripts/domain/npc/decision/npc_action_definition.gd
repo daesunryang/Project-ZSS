@@ -73,6 +73,16 @@ const ID_MAX_LENGTH: int = 32
 ## category (docs/13 §16.3 D3: "업무 거부").
 @export var blocked_by_danger_need: bool = false
 
+@export_group("Keeping")
+## True: once started, the utility choice neither replaces nor stops the
+## action for as long as it runs: its preconditions (min_need_urgency) and
+## the other candidates are not looked at again. It ends when the executor
+## reports it done or failed, when a hard interrupt takes over, or when a
+## simulated need other than `need_kind` reaches the DANGER category (then
+## the ordinary choice decides). False (the default): the action is
+## weighed against the others at every decision after min_duration_sec.
+@export var runs_until_done: bool = false
+
 @export_group("Timing (action time, real seconds; -1 = the settings' default)")
 ## Once started, the utility choice does not replace the action before this
 ## time has passed (hard interrupts and the executor's reports still do).
