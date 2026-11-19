@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="NpcNeedSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/needs/npc_need_settings.gd" id="1_npc_needs"]
+
+[resource]
+script = ExtResource("1_npc_needs")
+defined_kinds = PackedStringArray("hunger", "thirst", "fatigue", "warmth", "hygiene", "companionship", "belonging", "intimacy", "family_contact", "autonomy", "competence", "purpose", "recreation")
+need_max = 100.0
+caution_threshold = 40.0
+danger_threshold = 75.0
+hunger_hours_to_max = 48.0
+thirst_hours_to_max = 24.0
+fatigue_hours_to_max = 18.0
+rest_fatigue_hours_from_max = 3.2
+working_fatigue_rate_multiplier = 1.5
+default_personality_modifier = 1.0
+default_ability_modifier = 1.0

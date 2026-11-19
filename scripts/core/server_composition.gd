@@ -89,6 +89,8 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	var npcs: NpcService = NpcService.new(config.npc, config.npc_definitions, config.npc_roster, config.map_content, StructureGrid.new(config.building.grid_module_m), world.ids, world.registry, world.clock)
 	if world.register_system(npcs) != OK:
 		return null
+	if npcs.register_component(NpcNeeds.COMPONENT_ID, NpcNeeds.create.bind(config.npc_needs)) != OK:
+		return null
 	# P2-T16: trades between two players. Last, so its step sees what this
 	# tick did to its parties (a death, a rest, a move). It is told about
 	# every inventory transaction, to keep offers backed by what is carried.

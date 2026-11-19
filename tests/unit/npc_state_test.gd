@@ -499,7 +499,20 @@ func test_components_are_created_saved_and_restored_with_their_npc() -> void:
 	assert_eq(counter.created_for, "%s/%s" % [nurse_id, NURSE])
 	assert_eq(counter.created_at_world_time, world.clock.world_time_sec)
 	assert_eq(counter.attached, 1)
-	assert_eq(nurse.component_ids(), PackedStringArray([COUNTER]))
+	# The composition registers its own components (P4-2 needs, and later
+	# tickets more); compare with an NPC of a world built the same way but
+	# without the test component, so the list stays exact.
+	var plain_world: ServerWorld = _world()
+	plain_world.join("alice")
+	_run(plain_world, 2.0)
+	var plain_id: String = _spawn(plain_world, NURSE, BESIDE)
+	var expected: Array = Array(_npcs(plain_world).get_npc(plain_id).component_ids())
+	assert_false(expected.has(COUNTER))
+	expected.append(COUNTER)
+	expected.sort()
+	var actual: Array = Array(nurse.component_ids())
+	actual.sort()
+	assert_eq(actual, expected)
 	assert_null(nurse.component("t41_nothing"))
 	counter.value = 31
 	var document: Dictionary = _json(service.npc_document(nurse_id))

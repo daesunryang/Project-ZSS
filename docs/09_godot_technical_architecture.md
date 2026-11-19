@@ -2569,3 +2569,42 @@ Phase 4(docs/13 §6, §16) 티켓의 계약을 티켓마다 한 절씩 적는다
 - P4-3(스케줄러): `NpcStage` 하나. 깨어난 NPC를 `on_npc_woke`에서 버킷에 넣고 `on_npc_slept`에서 뺀다. 다음 결정 시각 같은 NPC별 값은 구성 요소에, 버킷 위상 같은 전역 값은 단계의 월드 문서에 둔다. LOD는 `set_simulation_tier`로 적는다(깨어 있는 NPC의 기본은 `near`).
 - P4-5a(실행기): 한 걸음마다 `resolve_movement("npc", from, to)` 뒤 `set_npc_transform`. false면 그 걸음은 없던 것이다. 이동자 종류 `npc`는 지금 벽 앞에서 멈추기만 한다(벽을 따라 미끄러지려면 `BuildingSettings.sliding_mover_kinds`에 더한다).
 - P4-7(복제): `npc_entered`/`npc_left`/`npc_woke`/`npc_slept`와 `npc_ids_in_cell`, `get_npc`, `definition_of`로 공개 행을 만든다. `NpcState`의 구성 요소는 공개 대상이 아니다(D9).
+
+### 17.2 NPC 욕구 모델(P4-2, component id `needs`)
+
+`scripts/domain/npc/needs/`의 노드 없는 모델이다. `NpcState`·`NpcService`·`NpcComponent` 계약은 바꾸지 않았고, `ServerComposition`이 `NpcService`를 등록한 직후 `NpcNeeds` factory를 `register_component`한다. NPC 한 명마다 `NpcNeeds` 인스턴스 하나가 생기고 NPC와 같은 셀 문서에 저장된다. 네트워크 전송과 클라이언트 표시는 없다(D9).
+
+**정의와 설정**
+
+- `NpcNeedKind`: 변화하는 욕구 `hunger`·`thirst`·`fatigue`, 활동 `idle`·`resting`·`working`, 범주 `normal`·`caution`·`danger`의 안정적인 ID를 정의한다. `warmth`·`hygiene`와 사회 욕구(`companionship`·`belonging`·`intimacy`·`family_contact`), 자율·성취 욕구(`autonomy`·`competence`·`purpose`·`recreation`)도 정의 ID는 있지만 Phase 4 변화율은 0이다(D13). 안전은 저장 욕구가 아니라 보이는 위협에서 얻는 파생 값이고, 의료 욕구는 건강 시스템이 정해지기 전에는 넣지 않는다.
+- `NpcNeedSettings`(`data/tuning/npc_need_settings.tres`): 최대값, 범주 경계, 세 욕구의 달력 시간 변화율, 휴식 회복률, 업무 중 피로 배율, 기본 성격·능력 modifier를 가진다. `CompositionConfig.npc_needs`가 조립에 주입한다. 모든 수치는 docs/15 §17.2의 PROVISIONAL이다.
+- 값의 방향은 플레이어 생존 욕구와 같다: 0이 충족, `need_max`가 최악이다. 새 NPC의 세 값은 모두 0이다.
+
+**구간 적분과 활동**
+
+- 매 틱 모든 NPC를 갱신하는 단계는 없다. 스케줄러/결정 코드가 필요할 때 `advance_to(world_time) -> next_boundary_world_time`을 부른다. 입력과 저장 기준은 ADR-006의 달력 초이며, 과거 시각·비유한 시각은 상태를 바꾸지 않고 `INF`를 돌려주며 NPC ID와 작업 이름을 로그에 남긴다.
+- 한 활동과 modifier가 유지되는 구간의 시작 시각·시작값을 보존하고, 매 평가를 그 원점에서 절대 시각으로 투영한다. 그래서 같은 구간을 1초마다 평가한 결과와 10초마다 평가한 결과가 값뿐 아니라 저장 문서까지 같다. 활동이나 modifier를 바꾸기 전에는 옛 비율로 전환 시각까지 먼저 적분하고 새 구간을 시작한다.
+- `idle`: 세 욕구가 기본 비율로 증가한다. `resting`: hunger·thirst는 계속 기본 비율로 증가하고 fatigue는 감소한다. `working`: hunger·thirst는 기본 비율, fatigue는 설정 배율만큼 빠르게 증가한다.
+- 성격·능력 modifier는 NPC별 두 값의 곱으로 모든 활성 변화율에 적용한다. P4-2 기본값은 각각 1.0이라 실제 성격·능력 효과는 없다(docs/16 B). `set_rate_modifiers(personality, ability, world_time)`가 미래 결합 자리다.
+- `next_category_boundary_world_time()`은 현재 활동과 modifier가 이어질 때 세 활성 욕구 가운데 가장 먼저 만날 범주 경계의 **절대 달력 시각**을 돌려준다. 더 만날 경계가 없으면 `INF`. 증가할 때 경계값은 새 범주의 시작(`>=`)이다. 감소할 때는 포함 경계 바로 아래가 새 범주이므로 값 단위 `0.000001` 뒤를 예약해 같은 시각을 반복 반환하지 않는다.
+
+**공개 API**
+
+| 함수 | 계약 |
+|---|---|
+| `value(kind) -> float`, `category(kind)` | 활성 세 욕구의 값/범주. 정의만 있는 0-rate 욕구는 값 0, `normal`이고 `is_simulated(kind)`가 false다 |
+| `advance_to(world_time) -> float` | 해당 절대 달력 시각까지 적분하고 다음 범주 경계 시각을 반환한다 |
+| `set_activity(activity, world_time) -> ActionResult` | 이전 활동을 전환 시각까지 적분한 뒤 `idle`/`resting`/`working`으로 바꾼다 |
+| `set_rate_modifiers(personality, ability, world_time) -> ActionResult` | 이전 비율을 전환 시각까지 적분한 뒤 두 modifier를 바꾼다 |
+| `satisfy(kind, amount, source) -> ActionResult` | 붙어 있는 월드의 현재 달력 시각까지 먼저 적분하고 활성 욕구 하나를 0 아래로 가지 않게 줄인다. 성공 event에 `npc_id`, `need`, `source`, 요청량·실제 적용량·새 값·범주·달력 시각을 담는다 |
+| `next_category_boundary_world_time() -> float` | 현재 상태에서 다음 평가를 예약할 수 있는 절대 달력 시각 |
+
+`satisfy`는 활성 세 욕구만 받는다. 양은 유한한 양수, source는 공백이 아닌 1~128자다. 이미 0인 욕구도 성공하되 `applied_amount = 0`이며 아이템 소비 여부는 이 API 바깥 행동의 서버 규칙이 정한다. source는 사건 근거로만 돌려주고 욕구 문서에는 저장하지 않는다.
+
+**저장**
+
+구성 요소 문서 schema 1: `{schema_version, values: {hunger, thirst, fatigue}, activity, personality_modifier, ability_modifier, last_updated_world_time, rate_segment_started_world_time, rate_segment_start_values: {hunger, thirst, fatigue}, rate_segment_rates_per_world_sec: {hunger, thirst, fatigue}}`. `last_updated_world_time`은 마지막 평가 시각이고 `rate_segment_*`가 주기 독립 적분의 실제 원점이다. 복구는 값 범위, 활동, modifier, 두 시각의 순서와 “저장된 구간 원점·비율로 계산한 값 = 저장된 현재값”을 먼저 검증한다. 하나라도 틀리면 P4-1 계약대로 그 문서의 NPC를 로딩하지 않는다. 비율도 구간에 저장하므로 튜닝 파일의 수치가 바뀌어도 기존 저장은 깨지지 않고 이미 시작된 구간의 과거도 다시 쓰이지 않는다. 새 설정 비율은 다음 활동/modifier 전환부터 적용된다.
+
+`advance_to`, 활동/modifier 전환, 실제 `satisfy`로 저장 문서가 바뀌면 붙어 있는 `NpcService.mark_npc_dirty(npc_id)`를 부른다. 이 호출은 셀 저장 캐시의 revision을 올려 강제 종료 복구에서 변화가 빠지지 않게 한다.
+
+**테스트**: `tests/unit/npc_needs_test.gd`가 출하 설정/0-rate 정의, 조립 등록과 처음 값, 1초 대 10초 적분·저장 문서 동일성, 휴식/업무 비율, 다음 경계 절대 시각, `satisfy` 검증·event·dirty 표시, JSON-safe 저장/복구와 잘못된 구성 요소 문서의 원자적 거부를 검사한다.
