@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="NpcDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/npc_definition.gd" id="1_npc"]
+
+[resource]
+script = ExtResource("1_npc")
+definition_id = "dev_npc_jiho"
+display_name = "민지호"
+appearance = {
+"body_type": "slim",
+"bottom_color": "denim",
+"hair_color": "brown",
+"hair_style": "medium",
+"height": "tall",
+"skin_tone": "tone_3",
+"top_color": "yellow"
+}
+age_group = "young_adult"
+background_tags = PackedStringArray("student", "courier")
+extraversion = 0.8
+agreeableness = 0.6
+conscientiousness = 0.35
+openness = 0.85
+neuroticism = 0.5
+impulsivity = 0.7
+self_interest = 0.45
+courage = 0.5
+jealousy_proneness = 0.55
+animal_affinity = 0.5
+risk_tolerance = 0.75
+skill_combat = 0.25
+skill_medical = 0.05
+skill_farming = 0.05
+skill_cooking = 0.15
+skill_construction = 0.1
+skill_maintenance = 0.3
+skill_crafting = 0.2
+skill_social = 0.7
+job_role = "gathering"
+home_building_id = "house_c"
+home_tile_offset = Vector2i(2, 2)
+work_building_id = "store"
+work_tile_offset = Vector2i(2, 2)

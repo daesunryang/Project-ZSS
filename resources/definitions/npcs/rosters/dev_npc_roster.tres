@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="NpcRoster" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/npc_roster.gd" id="1_roster"]
+
+[resource]
+script = ExtResource("1_roster")
+roster_id = "dev_npc_roster"
+content_version = 1
+map_id = "dev_test_map"
+npc_definition_ids = PackedStringArray("dev_npc_seoyun", "dev_npc_taesik", "dev_npc_jiho", "dev_npc_malsun", "dev_npc_dohyun")

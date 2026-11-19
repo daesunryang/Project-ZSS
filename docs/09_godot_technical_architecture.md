@@ -2485,3 +2485,87 @@ P3-3과 합친 뒤의 규칙: 건축 HUD(`%BuildLabel`)는 보관함 HUD(`%Conta
 `NetworkSettings.compression_mode`는 `NONE/RANGE_CODER/FASTLZ/ZLIB/ZSTD`만 허용하고 기본값은 FASTLZ다. `NetworkService`는 서버와 클라이언트 모두 ENet peer 생성 직후 호스트에 같은 모드를 설정한다. 모드가 다르면 handshake 이전에 연결이 실패하므로 클라이언트의 연결 시작 로그가 자기 모드와 공통 설정 조건을 명시하고, 뒤이어 일반 연결 실패 로그가 남는다. 전선 payload는 바뀌지 않아 프로토콜 버전은 15 그대로다.
 
 회귀 테스트는 아이템·보관함·구조물의 배치 개수와 add/move/remove 변환, 거리 제한 라벨, 관심 셀 이동 때 좀비/아이템의 추가·제거, 동일 압축 접속과 다른 압축 미접속을 검사한다. 측정 방법과 값은 docs/15 §16.2에 기록했다.
+
+## 17. Phase 4 구현 현황
+
+Phase 4(docs/13 §6, §16) 티켓의 계약을 티켓마다 한 절씩 적는다. 임시 수치와 확인하지 못한 것은 docs/15 §17, 결정이 필요한 것의 기본값은 docs/13 §16.3(D1~D13)이다.
+
+### 17.1 NPC 정체성·정적 정의·고유 ID·셀 저장(P4-1, system id `npc`)
+
+서버 쪽 기반이다. NPC는 아직 **생각하지도 움직이지도 않는다**(스케줄러 P4-3, 행동 선택 P4-4, 실행 P4-5a). 클라이언트 복제는 P4-7이라 지금은 클라이언트에 아무것도 가지 않는다. `PROTOCOL_VERSION`은 바꾸지 않았다(새 RPC·새 메시지가 없다). 이 절이 docs/10 §3의 `npcs/<npc_id>.json` 배치보다 우선한다: NPC는 좀비·보관함처럼 **서 있는 셀의 문서**에 저장한다.
+
+**정의와 설정(`scripts/domain/npc/`, 노드 없음)**
+
+| 구성 요소 | 계약 |
+|---|---|
+| `NpcDefinition` (`resources/definitions/npcs/*.tres`) | `definition_id`(snake_case, 저장됨), `display_name`(1~32자), `appearance`(`{slot_id: option_id}`, 플레이어 캐릭터와 같은 `AppearanceCatalog` 선택), `age_group`(`young_adult`·`adult`·`middle_aged`·`elder`), `background_tags`(snake_case, 16개 이하), 성격 11축(docs/05 §3의 이름 그대로, 각각 0~1, `personality()`), 능력 8개(`skill_combat`·`skill_medical`·`skill_farming`·`skill_cooking`·`skill_construction`·`skill_maintenance`·`skill_crafting`·`skill_social`, 0~1, `skills()`), `job_role`(docs/05 §12의 11개 중 하나 또는 `""`), 집·작업 지점 참조 `home_building_id`+`home_tile_offset`, `work_building_id`+`work_tile_offset`(맵 콘텐츠의 건물 ID와 그 건물 원점에서 센 타일). `validate()`, `validate_against(appearance_catalog)`(모든 외형 칸의 실제 선택지여야 한다). 성격은 행동을 강제하지 않는 가중치이고 이름은 진단이 아니다 |
+| `NpcCatalog` | `load_directory()`(하위 폴더는 읽지 않는다), `add`, `has`, `get_definition`, `definition_ids()`, `validate_against(appearance_catalog)` |
+| `NpcRoster` (`resources/definitions/npcs/rosters/dev_npc_roster.tres`) | 한 월드에 처음부터 사는 NPC 명단: `roster_id`(저장됨), `content_version`, `map_id`(지점이 가리키는 맵 콘텐츠), `npc_definition_ids`(배치 순서). `validate()`, `validate_against(definitions, map_content, grid, max_npcs)`(정의 존재, 집 지점이 그 맵 건물 안의 타일이고 보관함 타일이 아님, 두 NPC가 같은 집 지점을 쓰지 않음, 작업 지점이 있으면 같은 검사, 인원 ≤ 상한). 순수 함수 `building_of`, `spot_error`, `spot_position(map_content, grid, building_id, tile_offset)`(그 타일의 중심, 없으면 null), `load_or_null()` |
+| `NpcSettings` (`data/tuning/npc_settings.tres`) | `max_npcs`(50: 월드 전체 NPC 수의 상한, 메모리에 없는 셀의 NPC도 센다), `world_seed`(20261119, 0~2^53-1). `validate()` |
+| `CompositionConfig` | 필드 셋이 늘었다: `npc`, `npc_definitions`, `npc_roster`(기본 **null**). `validate()`가 앞의 둘과, 명단이 있으면 그것을 정의·맵 콘텐츠·격자·상한에 대해 검사한다(명단이 있는데 `map_content`가 없으면 오류) |
+
+개발용 명단은 다섯 명이다: 한서윤(`dev_npc_seoyun`, 간호사, medical, 집 house_a·작업 clinic), 오태식(`dev_npc_taesik`, 목수, construction, house_b·warehouse), 민지호(`dev_npc_jiho`, 학생·배달, gathering, house_c·store), 강말순(`dev_npc_malsun`, 농부, cooking, house_a·shed), 류도현(`dev_npc_dohyun`, 정비사, maintenance, house_b·garage). 값은 전부 손으로 적은 임시 값이다(docs/15 P4-004).
+
+**런타임 모델(`NpcState`)**: `npc_id`(`npc_<번호>`, 월드의 `EntityIdGenerator`·`EntityRegistry`, 종류 `npc`), `definition_id`, `position`, `yaw`(플레이어·좀비와 같은 규약), `simulation_tier`(`frozen`/`near`/`far`, 실행 중에 정하고 **저장하지 않는다**), `created_at`(달력 월드 시간), `last_simulated_world_time`(아래 "월드 셀"), `rng`(NPC별 `RandomNumberGenerator`, seed·state를 문자열로 저장), 구성 요소 슬롯. `to_dict()`/`from_dict()`(모양만 검사: 스키마 1, ID 형식, 유한한 수, seed·state는 정수 문자열, 슬롯마다 `schema_version` ≥ 1). `seed_for(world_seed, npc_id)` = 문자열 `"npc|<시드>|<ID>"`의 SHA-256 앞 15자리 16진수(엔진 전역 난수·문자열 해시에 의존하지 않는다). NPC는 만들 때 `NpcSettings.world_seed`와 자기 ID로 seed를 받고, 그 뒤로는 저장된 state를 이어 쓴다. 이 시스템 어디에서도 엔진 전역 난수를 쓰지 않는다.
+
+**`NpcService`(`scripts/domain/npc/npc_service.gd`, `ServerSystem`)**: `ServerComposition`이 맵 콘텐츠 뒤, 거래 앞에 등록한다.
+
+- 서버 규칙: `spawn_npc(world, definition_id, position, yaw = 0.0) -> ActionResult`(행위자·사거리 없음. 메모리에 있는 셀의 어느 위치에나. 실패: `unknown_npc_definition`, `bad_position`(유한하지 않거나 플레이 영역 밖, yaw 포함), `cell_not_loaded`, `npc_limit`(경고 로그), `npc_id_failed`. 거부된 생성은 ID를 쓰지 않는다. 성공 이벤트 `npc_spawned`), `remove_npc(world, npc_id)`(메모리에 있는 NPC만. ID는 **은퇴**(tombstone)해 다시 쓰이지 않고 오래된 셀 파일에서도 돌아오지 않는다. 실패 `unknown_npc`), `set_npc_transform(world, npc_id, position, yaw) -> bool`(NPC의 위치를 바꾸는 **유일한** 창구. 셀 색인을 맞추고, 메모리에 없는 셀·플레이 영역 밖·유한하지 않은 값은 거부하고 `blocked_move_count`에 센다. 시뮬레이션되지 않는 셀로 들어가면 그 자리에서 멈추고, 시뮬레이션되는 셀로 들어오면 깨어난다. 벽은 검사하지 않는다: 움직이는 쪽이 먼저 `ServerWorld.resolve_movement`를 부른다), `set_simulation_tier(npc_id, tier) -> bool`(깨어 있는 NPC를 `near`/`far`로. P4-3 스케줄러의 몫), `mark_npc_dirty(npc_id)`(그 NPC와 함께 저장되는 것이 바뀌었다).
+- 조회: `has_npc`, `get_npc`(읽기 전용), `npc_ids()`(메모리, 정렬), `npc_count()`, `npc_ids_in_cell(cell_id)`, `is_awake`, `awake_npc_ids()`(정렬: 처리 순서가 결정적이다), `awake_count()`, `definition_of(npc_id)`, `npc_document(npc_id)`(지금 저장되면 쓰일 문서), `population_count()`·`population_ids()`(월드 전체, 메모리에 없는 NPC 포함), `is_seeded(roster_id = "")`, `seeded_npc_ids(roster_id)`, `seeded_npc_id(roster_id, definition_id)`.
+- 시그널(P4-7이 듣는다. 이벤트 큐는 없다): `npc_entered(npc_id)`(생성 또는 셀 로딩으로 메모리에 들어옴), `npc_left(npc_id, retired)`(셀 해제 또는 제거), `npc_woke(npc_id)`, `npc_slept(npc_id)`.
+- 진단: `last_step_msec`(단계가 없으면 0), `blocked_move_count`, `last_seed_report`(배치한 NPC 수, 로딩한 셀, 해제 횟수, 걸린 시간 µs).
+- `step()`은 등록된 단계만 차례로 부른다. 단계가 없는 지금은 아무것도 하지 않는다(빈 틱 비용 0).
+
+**구성 요소 계약(`NpcComponent`)**: NPC 한 명과 함께 저장되는 상태 한 조각이다(욕구, 일정, 인벤토리, 감정·기억…). 뒤 티켓은 이 클래스를 상속한 **파일을 더하고** `ServerComposition`의 NPC 등록 자리에 `npcs.register_component(component_id, factory)` 한 줄을 넣는다. `NpcState`·`NpcService`는 고치지 않는다.
+
+| 함수 | 계약 |
+|---|---|
+| `component_id() -> String` | snake_case, 64자 이하. NPC 저장 문서의 슬롯 키이기도 하다. 한 번 저장된 뒤에는 바꾸지 않는다 |
+| `schema_version() -> int` | `to_document()` 모양의 버전(≥ 1). `NpcService`가 문서에 `schema_version` 키로 넣는다(구성 요소는 그 키를 쓰지 않는다). 옛 버전의 변환은 구성 요소의 `restore_document`가 한다 |
+| `on_created(npc, definition, clock)` | 저장된 문서가 없는 NPC의 처음 값: 새로 생긴 NPC, 그리고 **이 구성 요소가 생기기 전에 저장된 NPC**. `clock`으로 두 시간 축을 읽는다 |
+| `to_document() -> Dictionary` | JSON-safe. Node·Resource·RID 금지, 64비트 값은 문자열 |
+| `restore_document(document) -> 오류` | 먼저 검증하고 **자기 자신만** 바꾼다. NPC가 메모리에 들어오기 전에 불리며, 오류가 하나라도 있으면 그 문서(셀 또는 월드)의 NPC 전부가 로딩되지 않는다 |
+| `on_attached(world, npc)` / `on_detached(world, npc, retired)` | NPC가 메모리에 들어온 뒤 / 나가기 직전. 구성 요소 밖의 것(보관함식 전용 인벤토리, 지점 예약)은 여기서 잡고 여기서 놓는다. `retired`가 true면 영영 없어진 것이다 |
+
+- 등록은 첫 NPC가 생기거나 복구되기 전에만 된다(뒤에는 `ERR_UNAVAILABLE`). `factory`는 인자 없이 새 인스턴스를 돌려주는 Callable이고, 등록할 때 한 번 불러 ID가 맞는지 확인한다(`ERR_INVALID_DATA`). 중복은 `ERR_ALREADY_EXISTS`, 잘못된 ID는 `ERR_INVALID_PARAMETER`.
+- 생성·복구 순서는 구성 요소 ID의 사전순이다(결정적).
+- **등록되지 않은 구성 요소의 저장 문서는 그대로 보관했다가 그대로 다시 저장한다**(경고 로그 한 번). 어떤 기능이 빠진 빌드로 저장을 열었다 닫아도 그 기능의 데이터가 사라지지 않는다.
+- 저장되는 값이 바뀌면 `NpcService.mark_npc_dirty(npc_id)`를 부른다. 셀 문서는 저장 사이에 캐시되므로(PERF-3) 빠뜨리면 강제 종료 때 그 변화가 사라질 수 있다.
+- 난수는 `npc.rng`만 쓴다.
+
+**단계 계약(`NpcStage`)**: 틱마다 NPC를 위해 하는 일 한 종류다(스케줄러 P4-3, 실행기 P4-5a…). 뒤 티켓은 이 클래스를 상속한 파일을 더하고 `npcs.add_stage(stage)` 한 줄을 넣는다. 더한 순서대로 불린다.
+
+| 함수 | 계약 |
+|---|---|
+| `stage_id() -> String` | snake_case. 저장 키이기도 하다 |
+| `on_npc_entered(world, npc)` / `on_npc_left(world, npc, retired)` | NPC가 메모리에 들어옴(생성·셀 로딩) / 나감(셀 해제·제거). 메모리에 없는 NPC에는 닿을 수 없다: 살아남아야 하는 것은 구성 요소에 둔다 |
+| `on_npc_woke(world, npc)` / `on_npc_slept(world, npc)` | 그 NPC의 셀이 시뮬레이션되기 시작함 / 멈춤. 순서는 항상 entered → woke → … → slept → left |
+| `step(world, npcs, action_delta, world_delta)` | 틱마다 한 번(`WorldCellService`가 그 틱의 셀 상태를 바꾼 뒤). 시계가 멈추면 두 delta 모두 0. 단계는 `npcs.awake_npc_ids()`를 보고 자기 주기를 따로 가진다(매 틱 전원의 전체 AI 금지, AGENTS.md §6) |
+| `to_world_document()` / `restore_world_document(document)` | 단계 자체가 재시작 뒤에도 가져야 하는 것(NPC별 값은 구성 요소). world_state `systems.npc.stages.<stage_id>`. 등록되지 않은 단계의 문서도 그대로 보관했다가 다시 저장한다 |
+
+**월드 셀**(§15.1의 훅 다섯 그대로): NPC는 `ServerWorld.cell_index`에 종류 `npc`로 위치의 셀 아래에 들어간다.
+
+- 시뮬레이션 정지(D4): ACTIVE 셀의 NPC만 "깨어 있다"(`is_awake`, 단계 `near`). 다른 셀의 NPC는 상태·RNG까지 그대로 멈춘다(`frozen`). 요약 따라잡기는 없다(docs/16 K, 별도 티켓).
+- `last_simulated_world_time`: 그 NPC가 언제까지 시뮬레이션됐는가. 멈출 때 그 시각을 적는다. 깨어 있는 NPC의 저장 문서에는 **문서를 만든 시각**이 들어간다(복구된 NPC는 그 시각까지 시뮬레이션된 채 멈춰 있는 것이므로). 그래서 같은 달력 시각에 만든 문서는 저장·재시작 여부와 무관하게 같다.
+- 복구는 먼저 전부 검증한다: 스키마 버전, 각 NPC의 모양, 정의 존재, 플레이 영역 안의 위치, 문서 안의 ID 중복, 구성 요소의 `restore_document`. 하나라도 틀리면 아무것도 바꾸지 않는다(그 셀은 로딩되지 않는다).
+- 셀 문서에서는 메모리에 있거나 은퇴한 NPC ID를 건너뛰고 경고한다(메모리가 저장본보다 우선). 월드 문서에서는 같은 경우가 오류다.
+- NPC의 셀은 저장된 값이 아니라 위치로 정한다(다른 격자로 나뉜 문서도 읽힌다).
+- 해제: 단계·구성 요소에 알리고(`retired` false) 메모리에서 내리고 ID를 레지스트리에서 **해제**한다(은퇴가 아니다: 그 NPC는 여전히 존재한다).
+
+**저장 배치**: 셀 문서 `systems.npc = {schema_version: 1, npcs: [NpcState.to_dict()]}`. world_state `systems.npc = {schema_version: 1, population: {npc_id: definition_id}, rosters: {roster_id: {content_version, npcs: {definition_id: npc_id}, complete}}, npcs: [...], stages: {stage_id: 문서}}`. `population`은 월드의 모든 NPC(메모리에 없는 셀의 NPC 포함: 인원 상한과 `definition_of`의 근거), `npcs`는 셀 문서에 저장되지 않는 NPC뿐이고(저장소 없는 월드·메모리 저장소의 로딩된 셀. 전용 서버에서는 보통 없어서 키가 없다), `stages`는 문서가 있을 때만 있다. NPC·명단·단계 문서가 하나도 없던 월드는 `systems.npc` 키 자체가 없다: 이 티켓 전의 저장과 같은 모양이고 그대로 읽힌다. NPC 한 명의 문서: `{schema_version: 1, npc_id, definition_id, position: [x, y, z], yaw, created_at, last_simulated_world_time, rng_seed: "<정수>", rng_state: "<정수>", components: {component_id: {schema_version, ...}}}`. world_state 스키마(4)와 셀 문서 스키마(1)는 바꾸지 않았다. 셀 문서에 있는데 `population`에 없는 NPC는 로딩할 때 `population`에 더한다(스스로 고친다).
+
+**명단 배치(D5)**: 맵 콘텐츠(§15.3)와 같은 방식이다. `ensure_seeded(world)`가 명단의 정의마다 집 지점(`NpcRoster.spot_position`)의 셀을 `load_cell_now`로 로딩하고 `spawn_npc`로 놓고, 끝나면 로딩한 셀을 `release_cells_now`로 저장·해제한다.
+
+- 한 번만: `seed_new_world`(새 월드, 맵 콘텐츠 뒤)와 `WorldPersistence.load_or_create`(저장된 월드를 복구한 뒤: 명단이 없던 때의 저장, 중간에 멈춘 배치). 기록에 있는 정의는 다시 놓지 않는다. 명단 내용이 바뀌어도(`content_version`) 이미 받은 월드는 그대로 두고 로그만 남긴다. 저장된 월드에 배치하다 실패하면 서버 시작이 실패한다(`fatal`).
+- 조립 입력: `CompositionConfig.npc_roster`가 null이면 아무도 놓지 않는다(`from_defaults()`의 기본: 테스트·도구). `GameBootstrap`은 서버를 시작할 때 테스트 맵이 있으면 `NpcRoster.load_or_null()`을 넣는다. 그래서 기존 테스트에는 NPC가 생기지 않는다.
+
+**이 티켓의 소유 영역 밖 파일 변경**: `WorldPersistence.load_or_create`(명단 `ensure_seeded` 호출 여섯 줄), `GameBootstrap`(명단을 넣는 넉 줄), `tests/unit/server_system_seam_test.gd`(시스템 순서 목록에 `npc`). 계획(docs/13 §16.1)에 없던 파일 셋을 `scripts/domain/npc/`에 더했다: `npc_catalog.gd`, `npc_roster.gd`, `npc_stage.gd`.
+
+**테스트**: `tests/unit/npc_state_test.gd`(출하 명단 5명의 데이터 검증, 정의·명단·설정 검증 거부, `NpcState` JSON 왕복과 잘못된 문서 거부, seed 결정성, 생성 ID의 유일·결정성과 엔진 전역 난수 무관, 메모리에 없는 셀·상한 거부, 제거한 ID의 은퇴, **5초 동안 위치·방향·RNG가 바뀌지 않음**, 위치 변경 창구의 셀 색인·거부·깨어남, 구성 요소의 생성·저장·복구·나중에 더한 구성 요소·등록되지 않은 구성 요소의 문서 보존·복구 거부 시 무변화·제거 통지, 단계의 통지 순서·틱·월드 문서), `tests/unit/npc_cell_persistence_test.gd`(P0. 셀 해제 → 재로딩 동일성과 반복 왕복, 월드 문서 왕복 두 번, 저장소 없는 월드, 오래된 셀 문서·깨진 문서, 메모리에 없는 NPC까지 세는 상한, 테스트 맵 건물 안 배치 한 번, 명단 전의 저장에 한 번, 중단된 배치 재개, **실제 파일**: 새 월드 저장 → 재시작 → 셀 해제 → 재시작에서 다섯 명이 같고 디스크의 NPC ID가 각각 한 번, 명단 전의 디스크 저장에 다음 시작 때 한 번만 배치).
+
+**뒤 티켓이 알아야 할 것**
+
+- P4-2(욕구): `NpcComponent` 하나(`needs`). 처음 값은 `on_created`, 구간 적분의 기준 시각은 구성 요소가 자기 문서에 둔다(`last_simulated_world_time`은 따라잡기용이고 욕구 계산의 기준이 아니다). 값이 바뀌면 `mark_npc_dirty`.
+- P4-3(스케줄러): `NpcStage` 하나. 깨어난 NPC를 `on_npc_woke`에서 버킷에 넣고 `on_npc_slept`에서 뺀다. 다음 결정 시각 같은 NPC별 값은 구성 요소에, 버킷 위상 같은 전역 값은 단계의 월드 문서에 둔다. LOD는 `set_simulation_tier`로 적는다(깨어 있는 NPC의 기본은 `near`).
+- P4-5a(실행기): 한 걸음마다 `resolve_movement("npc", from, to)` 뒤 `set_npc_transform`. false면 그 걸음은 없던 것이다. 이동자 종류 `npc`는 지금 벽 앞에서 멈추기만 한다(벽을 따라 미끄러지려면 `BuildingSettings.sliding_mover_kinds`에 더한다).
+- P4-7(복제): `npc_entered`/`npc_left`/`npc_woke`/`npc_slept`와 `npc_ids_in_cell`, `get_npc`, `definition_of`로 공개 행을 만든다. `NpcState`의 구성 요소는 공개 대상이 아니다(D9).

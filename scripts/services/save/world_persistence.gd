@@ -81,6 +81,12 @@ func load_or_create(world_id: String) -> ServerWorld:
 	if map_content != null and map_content.ensure_seeded(world) != OK:
 		GameLogger.fatal("save", "the map content could not be placed in the saved world", {"world_id": world_id, "operation": "seed_map"})
 		return null
+	# P4-1: the same for the NPC roster (docs/09 §17.1): a world saved before
+	# it had one gets its NPCs now, once.
+	var npcs: NpcService = world.get_system(NpcService.SYSTEM_ID) as NpcService
+	if npcs != null and npcs.ensure_seeded(world) != OK:
+		GameLogger.fatal("save", "the npc roster could not be placed in the saved world", {"world_id": world_id, "operation": "seed_roster"})
+		return null
 	return world
 
 

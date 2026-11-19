@@ -96,6 +96,10 @@ func _start_network(config: LaunchConfig, settings: AppSettings, world_id: Strin
 		# and containers), once. Compositions built elsewhere (tests, tools)
 		# get none unless they ask for it (docs/09 §15.3).
 		composition.map_content = MapContentDefinition.load_or_null()
+		# P4-1: and the dev NPCs, placed in buildings of that map, once
+		# (docs/09 §17.1). Without the map there is nowhere to place them.
+		if composition.map_content != null:
+			composition.npc_roster = NpcRoster.load_or_null()
 	errors = composition.validate()
 	if not errors.is_empty():
 		GameLogger.error("bootstrap", "invalid gameplay settings", {"errors": "; ".join(errors), "operation": "start_network"})

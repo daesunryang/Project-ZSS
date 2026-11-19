@@ -82,6 +82,13 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# Without content (config.map_content null: tests, tools) it places nothing.
 	if world.register_system(MapContentService.new(config.map_content, config.structures)) != OK:
 		return null
+	# P4-1 (docs/09 §17.1): NPCs. After the map content, in whose buildings
+	# the roster places them (once per world; without a roster nobody).
+	# Components and stages of later tickets are registered here, before the
+	# world is seeded or restored.
+	var npcs: NpcService = NpcService.new(config.npc, config.npc_definitions, config.npc_roster, config.map_content, StructureGrid.new(config.building.grid_module_m), world.ids, world.registry, world.clock)
+	if world.register_system(npcs) != OK:
+		return null
 	# P2-T16: trades between two players. Last, so its step sees what this
 	# tick did to its parties (a death, a rest, a move). It is told about
 	# every inventory transaction, to keep offers backed by what is carried.

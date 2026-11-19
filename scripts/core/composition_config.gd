@@ -69,6 +69,14 @@ var container_net: ContainerNetSettings
 ## the world gets no map content. A dedicated server sets the test map
 ## (MapContentDefinition.DEFAULT_PATH, GameBootstrap).
 var map_content: MapContentDefinition = null
+## P4-1 (NPCs, docs/09 §17.1): the NPC rules and the NPC definitions.
+var npc: NpcSettings
+var npc_definitions: NpcCatalog
+## P4-1: the NPCs a world is given, once (NpcService). null (the default of
+## from_defaults(): tests, tools) = the world gets no NPCs. A dedicated
+## server sets the dev roster (NpcRoster.DEFAULT_PATH, GameBootstrap), which
+## needs the map content its home spots are in.
+var npc_roster: NpcRoster = null
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -104,7 +112,24 @@ static func from_defaults() -> CompositionConfig:
 	config.container_definitions = ContainerCatalog.load_directory()
 	config.loot_tables = LootTableCatalog.load_directory()
 	config.container_net = ContainerNetSettings.load_or_default()
+	config.npc = NpcSettings.load_or_default()
+	config.npc_definitions = NpcCatalog.load_directory()
 	return config
+
+
+## P4-1: errors of the NPC settings and definitions, and of the roster (when
+## the world is to get one) against the definitions and the map content.
+func _validate_npcs() -> PackedStringArray:
+	var errors: PackedStringArray = []
+	if npc == null or npc_definitions == null:
+		errors.append("composition config is incomplete (npc)")
+		return errors
+	errors.append_array(npc.validate())
+	errors.append_array(npc_definitions.validate_against(appearance))
+	if npc_roster != null:
+		errors.append_array(npc_roster.validate())
+		errors.append_array(npc_roster.validate_against(npc_definitions, map_content, StructureGrid.new(building.grid_module_m), npc.max_npcs))
+	return errors
 
 
 ## Collects validation errors of all contained settings.
@@ -176,6 +201,7 @@ func validate() -> PackedStringArray:
 	errors.append_array(trade_net.validate())
 	errors.append_array(trade_net.validate_against(trade))
 	errors.append_array(_validate_containers())
+	errors.append_array(_validate_npcs())
 	return errors
 
 

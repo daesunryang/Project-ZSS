@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="NpcDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/npc_definition.gd" id="1_npc"]
+
+[resource]
+script = ExtResource("1_npc")
+definition_id = "dev_npc_taesik"
+display_name = "오태식"
+appearance = {
+"body_type": "sturdy",
+"bottom_color": "khaki",
+"hair_color": "black",
+"hair_style": "buzz",
+"height": "above_average",
+"skin_tone": "tone_4",
+"top_color": "brown"
+}
+age_group = "middle_aged"
+background_tags = PackedStringArray("carpenter", "army_veteran")
+extraversion = 0.35
+agreeableness = 0.5
+conscientiousness = 0.9
+openness = 0.3
+neuroticism = 0.3
+impulsivity = 0.25
+self_interest = 0.4
+courage = 0.75
+jealousy_proneness = 0.2
+animal_affinity = 0.4
+risk_tolerance = 0.5
+skill_combat = 0.5
+skill_medical = 0.15
+skill_farming = 0.2
+skill_cooking = 0.2
+skill_construction = 0.85
+skill_maintenance = 0.6
+skill_crafting = 0.55
+skill_social = 0.3
+job_role = "construction"
+home_building_id = "house_b"
+home_tile_offset = Vector2i(1, 1)
+work_building_id = "warehouse"
+work_tile_offset = Vector2i(3, 3)

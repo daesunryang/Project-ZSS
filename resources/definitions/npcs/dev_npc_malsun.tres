@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="NpcDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/npc_definition.gd" id="1_npc"]
+
+[resource]
+script = ExtResource("1_npc")
+definition_id = "dev_npc_malsun"
+display_name = "강말순"
+appearance = {
+"body_type": "average",
+"bottom_color": "gray",
+"hair_color": "gray",
+"hair_style": "bun",
+"height": "short",
+"skin_tone": "tone_3",
+"top_color": "purple"
+}
+age_group = "elder"
+background_tags = PackedStringArray("farmer", "grandmother")
+extraversion = 0.6
+agreeableness = 0.75
+conscientiousness = 0.7
+openness = 0.35
+neuroticism = 0.4
+impulsivity = 0.15
+self_interest = 0.3
+courage = 0.55
+jealousy_proneness = 0.25
+animal_affinity = 0.85
+risk_tolerance = 0.2
+skill_combat = 0.05
+skill_medical = 0.35
+skill_farming = 0.8
+skill_cooking = 0.85
+skill_construction = 0.1
+skill_maintenance = 0.15
+skill_crafting = 0.4
+skill_social = 0.65
+job_role = "cooking"
+home_building_id = "house_a"
+home_tile_offset = Vector2i(3, 1)
+work_building_id = "shed"
+work_tile_offset = Vector2i(2, 1)

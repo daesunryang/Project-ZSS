@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="NpcDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/npc_definition.gd" id="1_npc"]
+
+[resource]
+script = ExtResource("1_npc")
+definition_id = "dev_npc_dohyun"
+display_name = "류도현"
+appearance = {
+"body_type": "athletic",
+"bottom_color": "charcoal",
+"hair_color": "black",
+"hair_style": "short",
+"height": "average",
+"skin_tone": "tone_5",
+"top_color": "gray"
+}
+age_group = "adult"
+background_tags = PackedStringArray("mechanic", "loner")
+extraversion = 0.2
+agreeableness = 0.35
+conscientiousness = 0.65
+openness = 0.55
+neuroticism = 0.6
+impulsivity = 0.4
+self_interest = 0.7
+courage = 0.45
+jealousy_proneness = 0.5
+animal_affinity = 0.3
+risk_tolerance = 0.6
+skill_combat = 0.4
+skill_medical = 0.1
+skill_farming = 0.05
+skill_cooking = 0.2
+skill_construction = 0.45
+skill_maintenance = 0.85
+skill_crafting = 0.7
+skill_social = 0.15
+job_role = "maintenance"
+home_building_id = "house_b"
+home_tile_offset = Vector2i(3, 2)
+work_building_id = "garage"
+work_tile_offset = Vector2i(2, 2)
