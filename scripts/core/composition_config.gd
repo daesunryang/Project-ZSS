@@ -83,6 +83,11 @@ var npc_net: NpcNetSettings
 ## server sets the dev roster (NpcRoster.DEFAULT_PATH, GameBootstrap), which
 ## needs the map content its home spots are in.
 var npc_roster: NpcRoster = null
+## P4-3 (docs/09 §17.3): when NPCs think (NpcScheduler), and what they do
+## when their turn comes. null decider (the default) = "no decision"; P4-4
+## brings the real one.
+var npc_schedule: NpcScheduleSettings
+var npc_decider: NpcDecider = null
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -123,6 +128,7 @@ static func from_defaults() -> CompositionConfig:
 	config.npc_needs = NpcNeedSettings.load_or_default()
 	config.npc_mind = NpcMindSettings.load_or_default()
 	config.npc_net = NpcNetSettings.load_or_default()
+	config.npc_schedule = NpcScheduleSettings.load_or_default()
 	return config
 
 
@@ -138,6 +144,7 @@ func _validate_npcs() -> PackedStringArray:
 	errors.append_array(npc_definitions.validate_against(appearance))
 	errors.append_array(npc_needs.validate())
 	errors.append_array(npc_net.validate())
+	errors.append_array(npc_schedule.validate() if npc_schedule != null else PackedStringArray(["composition config is incomplete (npc_schedule)"]))
 	if npc_roster != null:
 		errors.append_array(npc_roster.validate())
 		errors.append_array(npc_roster.validate_against(npc_definitions, map_content, StructureGrid.new(building.grid_module_m), npc.max_npcs))

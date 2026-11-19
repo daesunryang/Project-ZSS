@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="NpcScheduleSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/scheduling/npc_schedule_settings.gd" id="1_npc_schedule"]
+
+[resource]
+script = ExtResource("1_npc_schedule")
+decision_near_period_sec = 2.0
+decision_far_period_sec = 10.0
+decision_bucket_count = 10
+max_decisions_per_tick = 2
+near_radius_m = 30.0
+near_exit_margin_m = 5.0
+tier_period_sec = 0.5

@@ -97,6 +97,10 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 		return null
 	if npcs.register_component(RelationshipStore.COMPONENT_ID, RelationshipStore.create) != OK:
 		return null
+	# P4-3 (docs/09 §17.3): the schedule component and the scheduler stage.
+	var npc_scheduler: NpcScheduler = NpcScheduler.install(npcs, config.npc_schedule, config.npc_decider)
+	if npc_scheduler == null:
+		return null
 	# P2-T16: trades between two players. Last, so its step sees what this
 	# tick did to its parties (a death, a rest, a move). It is told about
 	# every inventory transaction, to keep offers backed by what is carried.

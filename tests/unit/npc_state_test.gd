@@ -441,6 +441,10 @@ func test_npcs_stand_still_and_use_no_random_numbers() -> void:
 	_run(world, 5.0)
 	assert_true(service.is_awake(nurse_id), "the NPC is in the player's cell: simulated")
 	var after: Dictionary = service.get_npc(nurse_id).to_dict()
+	# P4-3: its turns to think come and go (npc_scheduler_test.gd); nobody
+	# decides anything yet, so nothing else may change.
+	for document: Dictionary in [before, after]:
+		(document[NpcState.KEY_COMPONENTS] as Dictionary).erase(NpcScheduleComponent.COMPONENT_ID)
 	assert_eq(after, before, "P4-1: an NPC does not move, turn or roll anything")
 	assert_eq(service.blocked_move_count, 0)
 

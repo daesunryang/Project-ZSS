@@ -172,12 +172,15 @@ func _spawn(world: ServerWorld, definition_id: String, position: Vector3, yaw: f
 
 ## Save data of every NPC in memory, by id, without "simulated until": for
 ## an awake NPC that is the time of the document, which differs between two
-## looks at the same NPC.
+## looks at the same NPC. Without its schedule too (P4-3): an awake NPC's
+## next turn moves on with time; npc_scheduler_test.gd checks that a save
+## and a restart keep it.
 func _saved(world: ServerWorld) -> Dictionary:
 	var result: Dictionary = {}
 	for npc_id: String in _npcs(world).npc_ids():
 		var document: Dictionary = _npcs(world).npc_document(npc_id)
 		document.erase(NpcState.KEY_LAST_SIMULATED)
+		(document[NpcState.KEY_COMPONENTS] as Dictionary).erase(NpcScheduleComponent.COMPONENT_ID)
 		result[npc_id] = document
 	return result
 

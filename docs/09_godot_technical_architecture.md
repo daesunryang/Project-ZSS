@@ -2609,6 +2609,74 @@ Phase 4(docs/13 §6, §16) 티켓의 계약을 티켓마다 한 절씩 적는다
 
 **테스트**: `tests/unit/npc_needs_test.gd`가 출하 설정/0-rate 정의, 조립 등록과 처음 값, 1초 대 10초 적분·저장 문서 동일성, 휴식/업무 비율, 다음 경계 절대 시각, `satisfy` 검증·event·dirty 표시, JSON-safe 저장/복구와 잘못된 구성 요소 문서의 원자적 거부를 검사한다.
 
+### 17.3 NPC AI 스케줄러(P4-3, 단계 `scheduler`, 구성 요소 `schedule`)
+
+NPC가 **언제** 생각하는지만 정한다. **무엇을** 정하는지는 주입받는 결정 함수(`NpcDecider`, P4-4)의 몫이고, 그 전에는 "결정 없음"이라 NPC는 여전히 서 있다. 이동·경로(P4-5a)와 복제(P4-7)는 만들지 않았다. 프로토콜·`PROTOCOL_VERSION`은 바꾸지 않았다. `NpcState`·`NpcService`·`NpcComponent`·`NpcStage`(P4-1)는 고치지 않았다. 수치는 전부 PROVISIONAL(docs/15 §17.3, docs/13 §16.4)이다.
+
+**갱신 종류와 주기(AGENTS.md §6, §7)**: 종류마다 주기와 예산이 따로 있고, 이 티켓이 만든 것은 앞의 둘이다.
+
+| 종류 | 누가 | 주기·예산 | 스케줄러와의 접점 |
+|---|---|---|---|
+| 행동 재평가(결정) | `NpcScheduler` → `NpcDecider.decide` | near 2초 / far 10초, 버킷 10개, 틱당 결정 상한 2 | 이 절 |
+| LOD 단계 판정 | `NpcScheduler` | 0.5초(버킷으로 나눔) | `NpcService.set_simulation_tier` |
+| 욕구 평가 | P4-2 구성 요소(구간 적분) | 매 틱 하지 않는다: 결정 때 따라잡고, 다음 범주 경계 시각을 예약 | `schedule_interrupt_world(world, npc_id, reason, 남은 달력 초)` |
+| 경로 계획·이동 | P4-5a 실행기(다른 단계) | 실행기의 FIFO·노드 예산·매 틱 걸음(docs/13 §16.4) | 행동 완료·실패 때 `request_interrupt(npc_id, reason)` |
+| 복제 | P4-7 `NpcNet` | 스냅샷 5Hz, 라벨 변화는 이벤트 | 없음(단계 값은 `NpcState.simulation_tier`로 읽는다) |
+
+**파일(`scripts/domain/npc/scheduling/`, 노드 없음)**
+
+| 구성 요소 | 계약 |
+|---|---|
+| `NpcScheduleSettings` (`data/tuning/npc_schedule_settings.tres`) | `decision_near_period_sec`(2.0), `decision_far_period_sec`(10.0, near 이상), `decision_bucket_count`(10), `max_decisions_per_tick`(2), `near_radius_m`(30), `near_exit_margin_m`(5), `tier_period_sec`(0.5). 주기는 전부 행동 시간(실제 초, D10). `validate()` |
+| `NpcDecider` | 결정 함수의 자리. `decide(world, npcs, npc, reasons, scheduler)`: 그 NPC의 차례다. `reasons`는 중복 없는 사유 목록으로, 주기가 돌아왔으면 `"period"`(`REASON_PERIOD`)가 맨 앞, 그 뒤로 때가 된 인터럽트가 오래된 순서(같으면 이름순)다. NPC당 틱에 많아야 한 번 불린다. 난수는 `npc.rng`만. 기본 클래스는 아무것도 하지 않는다. `on_attached(scheduler)`: 스케줄러에 꽂힐 때(약한 참조만 쥔다) |
+| `NpcScheduleComponent` (`schedule`) | NPC 한 명의 일정. 문서 `{schema_version: 1, next_decision_at_usec: 정수(-1 = 아직 일정 없음), tier: "near"/"far", interrupts: {사유: 정수 시각}}`. 인터럽트는 NPC당 16개까지. `restore_document`가 모양·범위·사유 이름을 검증한다. 스케줄러만 고친다 |
+| `NpcScheduler` (`NpcStage`, `scheduler`) | 아래 |
+
+**조립**: `ServerComposition`의 NPC 등록 바로 뒤 한 줄 `NpcScheduler.install(npcs, config.npc_schedule, config.npc_decider)`이 구성 요소 `schedule`과 단계 `scheduler`를 함께 넣고 단계를 돌려준다(실패하면 null). `CompositionConfig`에 필드 둘: `npc_schedule`(`from_defaults()`가 읽고 `validate()`가 검사), `npc_decider`(기본 null = 결정 없음. 테스트가 기록용 결정 함수를 넣는 자리이고, P4-4가 실제 것을 넣는다). 그래서 **기본 조립의 모든 NPC는 `schedule` 구성 요소를 갖고**, 깨어 있으면 차례가 돈다.
+
+**스케줄 시계**: 단계는 자기 시계를 **정수 마이크로초**로 가진다(`clock_usec()`). 틱마다 행동 delta를 마이크로초로 반올림해 더한다(1/60초 = 16667µs). 월드 시계가 멈추면(두 delta 0) 같이 멈춘다. NPC의 다음 결정 시각·인터럽트 시각은 전부 이 시계의 값이다. `WorldClock.action_time_sec`(float)을 쓰지 않는 이유: 저장을 거친 float 비교는 경계에서 한 틱 어긋날 수 있고, 정수는 저장·복구에서 값이 그대로다(D11). 시계는 **처음으로 NPC에게 일정을 줄 때** 돌기 시작한다: NPC가 한 번도 없던 월드는 이 단계의 문서를 저장하지 않는다(P4-1의 "NPC 전 저장과 같은 모양" 유지).
+
+**버킷과 주기**: 주기를 `decision_bucket_count`칸으로 나눈다. NPC의 버킷은 **ID 번호를 버킷 수로 나눈 나머지**다(`bucket_of`. 저장할 상태가 없고 어느 실행에서나 같다. 차례로 만든 NPC는 차례로 다른 버킷에 든다). 주기적 차례는 시계 시각 `k × 주기 + 버킷 × (주기 ÷ 버킷 수)`에 온다(주기는 그 NPC의 단계 것). 차례를 처리하면 다음 차례는 "지금보다 뒤의 첫 격자 시각"이다: 긴 틱이나 잠든 동안 놓친 주기는 **한 번만** 따라잡는다(몰아서 여러 번 하지 않는다). 그래서 60Hz·20Hz·10Hz 어느 틱 길이로 돌려도 NPC마다 차례 수가 같다.
+
+- `core/BucketScheduler`는 **쓰지 않았다.** 그 클래스의 위상(`_elapsed`·`_cursor`·`_next_bucket`)은 비공개 float 누적이라 API로 저장하거나 복구할 수 없고(P2-31 좀비가 저장을 사이에 두면 달라지는 이유), 이 티켓의 요구가 바로 그것이다. 위 격자는 같은 분산(버킷마다 주기에 한 번, 한 호출에 한 번)을 정수 시계에서 계산한다. `BucketScheduler`에 위상 조회·복구 API를 더해 갈아 끼우는 길은 계약 변경 제안으로 남긴다(notes).
+
+**한 틱의 처리**: 처리할 것이 없는 틱은 정수 비교 몇 번으로 끝난다("가장 이른 할 일 시각" 하나를 들고 있다. `scan_count`가 실제로 NPC를 훑은 틱 수다). 할 일이 있는 틱은 깨어 있는 NPC를 훑어 때가 된 것을 모으고 정렬한다.
+
+1. 인터럽트가 때가 된 NPC가 먼저다(가장 오래 기다린 것부터), 그 뒤가 주기적 차례다(가장 많이 밀린 것부터). 같으면 NPC ID 순.
+2. 앞에서부터 `max_decisions_per_tick`명만 처리한다. 인터럽트도 이 상한 안에서 센다(docs/13 §16.4 "상한 안에서"). 못 들어간 NPC는 그대로 "때가 된 채" 남아 다음 틱에 다시 줄을 선다(`last_deferred_count`). 따로 저장할 대기열이 없다: 다음 결정 시각이 과거인 것이 곧 대기다.
+3. 처리되는 NPC는 때가 된 사유를 **전부** 한 번의 결정으로 받는다(주기 + 인터럽트 여럿). NPC당 틱에 한 번이다: 결정 도중에 요청한 인터럽트(자기 것 포함)는 다음 틱에 처리된다.
+
+**인터럽트(이벤트 큐)**: 긴급 사건은 주기를 기다리지 않는다.
+
+| 함수 | 계약 |
+|---|---|
+| `request_interrupt(npc_id, reason) -> bool` | 다음 틱에 결정. 같은 사유를 다시 요청해도 하나다(먼저 요청한 시각 유지) |
+| `schedule_interrupt(npc_id, reason, delay_action_sec) -> bool` | 행동 시간으로 `delay`초 뒤에 결정(0 이상, 1e9 이하). 사유 하나에 타이머 하나: 다시 부르면 옮긴다 |
+| `schedule_interrupt_world(world, npc_id, reason, delay_world_sec) -> bool` | 같은 것을 달력 초로. 부르는 순간의 `WorldClock.time_scale`로 행동 시간으로 바꾼다(뒤에 배율이 바뀌어도 타이머는 그대로) |
+| `cancel_interrupt(npc_id, reason) -> bool` | 기다리는 인터럽트를 지운다 |
+
+- 거부(false, 아무 변화 없음): 깨어 있지 않은 NPC(메모리에 없거나 얼어 있음: 언 NPC는 아무것도 듣지 않는다, D4), 사유 이름이 snake_case가 아니거나 `"period"`, NPC당 16개 초과(`refused_request_count`, 경고 로그).
+- 인터럽트는 NPC와 함께 저장된다. 잠든 NPC가 갖고 있던 타이머는 그대로 남아 깨어난 틱에 때가 지나 있으면 처리된다.
+
+**LOD 단계**: 깨어 있는 NPC마다 `tier_period_sec`(버킷으로 나뉜 시각)에 가장 가까운 접속 플레이어와의 거리를 다시 본다. `near_radius_m` 이내면 `near`, `near_radius_m + near_exit_margin_m` 밖이면 `far`, 그 사이면 지금 단계 그대로(경계에서 흔들리지 않게). `NpcService.set_simulation_tier`로 적는다. `far`가 `near`로 바뀌면 다음 결정 시각을 near 격자의 다음 칸으로 당긴다(far 주기를 다 기다리지 않는다). `near`가 `far`로 바뀌면 잡혀 있던 차례는 그대로 두고 그 뒤부터 far 격자다.
+
+- 처음 일정을 받는 NPC(새로 생겼거나, 스케줄러가 없던 때 저장됨)는 깨어나는 순간의 거리로 단계를 정하고 첫 차례를 자기 버킷의 다음 칸으로 받는다.
+- 일정이 있는 NPC가 깨어나면(셀이 다시 ACTIVE, 또는 재시작 뒤) **저장된 단계와 시각을 그대로 이어받는다.** 그 자리에서 단계를 다시 재지 않는다: 재면 "끊지 않은 실행"과 "저장 → 재시작 → 복구한 실행"이 어긋난다. 다음 단계 판정 칸(0.5초 안)이 바로잡는다. 다음 결정 시각이 지나 있으면 깨어난 틱에(상한 안에서) 차례가 온다.
+- ACTIVE 셀의 NPC만 돈다(D4). 잠든 NPC는 일정까지 그대로 멈춘다.
+
+**저장(D11)**: NPC별 값은 구성 요소 `schedule`(그 NPC가 서 있는 셀 문서)에, 단계의 값은 world_state `systems.npc.stages.scheduler = {schema_version: 1, clock_usec: 정수}`에 있다. 버킷은 ID에서 나오므로 "버킷 위상"은 시계 값 하나다. 실행 중에만 있는 것(깨어 있는 NPC 목록, 가장 이른 시각, 진단값)은 저장하지 않고 깨어날 때 다시 만든다. 다음 결정 시각이 시계보다 한 주기 넘게 앞서 있으면(시계 문서를 잃은 저장, 주기를 줄인 설정) 깨어날 때 다음 격자 칸으로 다시 잡는다. 결정·인터럽트·단계 변화마다 `mark_npc_dirty`를 부른다.
+
+**진단값**: `last_decision_count`(이번 틱 결정 수), `last_interrupt_count`(그중 인터럽트 사유가 있던 것), `last_deferred_count`(상한에 밀린 수), `total_decision_count`, `total_interrupt_count`, `peak_decisions_per_tick`, `near_count`·`far_count`(단계별 NPC 수), `scan_count`, `tier_check_count`, `refused_request_count`, `last_step_usec`(이 단계의 처리 시간, 결정 함수 포함), `diagnostics()`(위의 사전), `schedule_info(npc_id)`(디버그 오버레이용: 단계, 버킷, 다음 차례까지 초, 기다리는 인터럽트), `tier_of`, `bucket_of`, `next_decision_in_sec`, `clock_usec`. NPC 단계 전체의 시간은 P4-1의 `NpcService.last_step_msec`이다.
+
+**테스트**: `tests/unit/npc_scheduler_test.gd`(P1, 13개). 출하 설정이 docs/13 §16.4의 예산과 같고 잘못된 값은 거부, 기본 조립의 NPC가 일정을 갖고 결정 없이 서 있음, **틱 길이(60·20·10Hz)와 무관하게 주기마다 한 번**과 버킷 분산, **상한**(한 버킷에 다섯: 2·2·1로 나뉘고 아무도 빠지지 않음, 여러 주기를 넘긴 긴 틱에도 한 번씩), **인터럽트**(다음 틱에 처리, 주기적 차례는 제자리, 사유 병합, 결정 중 요청은 다음 틱, 주기와 겹치면 한 번, 거부 넷), 상한이 찼을 때 인터럽트 우선과 기다린 순서, **타이머**(행동·달력 시간, 옮기기, 취소, 16개 상한), **거리에 따른 단계 변화**와 여유 구간, **잠든 셀·멈춘 월드에서 결정 없음**(훑지도 않음), 할 일 없는 틱은 훑지 않음(`scan_count` = 결정 수), **연속 실행과 저장 → 재시작 → 복구 실행의 결정 기록 일치**(600틱 대본: 플레이어가 멀어졌다 돌아와 NPC가 far·잠듦·메모리 해제를 거치고, 인터럽트·타이머가 틱 전후에 요청됨. 저장 시점 넷, 문서는 JSON을 거침. 결정 기록 전체, 끝의 일정 문서, 시계가 같아야 한다), 저장 모양과 깨진 문서 거부·스케줄러 전의 저장·시계를 잃은 저장, 측정(25명, 경고만). "NPC 문서가 시간이 지나도 같다"를 비교하던 다른 테스트 세 군데(`npc_state_test.gd`의 5초 정지 비교, `npc_cell_persistence_test.gd`의 `_saved()`, `npc_mind_test.gd`의 셀 왕복 비교)는 `schedule` 슬롯만 빼고 비교하도록 고쳤다(일정은 시간이 가면 바뀌는 것이 맞고, 저장·복구 동일성은 위 테스트가 본다).
+
+**뒤 티켓이 알아야 할 것**
+
+- P4-4(행동 선택): `NpcDecider`를 상속해 `decide`를 채우고, 조립에서 `config.npc_decider` 자리에 넣거나 `install`이 돌려준 단계에 `set_decider`를 부른다. `reasons`로 하드 인터럽트(예: `saw_zombie`)와 주기적 재평가를 구분한다. 욕구의 다음 범주 경계는 결정 끝에 `scheduler.schedule_interrupt_world(world, npc_id, "need_...", 경계까지 달력 초)`로 예약한다(같은 사유는 덮어쓴다). 결정이 `near` 2초·`far` 10초보다 빨리 필요하면 인터럽트를 쓴다: 주기를 줄이지 않는다. 결정 함수의 저장 상태(현재 행동, 최소 지속 시간)는 P4-4의 구성 요소에 둔다.
+- P4-5a(실행기): 스케줄러 **뒤에** `add_stage`한다(결정한 틱에 바로 실행을 시작할 수 있다). 행동 완료·실패·경로 실패는 `request_interrupt(npc_id, "action_done" 같은 사유)`: 다음 틱에(상한 안에서) 재평가된다. 스케줄러 참조는 조립에서 `install`의 반환값을 넘겨받는다. 좀비 목격 같은 감지를 누가 하든(P4-4의 주기적 확인, 또는 별도 감지 단계) 같은 함수를 부른다.
+- P4-7·P4-8: `NpcState.simulation_tier`와 `schedule_info(npc_id)`를 읽는다. 일정은 공개 정보가 아니다(D9).
+- P4-Z: 측정에는 `last_step_usec`·`NpcService.last_step_msec`·`peak_decisions_per_tick`·`last_deferred_count`를 쓴다. 예산을 넘으면 먼저 `decision_far_period_sec`와 `max_decisions_per_tick`을 조정한다(docs/13 §16.4).
+
 ### 17.4 NPC 감정·기억·관계 데이터(P4-6, component id `emotions`·`memories`·`relationships`)
 
 행동 선택이나 사회 행동이 아니라 **서버 데이터와 저장 경로만** 만든다. `ServerComposition`이 P4-1의 `NpcService`를 등록한 바로 뒤 세 `NpcComponent` factory를 등록한다. 새 RPC·전송 데이터가 없으므로 `PROTOCOL_VERSION`은 바꾸지 않았다. 감정·기억·관계는 P4-7의 공개 행에도 들어가지 않는다(D9).

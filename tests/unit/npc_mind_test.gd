@@ -227,7 +227,13 @@ func test_emotions_memories_and_event_ids_survive_cell_release_and_reload() -> v
 	alice.position = SPAWN
 	_run(world, TICK)
 	assert_true(_npcs(world).has_npc(npc_id))
-	assert_eq(_json(_npcs(world).npc_document(npc_id)[NpcState.KEY_COMPONENTS] as Dictionary), _json(before), "the JSON save data is identical after the cell round trip")
+	var after: Dictionary = (_npcs(world).npc_document(npc_id)[NpcState.KEY_COMPONENTS] as Dictionary).duplicate(true)
+	# Every component but the schedule (P4-3): back in a simulated cell the
+	# NPC's overdue turn comes at once and its next turn moves on, which is
+	# what a schedule is for (npc_scheduler_test.gd checks its round trip).
+	for components: Dictionary in [before, after]:
+		assert_true(components.erase(NpcScheduleComponent.COMPONENT_ID), "the composition schedules the NPC")
+	assert_eq(_json(after), _json(before), "the JSON save data is identical after the cell round trip")
 	assert_eq(_emotions(world, npc_id).value_at("hope", 5.0), 0.75)
 	assert_eq(_memories(world, npc_id).memory(memory_id).event_id, event_id)
 	var next_event_id: String = _memories(world, npc_id).issue_event_id()
