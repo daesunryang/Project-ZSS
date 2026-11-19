@@ -93,7 +93,7 @@ func _near(actual: float, expected: float) -> bool:
 
 
 func _json(value: Dictionary) -> Dictionary:
-	return JSON.parse_string(JSON.stringify(value)) as Dictionary
+	return JSON.parse_string(JSON.stringify(value, "", false, true)) as Dictionary
 
 
 func test_shipped_settings_define_only_three_changing_needs() -> void:
@@ -232,6 +232,55 @@ func test_needs_save_restore_and_reject_a_broken_component_document() -> void:
 	var refused: ServerWorld = _world()
 	assert_contains("; ".join(refused.restore_documents(broken["world_state"], broken["players"])), "last_updated_world_time")
 	assert_eq(_npcs(refused).npc_count(), 0, "component validation changes nothing on error")
+
+
+func test_schema_two_json_round_trip_keeps_every_saved_float_bit_exact() -> void:
+	var needs: NpcNeeds = _fresh_needs()
+	var segment_at: float = 0.0015432098765432098
+	assert_true(needs.set_rate_modifiers(0.016666666666666666, 0.30000000000000004, segment_at).ok)
+	needs.advance_to(segment_at + 0.016666666666666666)
+	var document: Dictionary = needs.to_document()
+	document[NpcComponent.KEY_SCHEMA_VERSION] = needs.schema_version()
+	var round_tripped: Dictionary = _json(document)
+	assert_eq(int(round_tripped[NpcComponent.KEY_SCHEMA_VERSION]), needs.schema_version())
+	round_tripped.erase(NpcComponent.KEY_SCHEMA_VERSION)
+	document.erase(NpcComponent.KEY_SCHEMA_VERSION)
+	assert_eq(round_tripped, document, "schema 2 contains lossless float64 strings, not parser-rounded JSON numbers")
+	round_tripped[NpcComponent.KEY_SCHEMA_VERSION] = needs.schema_version()
+
+	var restored: NpcNeeds = NpcNeeds.new(_settings)
+	assert_eq(restored.restore_document(round_tripped).size(), 0)
+	assert_eq(restored.to_document(), needs.to_document())
+	assert_true(restored.last_updated_world_time() == needs.last_updated_world_time())
+	for kind: String in NpcNeedKind.SIMULATED_KINDS:
+		assert_true(restored.value(kind) == needs.value(kind), "%s value is bit-equal" % kind)
+
+
+func test_schema_one_numeric_document_is_still_readable() -> void:
+	var elapsed: float = 10.0
+	var rates: Dictionary = {}
+	var values: Dictionary = {}
+	for kind: String in NpcNeedKind.SIMULATED_KINDS:
+		var rate: float = _settings.rate_per_world_sec(kind, NpcNeedKind.IDLE)
+		rates[kind] = rate
+		values[kind] = rate * elapsed
+	var legacy: Dictionary = {
+		NpcComponent.KEY_SCHEMA_VERSION: NpcNeeds.LEGACY_SCHEMA_VERSION,
+		NpcNeeds.KEY_VALUES: values,
+		NpcNeeds.KEY_ACTIVITY: NpcNeedKind.IDLE,
+		NpcNeeds.KEY_PERSONALITY_MODIFIER: 1.0,
+		NpcNeeds.KEY_ABILITY_MODIFIER: 1.0,
+		NpcNeeds.KEY_LAST_UPDATED: elapsed,
+		NpcNeeds.KEY_SEGMENT_STARTED: 0.0,
+		NpcNeeds.KEY_SEGMENT_VALUES: {NpcNeedKind.HUNGER: 0.0, NpcNeedKind.THIRST: 0.0, NpcNeedKind.FATIGUE: 0.0},
+		NpcNeeds.KEY_SEGMENT_RATES: rates,
+	}
+	var restored: NpcNeeds = NpcNeeds.new(_settings)
+	assert_eq(restored.restore_document(_json(legacy)).size(), 0, "schema 1 numbers remain loadable after their historical parser rounding")
+	for kind: String in NpcNeedKind.SIMULATED_KINDS:
+		assert_true(_near(restored.value(kind), float(values[kind])))
+	var migrated: Dictionary = restored.to_document()
+	assert_eq(typeof((migrated[NpcNeeds.KEY_VALUES] as Dictionary)[NpcNeedKind.HUNGER]), TYPE_STRING, "the next save writes schema 2 float64 strings")
 
 
 func test_a_tuning_change_does_not_invalidate_or_rewrite_a_saved_rate_segment() -> void:

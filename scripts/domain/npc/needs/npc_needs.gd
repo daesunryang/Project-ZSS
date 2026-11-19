@@ -6,7 +6,8 @@ extends NpcComponent
 ## next_category_boundary_world_time() to schedule the next relevant wakeup.
 
 const COMPONENT_ID: String = "needs"
-const SCHEMA_VERSION: int = 1
+const SCHEMA_VERSION: int = 2
+const LEGACY_SCHEMA_VERSION: int = 1
 const EVENT_SATISFIED: String = "npc_need_satisfied"
 const EVENT_ACTIVITY_CHANGED: String = "npc_need_activity_changed"
 const EVENT_MODIFIERS_CHANGED: String = "npc_need_modifiers_changed"
@@ -26,6 +27,8 @@ const KEY_LAST_UPDATED: String = "last_updated_world_time"
 const KEY_SEGMENT_STARTED: String = "rate_segment_started_world_time"
 const KEY_SEGMENT_VALUES: String = "rate_segment_start_values"
 const KEY_SEGMENT_RATES: String = "rate_segment_rates_per_world_sec"
+const FLOAT64_BYTE_COUNT: int = 8
+const FLOAT64_BASE64_PATTERN: String = "^[A-Za-z0-9+/]{11}=$"
 const SOURCE_MAX_LENGTH: int = 128
 const MODIFIER_MAX: float = NpcNeedSettings.MAX_RATE_MODIFIER
 ## A falling continuous value changes category immediately after reaching an
@@ -96,36 +99,39 @@ func on_detached(_world: ServerWorld, _npc: NpcState, _retired: bool) -> void:
 
 func to_document() -> Dictionary:
 	return {
-		KEY_VALUES: _ordered_values(_values),
+		KEY_VALUES: _encoded_values(_values),
 		KEY_ACTIVITY: _activity,
-		KEY_PERSONALITY_MODIFIER: _personality_modifier,
-		KEY_ABILITY_MODIFIER: _ability_modifier,
-		KEY_LAST_UPDATED: _last_updated_world_time,
-		KEY_SEGMENT_STARTED: _rate_segment_started_world_time,
-		KEY_SEGMENT_VALUES: _ordered_values(_rate_segment_start_values),
-		KEY_SEGMENT_RATES: _ordered_values(_rate_segment_rates),
+		KEY_PERSONALITY_MODIFIER: _encode_float64(_personality_modifier),
+		KEY_ABILITY_MODIFIER: _encode_float64(_ability_modifier),
+		KEY_LAST_UPDATED: _encode_float64(_last_updated_world_time),
+		KEY_SEGMENT_STARTED: _encode_float64(_rate_segment_started_world_time),
+		KEY_SEGMENT_VALUES: _encoded_values(_rate_segment_start_values),
+		KEY_SEGMENT_RATES: _encoded_values(_rate_segment_rates),
 	}
 
 
 ## Validates the complete component document before changing this instance.
 func restore_document(document: Dictionary) -> PackedStringArray:
 	var errors: PackedStringArray = []
-	if not ItemInstance.is_integer_value(document.get(NpcComponent.KEY_SCHEMA_VERSION, null)) or int(document[NpcComponent.KEY_SCHEMA_VERSION]) != SCHEMA_VERSION:
+	var raw_version: Variant = document.get(NpcComponent.KEY_SCHEMA_VERSION, null)
+	if not ItemInstance.is_integer_value(raw_version) or not [LEGACY_SCHEMA_VERSION, SCHEMA_VERSION].has(int(raw_version)):
 		errors.append("unsupported schema_version")
-	var parsed_values: Dictionary[String, float] = _parse_values(document.get(KEY_VALUES, null), KEY_VALUES, errors)
-	var parsed_segment_values: Dictionary[String, float] = _parse_values(document.get(KEY_SEGMENT_VALUES, null), KEY_SEGMENT_VALUES, errors)
-	var parsed_segment_rates: Dictionary[String, float] = _parse_rates(document.get(KEY_SEGMENT_RATES, null), errors)
+		return errors
+	var saved_version: int = int(raw_version)
+	var parsed_values: Dictionary[String, float] = _parse_values(document.get(KEY_VALUES, null), KEY_VALUES, saved_version, errors)
+	var parsed_segment_values: Dictionary[String, float] = _parse_values(document.get(KEY_SEGMENT_VALUES, null), KEY_SEGMENT_VALUES, saved_version, errors)
+	var parsed_segment_rates: Dictionary[String, float] = _parse_rates(document.get(KEY_SEGMENT_RATES, null), saved_version, errors)
 	var activity_value: Variant = document.get(KEY_ACTIVITY, null)
 	if typeof(activity_value) != TYPE_STRING or not NpcNeedKind.is_valid_activity(str(activity_value)):
 		errors.append("activity must be idle, resting or working")
-	var personality_value: Variant = document.get(KEY_PERSONALITY_MODIFIER, null)
-	var ability_value: Variant = document.get(KEY_ABILITY_MODIFIER, null)
+	var personality_value: float = _parse_saved_float(document.get(KEY_PERSONALITY_MODIFIER, null), KEY_PERSONALITY_MODIFIER, saved_version, errors)
+	var ability_value: float = _parse_saved_float(document.get(KEY_ABILITY_MODIFIER, null), KEY_ABILITY_MODIFIER, saved_version, errors)
 	if not _is_valid_modifier(personality_value):
 		errors.append("personality_modifier must be finite and within (0, 100]")
 	if not _is_valid_modifier(ability_value):
 		errors.append("ability_modifier must be finite and within (0, 100]")
-	var updated_value: Variant = document.get(KEY_LAST_UPDATED, null)
-	var segment_started_value: Variant = document.get(KEY_SEGMENT_STARTED, null)
+	var updated_value: float = _parse_saved_float(document.get(KEY_LAST_UPDATED, null), KEY_LAST_UPDATED, saved_version, errors)
+	var segment_started_value: float = _parse_saved_float(document.get(KEY_SEGMENT_STARTED, null), KEY_SEGMENT_STARTED, saved_version, errors)
 	if not _is_non_negative_number(updated_value):
 		errors.append("last_updated_world_time must be finite and >= 0")
 	if not _is_non_negative_number(segment_started_value):
@@ -146,10 +152,10 @@ func restore_document(document: Dictionary) -> PackedStringArray:
 		return errors
 	_values = parsed_values
 	_activity = str(activity_value)
-	_personality_modifier = float(personality_value)
-	_ability_modifier = float(ability_value)
-	_last_updated_world_time = float(updated_value)
-	_rate_segment_started_world_time = float(segment_started_value)
+	_personality_modifier = personality_value
+	_ability_modifier = ability_value
+	_last_updated_world_time = updated_value
+	_rate_segment_started_world_time = segment_started_value
 	_rate_segment_start_values = parsed_segment_values
 	_rate_segment_rates = parsed_segment_rates
 	return errors
@@ -316,39 +322,76 @@ func _reset_values() -> void:
 		_rate_segment_start_values[kind] = 0.0
 
 
-func _ordered_values(source: Dictionary[String, float]) -> Dictionary:
+## Schema 2 stores every float as its eight IEEE-754 bytes in base64. JSON
+## then only handles strings, so even values below 0.1 and exponent-form
+## rates survive Godot 4.7.2's parser bit-for-bit.
+func _encoded_values(source: Dictionary[String, float]) -> Dictionary:
 	var result: Dictionary = {}
 	for kind: String in NpcNeedKind.SIMULATED_KINDS:
-		result[kind] = source.get(kind, 0.0)
+		result[kind] = _encode_float64(source.get(kind, 0.0))
 	return result
 
 
-func _parse_values(raw: Variant, label: String, errors: PackedStringArray) -> Dictionary[String, float]:
+func _parse_values(raw: Variant, label: String, saved_version: int, errors: PackedStringArray) -> Dictionary[String, float]:
 	var parsed: Dictionary[String, float] = {}
 	if typeof(raw) != TYPE_DICTIONARY or (raw as Dictionary).size() != NpcNeedKind.SIMULATED_KINDS.size():
 		errors.append("%s must contain hunger, thirst and fatigue" % label)
 		return parsed
 	for kind: String in NpcNeedKind.SIMULATED_KINDS:
 		var raw_value: Variant = (raw as Dictionary).get(kind, null)
-		if not _is_number(raw_value) or float(raw_value) < 0.0 or float(raw_value) > _settings.need_max:
+		var error_count: int = errors.size()
+		var parsed_value: float = _parse_saved_float(raw_value, "%s.%s" % [label, kind], saved_version, errors)
+		if errors.size() != error_count:
+			continue
+		if parsed_value < 0.0 or parsed_value > _settings.need_max:
 			errors.append("%s.%s must be finite and within [0, need_max]" % [label, kind])
 		else:
-			parsed[kind] = float(raw_value)
+			parsed[kind] = parsed_value
 	return parsed
 
 
-func _parse_rates(raw: Variant, errors: PackedStringArray) -> Dictionary[String, float]:
+func _parse_rates(raw: Variant, saved_version: int, errors: PackedStringArray) -> Dictionary[String, float]:
 	var parsed: Dictionary[String, float] = {}
 	if typeof(raw) != TYPE_DICTIONARY or (raw as Dictionary).size() != NpcNeedKind.SIMULATED_KINDS.size():
 		errors.append("%s must contain hunger, thirst and fatigue" % KEY_SEGMENT_RATES)
 		return parsed
 	for kind: String in NpcNeedKind.SIMULATED_KINDS:
 		var raw_rate: Variant = (raw as Dictionary).get(kind, null)
-		if not _is_number(raw_rate):
-			errors.append("%s.%s must be finite" % [KEY_SEGMENT_RATES, kind])
-		else:
-			parsed[kind] = float(raw_rate)
+		var error_count: int = errors.size()
+		var parsed_rate: float = _parse_saved_float(raw_rate, "%s.%s" % [KEY_SEGMENT_RATES, kind], saved_version, errors)
+		if errors.size() == error_count:
+			parsed[kind] = parsed_rate
 	return parsed
+
+
+static func _encode_float64(value_to_encode: float) -> String:
+	var bytes: PackedByteArray = PackedByteArray()
+	bytes.resize(FLOAT64_BYTE_COUNT)
+	bytes.encode_double(0, value_to_encode)
+	return Marshalls.raw_to_base64(bytes)
+
+
+## Schema 1 held JSON numbers. Schema 2 emits base64 strings, but also accepts
+## finite numbers so tests and tools that construct an in-memory component
+## document can still use the public restore seam without binary encoding.
+func _parse_saved_float(raw: Variant, label: String, saved_version: int, errors: PackedStringArray) -> float:
+	if _is_number(raw):
+		return float(raw)
+	if saved_version == LEGACY_SCHEMA_VERSION or typeof(raw) != TYPE_STRING:
+		errors.append("%s must be a finite number" % label)
+		return 0.0
+	if RegEx.create_from_string(FLOAT64_BASE64_PATTERN).search(str(raw)) == null:
+		errors.append("%s must be a saved float64" % label)
+		return 0.0
+	var bytes: PackedByteArray = Marshalls.base64_to_raw(str(raw))
+	if bytes.size() != FLOAT64_BYTE_COUNT:
+		errors.append("%s must be a saved float64" % label)
+		return 0.0
+	var decoded: float = bytes.decode_double(0)
+	if not is_finite(decoded):
+		errors.append("%s must be finite" % label)
+		return 0.0
+	return decoded
 
 
 func _project_values(origin: Dictionary[String, float], rates: Dictionary[String, float], elapsed: float) -> Dictionary[String, float]:

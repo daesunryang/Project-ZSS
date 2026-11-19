@@ -2603,11 +2603,11 @@ Phase 4(docs/13 §6, §16) 티켓의 계약을 티켓마다 한 절씩 적는다
 
 **저장**
 
-구성 요소 문서 schema 1: `{schema_version, values: {hunger, thirst, fatigue}, activity, personality_modifier, ability_modifier, last_updated_world_time, rate_segment_started_world_time, rate_segment_start_values: {hunger, thirst, fatigue}, rate_segment_rates_per_world_sec: {hunger, thirst, fatigue}}`. `last_updated_world_time`은 마지막 평가 시각이고 `rate_segment_*`가 주기 독립 적분의 실제 원점이다. 복구는 값 범위, 활동, modifier, 두 시각의 순서와 “저장된 구간 원점·비율로 계산한 값 = 저장된 현재값”을 먼저 검증한다. 하나라도 틀리면 P4-1 계약대로 그 문서의 NPC를 로딩하지 않는다. 비율도 구간에 저장하므로 튜닝 파일의 수치가 바뀌어도 기존 저장은 깨지지 않고 이미 시작된 구간의 과거도 다시 쓰이지 않는다. 새 설정 비율은 다음 활동/modifier 전환부터 적용된다.
+구성 요소 문서 schema 2의 필드는 schema 1과 같지만, `values`·두 modifier·두 시각·`rate_segment_start_values`·`rate_segment_rates_per_world_sec`의 모든 float는 IEEE-754 64비트 8바이트를 base64 문자열로 저장한다. 단위는 계속 욕구 값, 달력 초, 욕구 값/달력 초다. Godot 4.7.2 JSON 파서가 0.1 미만의 긴 소수와 지수 표기를 끝 비트까지 읽지 못하므로 숫자 단위를 바꿔 일부 값만 피하지 않고 구성 요소의 결정론 상태 전체를 손실 없이 보존한다. schema 1의 숫자 문서도 읽으며 다음 저장부터 schema 2가 된다. `last_updated_world_time`은 마지막 평가 시각이고 `rate_segment_*`가 주기 독립 적분의 실제 원점이다. 복구는 값 범위, 활동, modifier, 두 시각의 순서와 “저장된 구간 원점·비율로 계산한 값 = 저장된 현재값”을 먼저 검증한다. 하나라도 틀리면 P4-1 계약대로 그 문서의 NPC를 로딩하지 않는다. 비율도 구간에 저장하므로 튜닝 파일의 수치가 바뀌어도 기존 저장은 깨지지 않고 이미 시작된 구간의 과거도 다시 쓰이지 않는다. 새 설정 비율은 다음 활동/modifier 전환부터 적용된다.
 
 `advance_to`, 활동/modifier 전환, 실제 `satisfy`로 저장 문서가 바뀌면 붙어 있는 `NpcService.mark_npc_dirty(npc_id)`를 부른다. 이 호출은 셀 저장 캐시의 revision을 올려 강제 종료 복구에서 변화가 빠지지 않게 한다.
 
-**테스트**: `tests/unit/npc_needs_test.gd`가 출하 설정/0-rate 정의, 조립 등록과 처음 값, 1초 대 10초 적분·저장 문서 동일성, 휴식/업무 비율, 다음 경계 절대 시각, `satisfy` 검증·event·dirty 표시, JSON-safe 저장/복구와 잘못된 구성 요소 문서의 원자적 거부를 검사한다.
+**테스트**: `tests/unit/npc_needs_test.gd`가 출하 설정/0-rate 정의, 조립 등록과 처음 값, 1초 대 10초 적분·저장 문서 동일성, 휴식/업무 비율, 다음 경계 절대 시각, `satisfy` 검증·event·dirty 표시, schema 2의 bit-exact JSON 왕복, schema 1 호환, JSON-safe 저장/복구와 잘못된 구성 요소 문서의 원자적 거부를 검사한다. `tests/unit/npc_save_roundtrip_test.gd`는 실제로 작동시킨 NPC의 모든 현재 저장 구성 요소 문서를 full-precision JSON 왕복해 float 비트를 비교한다.
 
 ### 17.3 NPC AI 스케줄러(P4-3, 단계 `scheduler`, 구성 요소 `schedule`)
 

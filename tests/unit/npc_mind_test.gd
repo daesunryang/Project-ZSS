@@ -94,7 +94,7 @@ func _participants(entity_id: String, role: String = "actor") -> Array[Dictionar
 
 
 func _json(value: Dictionary) -> Dictionary:
-	return JSON.parse_string(JSON.stringify(value)) as Dictionary
+	return JSON.parse_string(JSON.stringify(value, "", false, true)) as Dictionary
 
 
 func _record(store: NpcMemoryStore, event_id: String, event_type: String, importance: float, long_term: bool = false, strength: float = 1.0) -> ActionResult:

@@ -53,9 +53,23 @@ func test_save_then_load_in_new_service_instance() -> void:
 const PRECISION_SAMPLES: Array[float] = [1.0 / 3.0, 0.1 + 0.2, 123456.789012345678, -2.0 / 7.0e-5, 2.0 / 3.0 * 100.0]
 
 
+func _precision_needs_document() -> Dictionary:
+	var npc: NpcState = NpcState.new()
+	npc.npc_id = "npc_000001"
+	var needs: NpcNeeds = NpcNeeds.new(NpcNeedSettings.new())
+	needs.on_created(npc, NpcDefinition.new(), WorldClock.new(1.0, false))
+	var segment_at: float = 0.0015432098765432098
+	needs.set_rate_modifiers(0.016666666666666666, 0.30000000000000004, segment_at)
+	needs.advance_to(segment_at + 0.016666666666666666)
+	var document: Dictionary = needs.to_document()
+	document[NpcComponent.KEY_SCHEMA_VERSION] = needs.schema_version()
+	return document
+
+
 func test_saved_floats_come_back_exactly() -> void:
-	var world_doc: Dictionary = {"schema_version": SaveMigrations.WORLD_SCHEMA_VERSION, "world_id": WORLD, "samples": PRECISION_SAMPLES.duplicate()}
-	var cells: Dictionary = {"cell_0_0": WorldCellDocument.create("cell_0_0", {}, {"samples": PRECISION_SAMPLES.duplicate()})}
+	var needs_document: Dictionary = _precision_needs_document()
+	var world_doc: Dictionary = {"schema_version": SaveMigrations.WORLD_SCHEMA_VERSION, "world_id": WORLD, "samples": PRECISION_SAMPLES.duplicate(), "needs": needs_document.duplicate(true)}
+	var cells: Dictionary = {"cell_0_0": WorldCellDocument.create("cell_0_0", {}, {"samples": PRECISION_SAMPLES.duplicate(), "needs": needs_document.duplicate(true)})}
 	assert_eq(SaveService.new(_root).save_world(WORLD, world_doc, {}, cells), OK)
 	var service: SaveService = SaveService.new(_root)
 	var loaded: Dictionary = service.load_world(WORLD)
@@ -67,6 +81,11 @@ func test_saved_floats_come_back_exactly() -> void:
 	for index: int in range(PRECISION_SAMPLES.size()):
 		assert_true(float(world_samples[index]) == PRECISION_SAMPLES[index], "world float %d exact" % index)
 		assert_true(float(cell_samples[index]) == PRECISION_SAMPLES[index], "cell float %d exact" % index)
+	var world_needs: Dictionary = (loaded["world_state"] as Dictionary)["needs"]
+	var cell_needs: Dictionary = ((cell["document"] as Dictionary)[WorldCellDocument.KEY_SYSTEMS] as Dictionary)["needs"]
+	for key: String in [NpcNeeds.KEY_VALUES, NpcNeeds.KEY_PERSONALITY_MODIFIER, NpcNeeds.KEY_ABILITY_MODIFIER, NpcNeeds.KEY_LAST_UPDATED, NpcNeeds.KEY_SEGMENT_STARTED, NpcNeeds.KEY_SEGMENT_VALUES, NpcNeeds.KEY_SEGMENT_RATES]:
+		assert_eq(world_needs[key], needs_document[key], "world needs %s exact" % key)
+		assert_eq(cell_needs[key], needs_document[key], "cell needs %s exact" % key)
 
 
 func test_released_cell_copy_keeps_floats_exactly() -> void:
