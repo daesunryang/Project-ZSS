@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="NpcActionDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/decision/npc_action_definition.gd" id="1_action"]
+
+[resource]
+script = ExtResource("1_action")
+action_id = "work"
+observable_label = "work"
+fixed_priority = 30
+base_priority = 0.2
+personality_traits = {
+"conscientiousness": 1.0
+}
+personality_weight = 0.1
+active_from_hour = 8.0
+active_until_hour = 18.0
+environment_weight = 0.2
+requires_job = true
+blocked_by_danger_need = true
+min_duration_sec = 20.0

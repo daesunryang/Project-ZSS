@@ -84,10 +84,15 @@ var npc_net: NpcNetSettings
 ## needs the map content its home spots are in.
 var npc_roster: NpcRoster = null
 ## P4-3 (docs/09 §17.3): when NPCs think (NpcScheduler), and what they do
-## when their turn comes. null decider (the default) = "no decision"; P4-4
-## brings the real one.
+## when their turn comes. null decider (the default) = P4-4's
+## NpcUtilityDecider, made from `npc_decision` and `npc_actions`; a test
+## gives its own decider here.
 var npc_schedule: NpcScheduleSettings
 var npc_decider: NpcDecider = null
+## P4-4 (docs/09 §17.6): how NPCs choose what to do, and the actions they
+## choose from.
+var npc_decision: NpcDecisionSettings
+var npc_actions: NpcActionCatalog
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -129,6 +134,8 @@ static func from_defaults() -> CompositionConfig:
 	config.npc_mind = NpcMindSettings.load_or_default()
 	config.npc_net = NpcNetSettings.load_or_default()
 	config.npc_schedule = NpcScheduleSettings.load_or_default()
+	config.npc_decision = NpcDecisionSettings.load_or_default()
+	config.npc_actions = NpcActionCatalog.load_directory()
 	return config
 
 
@@ -145,6 +152,11 @@ func _validate_npcs() -> PackedStringArray:
 	errors.append_array(npc_needs.validate())
 	errors.append_array(npc_net.validate())
 	errors.append_array(npc_schedule.validate() if npc_schedule != null else PackedStringArray(["composition config is incomplete (npc_schedule)"]))
+	if npc_decision == null or npc_actions == null:
+		errors.append("composition config is incomplete (npc_decision)")
+	else:
+		errors.append_array(npc_decision.validate())
+		errors.append_array(npc_decision.validate_against(npc_actions))
 	if npc_roster != null:
 		errors.append_array(npc_roster.validate())
 		errors.append_array(npc_roster.validate_against(npc_definitions, map_content, StructureGrid.new(building.grid_module_m), npc.max_npcs))

@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="NpcActionDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/decision/npc_action_definition.gd" id="1_action"]
+
+[resource]
+script = ExtResource("1_action")
+action_id = "eat"
+observable_label = "eat"
+fixed_priority = 50
+need_kind = "hunger"
+need_weight = 1.0
+min_need_urgency = 0.25
+min_duration_sec = 5.0

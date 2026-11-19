@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="NpcActionDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/decision/npc_action_definition.gd" id="1_action"]
+
+[resource]
+script = ExtResource("1_action")
+action_id = "flee"
+observable_label = "flee"
+navigate_label = "flee"
+selectable = false
+fixed_priority = 100
+base_priority = 1.0
+min_duration_sec = 0.0
+retry_cooldown_sec = 2.0

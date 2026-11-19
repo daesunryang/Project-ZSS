@@ -98,8 +98,16 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	if npcs.register_component(RelationshipStore.COMPONENT_ID, RelationshipStore.create) != OK:
 		return null
 	# P4-3 (docs/09 §17.3): the schedule component and the scheduler stage.
-	var npc_scheduler: NpcScheduler = NpcScheduler.install(npcs, config.npc_schedule, config.npc_decider)
+	# P4-4 (docs/09 §17.6): what the NPCs decide, its component and the threat
+	# sensor stage. The decider chooses nothing until it has an executor
+	# (P4-5a: NpcUtilityDecider.set_executor, here).
+	var npc_decider: NpcDecider = config.npc_decider
+	if npc_decider == null and config.npc_decision != null and config.npc_actions != null:
+		npc_decider = NpcUtilityDecider.new(config.npc_decision, config.npc_actions, config.npc_needs)
+	var npc_scheduler: NpcScheduler = NpcScheduler.install(npcs, config.npc_schedule, npc_decider)
 	if npc_scheduler == null:
+		return null
+	if npc_decider is NpcUtilityDecider and (npc_decider as NpcUtilityDecider).install(npcs, npc_scheduler) != OK:
 		return null
 	# P2-T16: trades between two players. Last, so its step sees what this
 	# tick did to its parties (a death, a rest, a move). It is told about
@@ -131,8 +139,9 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 		zombie_net.free()
 		return error
 	# P4-7 (docs/09 §17.5): public NPC rows, interest reconciliation and
-	# 5 Hz position snapshots. The action-label source stays idle until P4-4.
-	var npc_net: NpcNetModule = NpcNetModule.new(config.npc_net)
+	# 5 Hz position snapshots. The action label is what the NPC's decision
+	# component says it does (P4-4, docs/09 §17.6).
+	var npc_net: NpcNetModule = NpcNetModule.new(config.npc_net, NpcDecisionComponent.label_of)
 	error = service.register_module(npc_net)
 	if error != OK:
 		npc_net.free()

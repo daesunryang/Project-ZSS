@@ -2746,3 +2746,135 @@ NPC 서버 상태는 `NpcService`가 계속 최종 권한을 가진다. `NpcNetM
 - 순수 테스트는 전체 공개 행과 위치 행의 왕복, 키 개수, 잘못된 자료 거부, 신뢰 이벤트만 미러 구성원을 바꾸는 것, 행동 라벨 이벤트, 비공개 키·표식 값 부재, MultiMesh 몸체 수와 한국어 이름표를 검사한다.
 - 실제 ENet 통합 테스트는 두 클라이언트가 같은 NPC 공개 행을 받고, 주입된 행동 라벨 변화(ch0)와 `set_npc_transform` 이동(ch2)을 같이 보며, NPC가 관심 셀 밖으로 옮겨지면 둘 다 `npc_left`로 지우는 것을 `NetTestCluster.wait_ticks`로 검사한다. 서버 구성 요소의 비밀 표식·정의 ID·배경 태그가 실제 접속 조각 배열에 없음을 같이 검사한다.
 - 임시 수치와 실제 창·대역폭에서 확인하지 못한 항목은 docs/15 §17.5에 있다.
+
+### 17.6 NPC 행동 선택(P4-4, 구성 요소 `decision`, 단계 `threat_sensor`)
+
+NPC가 **무엇을** 할지 정한다(docs/05 §9·§10): 하드 인터럽트 → 정규화된 Utility 선택 → 제한된 상태 머신. **언제** 생각하는지는 스케줄러(§17.3)가, 고른 행동을 **어떻게** 해내는지는 실행기(P4-5a·P4-5b, 아래 "실행기 계약")가 맡는다. 이 티켓은 이동·경로·예약·욕구 감소·인벤토리를 만들지 않았다. 프로토콜과 `PROTOCOL_VERSION`은 바꾸지 않았다. `scripts/domain/npc/`의 다른 티켓 파일(P4-1·P4-2·P4-3·P4-6)은 고치지 않았다. 수치는 전부 PROVISIONAL(docs/15 §17.6)이다.
+
+**실행기가 없으면 아무것도 정하지 않는다.** 기본 조립은 결정 함수를 꽂아 두지만 실행기(`NpcUtilityDecider.set_executor`)는 P4-5a가 넣는다. 그 전에는 NPC가 여전히 서 있고 `decision` 문서도 변하지 않는다(행동을 고르고도 해낼 수 없는 상태를 만들지 않으려는 것).
+
+**파일(`scripts/domain/npc/decision/`, 노드 없음)**
+
+| 구성 요소 | 계약 |
+|---|---|
+| `NpcActionDefinition` (Resource, `resources/definitions/npc_actions/<id>.tres`) | 후보 행동 하나. `action_id`(snake_case, 32자 이하, 저장 키), 보이는 라벨 둘(`observable_label`: 수행 중, `navigate_label`: 가는 중. `idle`·`walk`·`eat`·`sleep`·`work`·`flee` 중 하나), `selectable`(false면 Utility 후보가 아님: 도주), `fixed_priority`(동점 해소), 항 데이터(`base_priority`, `need_kind`·`need_weight`·`min_need_urgency`, `personality_traits`·`personality_weight`, `active_from_hour`·`active_until_hour`·`environment_weight`, `relationship_weight`·`memory_weight`), 선행조건(`requires_job`, `blocked_by_danger_need`), `min_duration_sec`, `retry_cooldown_sec`(둘 다 -1이면 설정 기본값). `validate()` |
+| `NpcActionCatalog` | `action_id`로 찾는 목록. `load_directory()`, `action_ids()`(정렬: 후보를 보는 순서) |
+| `NpcDecisionSettings` (`data/tuning/npc_decision_settings.tres`) | `min_action_score`, `current_action_bonus`, `score_jitter`, `fallback_action_id`, `default_min_duration_sec`, `recover_cooldown_sec`, `retry_cooldown_sec`·`retry_cooldown_max_sec`, `flee_action_id`, `threat_sight_range_m`, `threat_check_period_sec`, `day_length_world_sec`, `record_capacity`, `record_top_candidates`. `validate()`, `validate_against(actions)` |
+| `NpcUtilityScorer` | 합산식(아래). 순수 함수 |
+| `NpcDecisionState` | 상태 일곱과 허용 전이 표 |
+| `NpcDecisionComponent` (`decision`) | NPC 한 명의 결정 상태(저장). 결정 기록 링(저장 안 함). `label()`, 정적 `label_of(npc)` |
+| `NpcUtilityDecider` (`NpcDecider`) | 결정 함수. `install(npcs, scheduler)`, `set_executor(executor)`, `scheduler()`, `threat_sensor()`, 신호 `decided(npc_id, record)`, 진단값(`decision_count`, `evaluation_count`, `failure_count`, `hard_interrupt_count`) |
+| `NpcThreatSense` / `NpcThreatSensor` (`NpcStage`, `threat_sensor`) | 좀비 시야 판정 / 결정 사이에 위협을 알아채는 단계 |
+| `NpcActionExecutor` | 실행기 계약의 기본 클래스(아무것도 실행하지 않는다) |
+
+**결정 한 번의 순서(`NpcUtilityDecider.decide`)**
+
+1. 욕구를 지금 시각으로 따라잡는다(`NpcNeeds.advance_to`).
+2. 실행기 보고 처리: 사유에 `action_arrived`(Navigate → Perform), `action_done`(→ Idle, 그 행동의 연속 실패 횟수 지움), `action_failed_<code>`(→ Interrupt → Recover)가 있으면 반영한다. 저장 상태는 "행동 중"인데 실행기가 `is_running()`에 false를 답하면 `executor_lost` 실패로 처리한다.
+3. 하드 인터럽트: 보이는 좀비가 있으면(아래) 지금 하는 일을 취소하고 도주 행동을 시작한다. 이미 도주 중이면 그대로 두고, 도주 행동이 재시도 쿨다운 중이면 평소 선택으로 넘어간다.
+4. Recover 중이고 쿨다운이 남았으면 아무것도 고르지 않는다.
+5. 최소 지속 시간: 진행 중인 행동이 시작된 지 `min_duration_sec`이 안 됐으면 후보를 보지 않고 유지한다(하드 인터럽트와 실행기 보고는 이 제한을 받지 않는다).
+6. Utility 선택: 선행조건을 통과한 행동을 점수 매겨, `min_action_score` 이상인 최고점을 시작한다. 최고점이 진행 중인 행동이면 유지한다. 후보가 없으면 대체 행동(`fallback_action_id`), 그것도 안 되면 Idle.
+7. 욕구의 다음 범주 경계 시각을 `need_boundary` 타이머 인터럽트로 예약한다(경계를 1ms 지난 시각. 경계가 지금 막 지나는 중이면 예약하지 않는다).
+
+결정마다 결정 기록 하나를 남긴다.
+
+**합산식(범위 고정)**
+
+```
+score = base
+      + need_weight          × need           (그 행동이 답하는 욕구의 긴급도 = 값 / need_max)
+      + personality_weight   × personality    (성격 축의 가중 평균. 음수 가중치는 1 - 축 값)
+      + environment_weight   × environment    (달력 하루의 시간대 안이면 1, 밖이면 0)
+      + relationship_weight  × relationship   (Phase 4는 값 0)
+      + memory_weight        × memory         (Phase 4는 값 0)
+      + current_action_bonus × commitment     (진행 중인 행동이면 1)
+      + score_jitter         × jitter         (NPC RNG의 0..1)
+```
+
+- 항 값 여덟 개와 가중치는 쓰기 직전에 전부 [0, 1]로 자른다(유한하지 않으면 0). 그래서 데이터가 무엇이든 `0 ≤ score ≤ 6 + current_action_bonus + score_jitter`다. 나누어 정규화하지는 않는다(행동끼리 비교하려면 같은 척도의 합이어야 한다).
+- docs/05 §9.2의 `goal_alignment`와 비용 항(`risk_cost`·`travel_cost`·`resource_cost`)은 Phase 4 식에 없다(목표 모델이 없고, 이동 거리·자원은 실행기만 안다). 자원 없음·경로 없음은 실행기의 실패 사유와 재시도 쿨다운으로 돌아온다.
+- 순서: 점수 큰 것 → `fixed_priority` 큰 것 → `action_id` 작은 것.
+- 난수는 `npc.rng`만 쓴다. 평가 한 번에 **카탈로그의 행동마다 한 개**(ID 순, 후보든 아니든)를 뽑는다. 선행조건에 따라 뽑는 개수가 달라지지 않게 한 것이다. `score_jitter`가 0이면 뽑지 않는다.
+
+**선행조건과 탈락 사유(`rejected`의 `code`)**: `not_selectable`, `cooldown`(실패 뒤 재시도 쿨다운), `no_job`(`requires_job`인데 정의에 업무 역할·작업 건물이 없음), `need_too_low`(긴급도가 `min_need_urgency` 미만), `need_in_danger`(`blocked_by_danger_need`인데 욕구 하나라도 위험 범주: D3의 업무 거부).
+
+**출하 행동 여섯(`resources/definitions/npc_actions/`)**
+
+| ID | 라벨(수행/이동) | 고정 우선순위 | base | 욕구 항 | 성격 항 | 환경 항 | 선행조건 | 최소 지속 |
+|---|---|---|---|---|---|---|---|---|
+| `drink` | eat / walk | 60 | 0 | thirst × 1.0 | - | - | 긴급도 ≥ 0.25 | 5초 |
+| `eat` | eat / walk | 50 | 0 | hunger × 1.0 | - | - | 긴급도 ≥ 0.25 | 5초 |
+| `rest` | sleep / walk | 40 | 0 | fatigue × 1.0 | - | 22~6시 × 0.3 | 긴급도 ≥ 0.3 | 30초 |
+| `work` | work / walk | 30 | 0.2 | - | conscientiousness × 0.1 | 8~18시 × 0.2 | 직업 있음, 위험 범주 욕구 없음 | 20초 |
+| `wander` | idle / walk | 10 | 0.1 | - | openness × 0.05 | - | - | 3초 |
+| `flee` | flee / flee | 100 | 1.0 | - | - | - | 후보 아님(하드 인터럽트만) | 0초, 재시도 2초 |
+
+**상태 머신(`NpcDecisionState`)**: 결정 사이에 NPC가 머무는 상태는 `idle`·`navigate`·`perform`·`recover` 넷이고(저장되는 것도 이 넷), `evaluate`·`plan`·`interrupt`는 결정 한 번 안에서 지나간다(결정 기록의 `path`에 남는다).
+
+| 에서 | 로 |
+|---|---|
+| `idle` | `evaluate`, `interrupt`(하드 인터럽트) |
+| `evaluate` | `idle`(할 것 없음), `plan`(새 행동), `navigate`·`perform`(진행 중인 행동 유지), `interrupt`(더 나은 행동으로 교체) |
+| `plan` | `navigate`(실행기가 받음), `recover`(실행기가 거절) |
+| `navigate` | `perform`(도착), `evaluate`(재평가), `interrupt`, `idle`(완료) |
+| `perform` | `evaluate`, `interrupt`, `idle`(완료) |
+| `interrupt` | `plan`(다음 행동), `recover`(실패), `idle`(할 것 없음) |
+| `recover` | `evaluate`(쿨다운 끝), `interrupt`(하드 인터럽트) |
+
+표에 없는 전이는 거부하고 센다(`illegal_transition_count`, 테스트는 0을 기대).
+
+**실패와 Recover**: 실패(실행기가 시작을 거절, 또는 진행 중 실패 보고)는 ① 그 행동에 재시도 쿨다운을 건다: 행동의 `retry_cooldown_sec`(없으면 설정값) × 2^(연속 실패 - 1), 최대 `retry_cooldown_max_sec`. ② NPC를 `recover`에 `recover_cooldown_sec` 동안 둔다(끝나는 시각을 `recover_done` 타이머로 예약). 그동안은 하드 인터럽트만 통한다. 실패 사유 코드는 snake_case ID이고(실행기가 정한 것 그대로, ID가 아니거나 48자를 넘으면 `bad_failure_code`), `last_failure`와 결정 기록에 남는다. 완료(`action_done`)는 그 행동의 연속 실패 횟수를 지운다.
+
+**하드 인터럽트 "보이는 좀비로부터 도주"(D3)**: NPC는 `threat_sight_range_m` 안의 살아 있는 좀비를, 사이를 구조물이 막지 않으면 본다. 판정은 좀비 시야와 같은 훅 `ServerWorld.is_line_blocked(npc 위치, 좀비 위치)`다. 시야각은 없다(어느 방향이든 알아챈다). 좀비 시스템은 읽기만 한다(좀비 코드 변경 없음, 좀비는 NPC를 모른다). 가장 가까운 것(같으면 ID 작은 것)이 위협이다.
+
+- 결정할 때마다 결정 함수가 직접 본다(3단계).
+- 결정 사이에는 `NpcThreatSensor` 단계가 `threat_check_period_sec`마다(10칸으로 나눠) 깨어 있는 NPC를 살피고, 보이는 좀비가 있고 도주를 시작할 수 있으면 `request_interrupt(npc_id, "threat_seen")`을 부른다. 그래서 원거리 단계(주기 10초)의 NPC도 주기를 기다리지 않는다. 센서는 아무것도 정하지 않고 상태도 없다(칸은 스케줄러의 저장된 시계에서 나온다). 실행기가 없거나 좀비가 없으면 비교 몇 번으로 끝난다.
+- 도주의 목표는 `{threat_id, threat_position: [x, y, z]}`다. 얼마나 멀리·어디로 가는지와 끝나는 조건은 실행기 몫이다. 도주가 끝났는데(`action_done`) 아직 보이면 새 목표로 다시 도주한다.
+
+**결정 기록(`NpcDecisionComponent.records()` 링, 신호 `decided`)**: JSON-safe Dictionary. P4-8 오버레이와 테스트의 근거다. NPC당 `record_capacity`개(오래된 것부터 버림), 저장하지 않는다(재시작 뒤에는 다음 결정부터 다시 쌓인다).
+
+| 키 | 값 |
+|---|---|
+| `sequence` | 그 NPC의 결정 순번(저장되는 `decision_count`) |
+| `at_usec`, `world_time` | 스케줄러 시계(정수 µs), 달력 시각 |
+| `reasons` | 스케줄러가 준 사유 목록 |
+| `state_before`·`action_before`, `state_after`·`action_after` | 결정 전후의 상태와 행동 |
+| `path` | 지나간 상태(첫 값 = `state_before`) |
+| `hard_interrupt` | `""` 또는 `"threat_visible"` |
+| `candidates` | 상위 `record_top_candidates`개, 좋은 순: `{action_id, score, fixed_priority, values: {항: 0..1}, terms: {항: 가중치 × 값}}`. 항 이름은 `base`·`need`·`personality`·`environment`·`relationship`·`memory`·`commitment`·`jitter`. 후보를 보지 않은 결정(최소 지속, Recover, 하드 인터럽트)은 빈 목록 |
+| `rejected` | `[{action_id, code}]`: 선행조건에서 떨어진 행동 |
+| `chosen`, `fallback` | 시작했거나 유지한 행동(없으면 `""`), 대체 행동이었는지 |
+| `outcome` | `started`·`switched`·`kept`·`min_duration`·`recovering`·`nothing`·`failed` |
+| `completed` | 이 결정에서 완료 보고를 받은 행동 |
+| `failure` | `{}` 또는 `{action_id, code}` |
+| `target` | 실행기에 준 목표 |
+
+**저장(`decision` 구성 요소 문서, schema 1)**: `{state, action_id, action_started_at_usec, target, cooldowns: {action_id: 끝 시각}, failures: {action_id: 연속 횟수}, last_failure: {} | {action_id, code, at_usec}, recover_until_usec, decision_count}`. 시각은 전부 스케줄러 시계의 정수 µs(-1 = 없음)다. `restore_document`가 모양과 일관성(행동·시작 시각은 `navigate`·`perform`에만, `recover_until_usec`은 `recover`에만)을 검증한다. `recover_done`·`need_boundary`·`threat_seen` 인터럽트는 `schedule` 구성 요소(§17.3)에 저장된다.
+
+**실행기 계약(`NpcActionExecutor`, P4-5a·P4-5b가 구현)**
+
+```gdscript
+func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, action: NpcActionDefinition, target: Dictionary) -> String
+func is_running(npc_id: String) -> bool
+func cancel(world: ServerWorld, npcs: NpcService, npc: NpcState) -> void
+```
+
+- `begin`: 그 NPC의 행동을 시작한다. `""` = 받았다(이제 실행 중), 그 밖 = 실패 사유 코드(아무것도 실행·예약·보고하지 않는다). `target`이 `{}`이면 실행기가 행동 ID와 NPC(정의의 집·작업 지점, 맵의 NPC 지점)에서 장소를 찾는다.
+- 보고는 스케줄러 인터럽트로 한다(인터럽트는 `schedule`에 저장되므로 저장을 넘겨도 사라지지 않는다):
+  - `scheduler.request_interrupt(npc_id, "action_arrived")`: 장소에 도착해 수행을 시작했다(행동당 한 번. 갈 길이 없는 행동은 바로 보고, 도착이 곧 끝인 행동(배회)은 생략하고 `action_done`만 보고해도 된다).
+  - `scheduler.request_interrupt(npc_id, "action_done")`: 끝났다.
+  - `scheduler.request_interrupt(npc_id, NpcActionExecutor.failed_reason(code))` = `"action_failed_<code>"`: 더 할 수 없다. 공용 코드: `unsupported_action`, `no_path`, `target_gone`, `reserved`, `no_resource`(그 밖의 snake_case ID도 된다. 48자 이하).
+- 한 NPC에 행동 하나. 다른 행동이 실행 중일 때 `begin`은 오지 않는다(결정 함수가 먼저 `cancel`한다).
+- 완료·실패 보고 뒤와 `cancel` 뒤에는 실행기에서도 그 행동이 끝난 것이다: `is_running`은 false, 예약은 풀리고, 더는 보고하지 않는다. `cancel`은 보고하지 않는다.
+- 저장: 실행기는 진행 중 행동·남은 경로를 자기 `NpcComponent`에 저장해, 복구 뒤 `is_running`이 저장 전과 같게 답해야 한다(D11). 결정 함수는 고른 행동 ID와 준 목표만 저장한다.
+- 욕구의 활동 전환(`NpcNeeds.set_activity`: 쉬기 = `resting`, 일하기 = `working`)과 욕구 감소(`satisfy`)는 실행기(P4-5b)가 수행 시작·종료 때 한다. 결정 함수는 욕구를 읽기만 한다.
+- 난수는 `npc.rng`만.
+
+**행동 라벨(P4-7 연결)**: `NpcDecisionComponent.label_of(npc: NpcState) -> String`이 `(NpcState) -> String` 순수 함수다. `navigate`면 행동의 `navigate_label`, `perform`이면 `observable_label`, 그 밖은 `idle`. `ServerComposition.install_net_modules`가 `NpcNetModule.new(config.npc_net, NpcDecisionComponent.label_of)`로 넘긴다(§17.5의 주입 자리). 마시기는 전선 라벨에 없어 `eat`으로 보인다.
+
+**조립**: `CompositionConfig.npc_decision`(설정)·`npc_actions`(카탈로그)가 생겼다. `ServerComposition.create_world`는 `config.npc_decider`가 null이면 `NpcUtilityDecider.new(config.npc_decision, config.npc_actions, config.npc_needs)`를 만들어 `NpcScheduler.install`에 넘기고, `decider.install(npcs, scheduler)`로 `decision` 구성 요소와 `threat_sensor` 단계(스케줄러 뒤)를 등록한다. 테스트가 자기 결정 함수(`config.npc_decider`)를 주면 그것이 쓰이고, 그것이 `NpcUtilityDecider`일 때만 구성 요소·센서가 등록된다. **P4-5a는 이 자리에서 `(npc_decider as NpcUtilityDecider).set_executor(실행기)` 한 줄을 더한다.**
+
+**결정론(D11)**: 후보는 ID 순으로 보고, 평가당 난수 개수가 일정하고, 최소 지속·쿨다운·Recover는 정수 시계로 센다. 같은 시드의 두 실행은 결정 기록이 글자까지 같다. 저장 → 복구한 실행은 끊지 않은 실행과 같은 결정을 같은 틱에 내린다(테스트). 단, 저장은 float(달력 시각·욕구 값)를 14자리로 반올림하므로 복구한 실행의 점수는 끝자리가 다르다. 욕구가 문턱을 넘는 바로 그 순간에 결정이 걸려도 끝자리에 따라 갈리지 않도록 여유값을 뒀다(경계 타이머 +1ms, 지금 지나는 경계는 예약 안 함, 문턱 판정 여유, 시간대 판정 여유). 점수가 끝자리까지 같은 두 후보(`score_jitter`가 0이 아니면 사실상 없다)는 이 보장 밖이다(docs/15 P4-166).
+
+**테스트(`tests/unit/npc_decision_test.gd`, 19개)**: 출하 데이터 검증과 잘못된 데이터 거부, 전이 표 전체, 항 자르기와 합산식, 구성 요소 저장·잘못된 문서 거부, 실행기 없는 기본 조립은 아무것도 정하지 않음, 배고픈 NPC의 먹기 선택과 기록·라벨, 동점 해소 순서, 흔들림은 NPC RNG만, 유지 보너스(보너스 0이면 뒤집히는 것과 대조)와 20초 진동 없음, 최소 지속 시간, 대체 행동과 Idle, 선행조건, 실패 → Recover → 쿨다운 두 배 → 성공 시 초기화 → `executor_lost` → 잘못된 코드, 욕구 경계 타이머, 좀비를 보면 업무 중단·도주하고 벽 뒤 좀비는 못 봄, 시야 밖 좀비와 도주 실패, 같은 실행 두 번의 기록 일치, 다섯 시점의 저장 → 복구 뒤 결정 일치와 끝 상태·RNG 일치, 25명 측정. 실행기는 요청만 적는 스텁이다.

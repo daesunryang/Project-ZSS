@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="NpcActionDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/decision/npc_action_definition.gd" id="1_action"]
+
+[resource]
+script = ExtResource("1_action")
+action_id = "wander"
+fixed_priority = 10
+base_priority = 0.1
+personality_traits = {
+"openness": 1.0
+}
+personality_weight = 0.05
+min_duration_sec = 3.0

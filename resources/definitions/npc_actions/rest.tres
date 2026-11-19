@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="NpcActionDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/decision/npc_action_definition.gd" id="1_action"]
+
+[resource]
+script = ExtResource("1_action")
+action_id = "rest"
+observable_label = "sleep"
+fixed_priority = 40
+need_kind = "fatigue"
+need_weight = 1.0
+min_need_urgency = 0.3
+active_from_hour = 22.0
+active_until_hour = 6.0
+environment_weight = 0.3
+min_duration_sec = 30.0
