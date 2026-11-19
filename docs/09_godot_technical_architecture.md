@@ -2845,10 +2845,12 @@ score = base
 | `candidates` | 상위 `record_top_candidates`개, 좋은 순: `{action_id, score, fixed_priority, values: {항: 0..1}, terms: {항: 가중치 × 값}}`. 항 이름은 `base`·`need`·`personality`·`environment`·`relationship`·`memory`·`commitment`·`jitter`. 후보를 보지 않은 결정(최소 지속, Recover, 하드 인터럽트)은 빈 목록 |
 | `rejected` | `[{action_id, code}]`: 선행조건에서 떨어진 행동 |
 | `chosen`, `fallback` | 시작했거나 유지한 행동(없으면 `""`), 대체 행동이었는지 |
-| `outcome` | `started`·`switched`·`kept`·`min_duration`·`recovering`·`nothing`·`failed` |
+| `outcome` | `started`·`switched`·`kept`·`min_duration`·`recovering`·`nothing`·`failed`·`until_done` |
 | `completed` | 이 결정에서 완료 보고를 받은 행동 |
 | `failure` | `{}` 또는 `{action_id, code}` |
 | `target` | 실행기에 준 목표 |
+
+`runs_until_done`(P4-Z, `NpcActionDefinition`, 기본 꺼짐, 쉬기만 켬): 켜진 행동이 진행 중이면 Utility 선택이 바꾸거나 멈추지 않고 결정 기록 `outcome` 이 `until_done` 이다. 끝나는 것은 실행기의 완료·실패 보고, 하드 인터럽트(도주), 다른 욕구가 위험 범주에 든 때뿐이다(docs/15 P4-172).
 
 **저장(`decision` 구성 요소 문서, schema 1)**: `{state, action_id, action_started_at_usec, target, cooldowns: {action_id: 끝 시각}, failures: {action_id: 연속 횟수}, last_failure: {} | {action_id, code, at_usec}, recover_until_usec, decision_count}`. 시각은 전부 스케줄러 시계의 정수 µs(-1 = 없음)다. `restore_document`가 모양과 일관성(행동·시작 시각은 `navigate`·`perform`에만, `recover_until_usec`은 `recover`에만)을 검증한다. `recover_done`·`need_boundary`·`threat_seen` 인터럽트는 `schedule` 구성 요소(§17.3)에 저장된다.
 
