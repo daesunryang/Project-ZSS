@@ -126,6 +126,13 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	if error != OK:
 		zombie_net.free()
 		return error
+	# P4-7 (docs/09 §17.5): public NPC rows, interest reconciliation and
+	# 5 Hz position snapshots. The action-label source stays idle until P4-4.
+	var npc_net: NpcNetModule = NpcNetModule.new(config.npc_net)
+	error = service.register_module(npc_net)
+	if error != OK:
+		npc_net.free()
+		return error
 	# P3-1, P3-2 (docs/09 §15.1, §15.2): the map layout for the clients and
 	# the world items of the cells a peer gains or loses. No RPC of its own.
 	var world_cell_net: WorldCellNetModule = WorldCellNetModule.new()

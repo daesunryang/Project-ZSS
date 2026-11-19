@@ -696,7 +696,7 @@ func test_default_settings_rpc_table_and_request_validation() -> void:
 	broken.deliver_intent_rate_per_sec = -1.0
 	broken.work_intent_burst = 0
 	assert_eq(broken.validate().size(), 5, "the new rates are checked by the same two rules")
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 15, "the structure RPCs are a protocol change (12, P3-4a); 13 since the replication scope by cell (P3-2), 14 since the construction RPCs and the longer structure rows (P3-5), 15 since the container RPCs (P3-3)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 16, "the structure RPCs are a protocol change (12, P3-4a); 13 since the replication scope by cell (P3-2), 14 since the construction RPCs and the longer structure rows (P3-5), 15 since the container RPCs (P3-3)")
 	# Every message is on the reliable ordered channel (docs/09 §15.4).
 	var module: StructureNetModule = StructureNetModule.new(settings, StructureCatalog.load_directory())
 	assert_eq(str(module.name), StructureNetModule.MODULE_NAME)

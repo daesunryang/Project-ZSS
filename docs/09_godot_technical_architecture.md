@@ -2638,3 +2638,43 @@ Phase 4(docs/13 §6, §16) 티켓의 계약을 티켓마다 한 절씩 적는다
 - 저장 문서는 `{owner_npc_id, relationships: [RelationshipState...]}`이고 target ID 순이다. 내부 source와 owner가 다른 문서는 거부한다. 바깥 NPC와 중복 owner가 어긋난 옛/손상 문서는 바깥 NPC를 기준으로 source를 복구하고 경고한 뒤 dirty로 표시한다.
 
 **저장·테스트**: 세 구성 요소 모두 값이 바뀔 때 `mark_npc_dirty`를 부르며 P4-1의 셀 문서 `systems.npc.npcs[].components` 안에 저장된다. `npc_mind_test.gd`가 13축/반감기 지연 계산, 동일 사건 통합, 중요도 축출·장기 보호, ID 발급과 감정·기억 셀 해제→재로딩을 검증한다. `relationship_store_test.gd`가 전체 필드 JSON 왕복, A→B/B→A 분리, NPC/player 대상, status 비자동 변경과 셀 왕복을 검증한다. P4-5b가 아직 없으므로 배고픔 해소·도주 행동과의 연결은 그 티켓에서 이 공개 API를 호출한다.
+
+### 17.5 NPC 복제·관심 범위·정보 공개(P4-7, NetModule `NpcNet`)
+
+NPC 서버 상태는 `NpcService`가 계속 최종 권한을 가진다. `NpcNetModule`은 서버→클라이언트 공개 복제만 하며 클라이언트→서버 RPC가 없다. `ServerComposition.install_net_modules`가 `InterestNet` 뒤에 서버와 클라이언트 모두 같은 이름 `NpcNet`으로 등록한다. `CompositionConfig.npc_net`은 `NpcNetSettings`를 들고 기본 리소스는 `data/tuning/npc_net_settings.tres`다. 새 모듈·접속 조각·RPC 때문에 `BuildInfo.PROTOCOL_VERSION`은 **15 → 16**이다.
+
+#### 정보 공개 경계(D9, docs/00 ADR-009)
+
+`NpcNetProtocol`이 서버가 내보낼 수 있는 필드를 화이트리스트로 복사한다. 접속 조각과 `npc_entered`의 전체 공개 행은 다음 일곱 값뿐이다.
+
+`[npc_id, name, appearance, position, yaw, action_label_index, posture_index]`
+
+- `name`은 `NpcDefinition.display_name`, `appearance`는 같은 정의의 `{slot_id: option_id}` 선택지다. 정의 ID는 보내지 않는다.
+- 행동 라벨의 전선 목록은 `idle`, `walk`, `eat`, `sleep`, `work`, `flee`다. P4-7 기본 출처는 `idle`이고, 서버의 읽기 전용 함수 `(NpcState) -> String` 하나를 `set_action_label_source`로 주입할 수 있다. P4-4 뒤에는 이 함수만 실제 행동을 읽도록 연결한다. 목록 밖 값은 기록하고 `idle`로 가린다.
+- 자세는 플레이어와 같은 `standing`, `prone`, `resting` 형식을 쓰지만, NPC 자세 모델이 아직 없어서 P4-7 서버는 `standing`만 보낸다.
+- **욕구, 감정, 기억, 관계, 성격, 능력, 목표, RNG, 구성 요소 문서, `definition_id`는 어느 행과 이벤트에도 없다.** `NpcState`와 `NpcDefinition`에 필드가 늘어도 프로토콜 화이트리스트를 일부러 바꾸지 않으면 전선에 들어가지 않는다.
+- 클라이언트는 전체 행·이벤트의 값과 키 개수를 검사한다. 알려지지 않은 필드가 하나라도 있으면 그 자료를 버린다.
+
+#### 접속자별 관심 흐름과 메시지
+
+접속자마다 `PeerStream` 하나를 둔다. 흐름에는 그 클라이언트가 아는 NPC ID 집합, 마지막으로 보낸 행동 라벨, 자기 전용 이벤트 순번, 보내지 않은 이벤트가 있다. NPC가 공개되는 조건은 `network.is_cell_of_interest(peer_id, cell_id)` / `network.peers_interested_in(cell_id)`뿐이다. 클라이언트 위치·셀 주장은 받지 않는다.
+
+| 방향 | RPC / 접속 조각 | 채널 | 내용 |
+|---|---|---|---|
+| S→C | `modules.NpcNet = {tick, event_sequence, rows}` | 접속 응답 ch0 reliable | 접속자의 관심 셀에 있는 NPC 전체 공개 행과 그 접속자 이벤트 흐름의 시작점 |
+| S→C | `_rpc_npc_events(tick, first_sequence, events)` | ch0 reliable | `npc_entered`(전체 공개 행), `npc_left`(ID), `npc_action_changed`(ID·새 공개 행동 라벨). 접속자별 순번이라 구멍이 없어야 한다 |
+| S→C | `_rpc_npc_snapshot(tick, rows)` | ch2 unreliable ordered | 기본 5Hz. 행은 `[npc_id, position, yaw]`뿐이다. 이름·외형을 매번 반복하지 않는다 |
+
+관심 셀 대조는 **스냅샷 틱에만** 한다. 그때 메모리의 NPC를 셀별 관심 peer와 대조해 처음 보이면 `npc_entered`, 더는 관심 셀에 없거나 메모리에서 내려갔으면 `npc_left`, 알려진 NPC의 주입된 행동 라벨이 바뀌었으면 `npc_action_changed`를 큐에 넣는다. 같은 틱에는 reliable 이벤트를 먼저 보내고 위치 스냅샷을 나중에 보낸다. 따라서 셀 경계·셀 로딩/해제·서버의 `NpcService.set_npc_transform` 이동은 최대 스냅샷 한 주기 뒤 반영된다. 스냅샷은 미러에 없는 NPC를 새로 만들지 않으므로 늦은 ch2 자료가 `npc_left` 뒤 NPC를 되살리지 못한다.
+
+`ClientNpcState`는 공개 행만 보관하는 비권한 미러다. 접속 조각과 ch0 진입/이탈 이벤트만 구성원을 더하고 뺀다. ch2는 이미 아는 NPC의 위치·방향만 바꾸며, ch0 행동 이벤트는 관찰 가능한 라벨만 바꾼다. 잘못된 자료, 낡은 틱, 이벤트 순번 구멍은 각각 진단값에 남는다.
+
+#### 임시 표시
+
+`NpcVisuals`는 NPC 몸체를 설정 색의 캡슐 하나와 `MultiMeshInstance3D` 하나로 묶어 그린다. 위치·방향·공개 자세는 미러를 따른다. 이름표는 묶을 수 없으므로 NPC마다 billboard `Label3D` 하나를 두고 공개 이름(개발 명단은 한국어)을 표시한다. `ClientView`는 `%Npcs` 루트와 `ClientNpcState.changed`만 연결한다. 크기·색·이름표 값은 `ClientPresentationSettings`에 있다.
+
+#### 테스트
+
+- 순수 테스트는 전체 공개 행과 위치 행의 왕복, 키 개수, 잘못된 자료 거부, 신뢰 이벤트만 미러 구성원을 바꾸는 것, 행동 라벨 이벤트, 비공개 키·표식 값 부재, MultiMesh 몸체 수와 한국어 이름표를 검사한다.
+- 실제 ENet 통합 테스트는 두 클라이언트가 같은 NPC 공개 행을 받고, 주입된 행동 라벨 변화(ch0)와 `set_npc_transform` 이동(ch2)을 같이 보며, NPC가 관심 셀 밖으로 옮겨지면 둘 다 `npc_left`로 지우는 것을 `NetTestCluster.wait_ticks`로 검사한다. 서버 구성 요소의 비밀 표식·정의 ID·배경 태그가 실제 접속 조각 배열에 없음을 같이 검사한다.
+- 임시 수치와 실제 창·대역폭에서 확인하지 못한 항목은 docs/15 §17.5에 있다.

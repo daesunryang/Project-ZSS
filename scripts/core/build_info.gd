@@ -115,7 +115,12 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    joining peer's cells. No existing RPC or message format changed; what a
 ##    player takes out or puts in reaches it through the existing owner-only
 ##    InventoryNet messages.
-const PROTOCOL_VERSION: int = 15
+## 16: P4-7 (NPC public replication, docs/09 §17.5). New module NpcNet:
+##    interest-scoped join rows, reliable npc_entered / npc_left /
+##    npc_action_changed events on channel 0, and 5 Hz position snapshots
+##    on channel 2. No client-to-server RPC. Public rows contain only id,
+##    name, appearance, position, yaw, observable action label and posture.
+const PROTOCOL_VERSION: int = 16
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

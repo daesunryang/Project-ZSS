@@ -30,6 +30,9 @@ unique_name_in_owner = true
 [node name="Zombies" type="Node3D" parent="."]
 unique_name_in_owner = true
 
+[node name="Npcs" type="Node3D" parent="."]
+unique_name_in_owner = true
+
 [node name="WorldItems" type="Node3D" parent="."]
 unique_name_in_owner = true
 

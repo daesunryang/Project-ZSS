@@ -18,6 +18,19 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export var zombie_dormant_color: Color = Color(0.30, 0.42, 0.30, 1.0)
 @export var zombie_dead_color: Color = Color(0.12, 0.16, 0.12, 1.0)
 
+## P4-7 NPC placeholders. Bodies are one MultiMesh batch; Korean/display
+## names are billboard labels. The blue colour is distinct from the local /
+## remote player defaults and every shipped zombie state colour.
+@export_group("NPC placeholders")
+@export_range(0.1, 5.0) var npc_capsule_radius_m: float = 0.34
+@export_range(0.2, 10.0) var npc_capsule_height_m: float = 1.65
+@export var npc_capsule_color: Color = Color(0.18, 0.58, 0.92, 1.0)
+@export_range(0.0, 3.1415927) var npc_lying_tilt_rad: float = 1.5707963
+@export_range(0.0, 5.0) var npc_name_tag_margin_m: float = 0.22
+@export_range(0.0001, 0.1) var npc_name_tag_pixel_size: float = 0.005
+@export_range(1, 256) var npc_name_tag_font_size: int = 34
+@export var npc_name_tag_color: Color = Color(0.70, 0.88, 1.0, 1.0)
+
 @export var attack_mouse_button: MouseButton = MOUSE_BUTTON_LEFT
 @export_range(0.01, 1.0) var attack_min_interval_sec: float = 0.15
 @export_range(0.1, 10.0) var attack_result_duration_sec: float = 2.0
@@ -244,6 +257,12 @@ func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
 	if zombie_capsule_radius_m <= 0.0 or zombie_capsule_height_m < zombie_capsule_radius_m * 2.0:
 		errors.append("zombie capsule height must be at least twice its radius")
+	if npc_capsule_radius_m <= 0.0 or npc_capsule_height_m < npc_capsule_radius_m * 2.0:
+		errors.append("npc capsule height must be at least twice its radius")
+	if not is_finite(npc_lying_tilt_rad) or npc_lying_tilt_rad <= 0.0 or npc_lying_tilt_rad > PI:
+		errors.append("npc_lying_tilt_rad must be within (0, PI]")
+	if npc_name_tag_margin_m < 0.0 or npc_name_tag_pixel_size <= 0.0 or npc_name_tag_font_size < 1:
+		errors.append("npc name tag margin must be >= 0, pixel size > 0 and font size >= 1")
 	if dead_tilt_rad <= 0.0 or dead_tilt_rad > PI:
 		errors.append("dead_tilt_rad must be within (0, PI]")
 	if attack_mouse_button == MOUSE_BUTTON_NONE:

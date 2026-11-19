@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="NpcNetSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/services/multiplayer/npc_net_settings.gd" id="1_npc_net"]
+
+[resource]
+script = ExtResource("1_npc_net")
+snapshot_rate_hz = 5.0
+snapshot_rows_per_message = 24
+events_per_message = 32
+recent_event_capacity = 128
+max_mirrored_npcs = 256

@@ -6,6 +6,7 @@ extends Node3D
 @onready var _camera: Camera3D = %Camera
 @onready var _players_root: Node3D = %Players
 @onready var _zombies_root: Node3D = %Zombies
+@onready var _npcs_root: Node3D = %Npcs
 @onready var _world_items_root: Node3D = %WorldItems
 @onready var _structures_root: Node3D = %Structures
 @onready var _world_map_root: Node3D = %WorldMap
@@ -34,6 +35,8 @@ var _presentation: ClientPresentationSettings = null
 var _network: NetworkService = null
 var _state: ClientWorldState = null
 var _zombie_state: ClientZombieState = null
+var _npc_state: ClientNpcState = null
+var _npc_visuals: NpcVisuals = null
 var _survival_state: ClientSurvivalState = null
 var _combat_module: CombatNetModule = null
 var _intent_sender: MoveIntentSender = null
@@ -163,6 +166,7 @@ func _ready() -> void:
 	_item_catalog = ItemCatalog.load_directory()
 	_world_item_markers = WorldItemMarkers.new(_world_items_root, _item_catalog, _presentation)
 	_world_map = WorldMapVisuals.new(_world_map_root, _presentation)
+	_npc_visuals = NpcVisuals.new(_npcs_root, _presentation)
 	_container_policy = AttackIntentPolicy.new(_presentation.container_min_interval_sec)
 	_container_catalog = ContainerCatalog.load_directory()
 	_container_markers = ContainerMarkers.new(_containers_root, _container_catalog, _presentation)
@@ -355,6 +359,11 @@ func _bind_network() -> void:
 			_zombie_state.zombie_removed.connect(_on_zombie_removed)
 		if not _zombie_state.event_received.is_connected(_on_zombie_event):
 			_zombie_state.event_received.connect(_on_zombie_event)
+	var npc_module: NpcNetModule = _network.get_module(NpcNetModule.MODULE_NAME) as NpcNetModule
+	if npc_module != null:
+		_npc_state = npc_module.client_state
+		if not _npc_state.changed.is_connected(_on_npc_state_changed):
+			_npc_state.changed.connect(_on_npc_state_changed)
 	_survival_module = _network.get_module(SurvivalNetModule.MODULE_NAME) as SurvivalNetModule
 	if _survival_module != null:
 		_survival_state = _survival_module.client_state
@@ -431,6 +440,7 @@ func _bind_network() -> void:
 	_sync_creation_screen()
 	_sync_player_visuals()
 	_sync_zombie_visuals()
+	_sync_npc_visuals()
 	_sync_world_item_markers()
 	_sync_container_markers()
 	_refresh_survival_hud()
@@ -557,6 +567,10 @@ func _on_zombie_removed(zombie_id: String) -> void:
 func _on_zombie_event(event: Dictionary) -> void:
 	var local_player_id: String = _state.local_player_id if _state != null else ""
 	_append_event_line(ClientPresentationFormatter.format_zombie_event(event, local_player_id))
+
+
+func _on_npc_state_changed() -> void:
+	_sync_npc_visuals()
 
 
 func _on_combat_event(event: Dictionary) -> void:
@@ -740,6 +754,11 @@ func _sync_zombie_visuals() -> void:
 			multimesh.set_instance_transform(index, transform)
 			_zombie_transforms[zombie_id] = transform
 		_zombie_batches[state_name].multimesh = multimesh
+
+
+func _sync_npc_visuals() -> void:
+	if _npc_state != null and _npc_visuals != null:
+		_npc_visuals.sync(_npc_state.npcs)
 
 
 func zombie_visual_count() -> int:

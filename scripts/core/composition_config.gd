@@ -76,6 +76,8 @@ var npc_definitions: NpcCatalog
 var npc_needs: NpcNeedSettings
 ## P4-6: passive emotion decay and bounded memory tuning.
 var npc_mind: NpcMindSettings
+## P4-7 (docs/09 §17.5): NPC public replication settings.
+var npc_net: NpcNetSettings
 ## P4-1: the NPCs a world is given, once (NpcService). null (the default of
 ## from_defaults(): tests, tools) = the world gets no NPCs. A dedicated
 ## server sets the dev roster (NpcRoster.DEFAULT_PATH, GameBootstrap), which
@@ -120,6 +122,7 @@ static func from_defaults() -> CompositionConfig:
 	config.npc_definitions = NpcCatalog.load_directory()
 	config.npc_needs = NpcNeedSettings.load_or_default()
 	config.npc_mind = NpcMindSettings.load_or_default()
+	config.npc_net = NpcNetSettings.load_or_default()
 	return config
 
 
@@ -127,13 +130,14 @@ static func from_defaults() -> CompositionConfig:
 ## the world is to get one) against the definitions and the map content.
 func _validate_npcs() -> PackedStringArray:
 	var errors: PackedStringArray = []
-	if npc == null or npc_definitions == null or npc_needs == null or npc_mind == null:
+	if npc == null or npc_definitions == null or npc_needs == null or npc_mind == null or npc_net == null:
 		errors.append("composition config is incomplete (npc)")
 		return errors
 	errors.append_array(npc.validate())
 	errors.append_array(npc_mind.validate())
 	errors.append_array(npc_definitions.validate_against(appearance))
 	errors.append_array(npc_needs.validate())
+	errors.append_array(npc_net.validate())
 	if npc_roster != null:
 		errors.append_array(npc_roster.validate())
 		errors.append_array(npc_roster.validate_against(npc_definitions, map_content, StructureGrid.new(building.grid_module_m), npc.max_npcs))
