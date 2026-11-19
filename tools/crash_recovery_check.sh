@@ -29,14 +29,21 @@ if ! [[ "$ROUNDS" =~ ^[1-9][0-9]*$ ]]; then
 	exit 2
 fi
 
-if command -v python3 >/dev/null 2>&1; then
-	PYTHON=python3
-elif command -v python >/dev/null 2>&1; then
-	PYTHON=python
-else
-	echo "error: python3 or python is required to inspect JSON save files" >&2
+# JSON save files are inspected with Node.js. (On Windows, `python` is often
+# only the Microsoft Store stub, which "exists" but cannot run a script.)
+if ! command -v node >/dev/null 2>&1 || [[ "$(node -e 'console.log(1)' 2>/dev/null)" != "1" ]]; then
+	echo "error: node (Node.js) is required to inspect JSON save files" >&2
 	exit 127
 fi
+
+# Node on Windows needs native paths, not MSYS ones (/c/Users/...).
+native_path() {
+	if command -v cygpath >/dev/null 2>&1; then
+		cygpath -w "$1"
+	else
+		printf '%s\n' "$1"
+	fi
+}
 
 if [[ -n "${APPDATA:-}" ]]; then
 	if command -v cygpath >/dev/null 2>&1; then
@@ -184,49 +191,50 @@ check_clean_exit() { # check_clean_exit <name> <log> <status>
 	fi
 }
 
-manifest_generation() {
-	"$PYTHON" - "$1" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    print(int(json.load(handle)["generation"]))
-PY
+manifest_generation() { # manifest_generation <manifest.json>
+	node -e '
+const fs = require("fs");
+const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const generation = Number(manifest.generation);
+if (!Number.isInteger(generation)) { console.error("manifest generation is not an integer"); process.exit(1); }
+console.log(generation);
+' -- "$(native_path "$1")"
 }
 
-manifest_player_count() {
-	"$PYTHON" - "$1" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    files = json.load(handle)["files"]
-print(sum(path.startswith("players/") and path.endswith(".json") for path in files))
-PY
+manifest_player_count() { # manifest_player_count <manifest.json>
+	node -e '
+const fs = require("fs");
+const files = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).files;
+if (!Array.isArray(files)) { console.error("manifest file list is invalid"); process.exit(1); }
+console.log(files.filter((p) => p.startsWith("players/") && p.endsWith(".json")).length);
+' -- "$(native_path "$1")"
 }
 
 verify_save_tree() { # verify_save_tree <world-dir> <expected-players>
-	"$PYTHON" - "$1" "$2" <<'PY'
-import json, pathlib, sys
-root = pathlib.Path(sys.argv[1])
-expected_players = int(sys.argv[2])
-manifest_path = root / "manifest.json"
-with manifest_path.open(encoding="utf-8") as handle:
-    manifest = json.load(handle)
-files = manifest.get("files")
-assert isinstance(files, list) and "world_state.json" in files, "manifest file list is invalid"
-assert len(files) == len(set(files)), "manifest contains duplicate paths"
-assert not any(path.endswith(".tmp") for path in files), "manifest uses a temporary file"
-players = [path for path in files if path.startswith("players/") and path.endswith(".json")]
-assert len(players) == expected_players, f"expected {expected_players} players, found {len(players)}"
-assert len({pathlib.PurePosixPath(path).stem for path in players}) == len(players), "duplicate player ids"
-for relative in files:
-    path = root.joinpath(*pathlib.PurePosixPath(relative).parts)
-    assert path.is_file(), f"manifest file is missing: {relative}"
-    with path.open(encoding="utf-8") as handle:
-        json.load(handle)
-with (root / "world_state.json").open(encoding="utf-8") as handle:
-    world = json.load(handle)
-maps = world.get("systems", {}).get("map_content", {}).get("maps", {})
-assert isinstance(maps, dict) and maps, "saved world has no map-content record"
-assert any(isinstance(record, dict) and record.get("complete") is True for record in maps.values()), "test map is not completely seeded"
-PY
+	node -e '
+const fs = require("fs");
+const path = require("path");
+const root = process.argv[1];
+const expectedPlayers = Number(process.argv[2]);
+function check(condition, message) { if (!condition) { console.error(message); process.exit(1); } }
+const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+const files = manifest.files;
+check(Array.isArray(files) && files.includes("world_state.json"), "manifest file list is invalid");
+check(new Set(files).size === files.length, "manifest contains duplicate paths");
+check(!files.some((p) => p.endsWith(".tmp")), "manifest uses a temporary file");
+const players = files.filter((p) => p.startsWith("players/") && p.endsWith(".json"));
+check(players.length === expectedPlayers, `expected ${expectedPlayers} players, found ${players.length}`);
+check(new Set(players.map((p) => path.posix.basename(p, ".json"))).size === players.length, "duplicate player ids");
+for (const relative of files) {
+	const file = path.join(root, ...relative.split("/"));
+	check(fs.existsSync(file) && fs.statSync(file).isFile(), `manifest file is missing: ${relative}`);
+	try { JSON.parse(fs.readFileSync(file, "utf8")); } catch (error) { check(false, `file is not valid JSON: ${relative}`); }
+}
+const world = JSON.parse(fs.readFileSync(path.join(root, "world_state.json"), "utf8"));
+const maps = ((world.systems || {}).map_content || {}).maps || {};
+check(typeof maps === "object" && Object.keys(maps).length > 0, "saved world has no map-content record");
+check(Object.values(maps).some((record) => record && typeof record === "object" && record.complete === true), "test map is not completely seeded");
+' -- "$(native_path "$1")" "$2"
 }
 
 verify_restart_log() { # verify_restart_log <log> <generation> <players>
