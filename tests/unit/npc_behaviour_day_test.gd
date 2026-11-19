@@ -228,8 +228,10 @@ func test_five_npcs_eat_drink_rest_and_work_through_a_calendar_day_by_themselves
 
 const SCRIPT_HOURS: float = 9.0
 ## How far a number of the needs component (P4-2) may be off after a save
-## and a restore. Everything else must be the same to the last digit.
-const NEEDS_TOLERANCE: float = 0.000000001
+## and a restore; everything else must be the same to the last digit. 0
+## since the needs save their rates in a unit the JSON reader reads exactly
+## (main defd770): the needs too must be the same to the last digit.
+const NEEDS_TOLERANCE: float = 0.0
 const SAVE_HOURS: Array[float] = [5.6, 7.3]
 
 

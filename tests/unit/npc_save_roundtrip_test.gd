@@ -152,6 +152,7 @@ func test_live_npc_component_documents_keep_float_bits_through_json() -> void:
 		NpcMemoryStore.COMPONENT_ID,
 		RelationshipStore.COMPONENT_ID,
 		NpcExecutorState.COMPONENT_ID,
+		NpcBehaviourState.COMPONENT_ID,
 	]
 	for component_id: String in persisted_component_ids:
 		assert_true(components.has(component_id), "live NPC has %s document" % component_id)
