@@ -38,6 +38,8 @@ const SYSTEM_ID_PATTERN: String = "^[a-z][a-z0-9_]*$"
 const ENTITY_KIND_PLAYER: String = "player"
 const REASON_NOT_ONLINE: String = "not_online"
 const REASON_STALE_SEQUENCE: String = "stale_sequence"
+## last_move_sequence() of a player without a stored move intent.
+const NO_MOVE_SEQUENCE: int = -1
 const REASON_UNKNOWN_PLAYER: String = "unknown_player"
 const EVENT_CHARACTER_STARTED: String = "character_started"
 ## A character was created by request (create_character).
@@ -394,6 +396,14 @@ func set_move_input(player_id: String, sequence: int, direction: Vector2, yaw: f
 	_move_inputs[player_id] = {"direction": direction, "sequence": sequence, "received_msec": now_msec}
 	_players[player_id].yaw = yaw
 	return ""
+
+
+## Sequence number of the newest move intent stored for `player_id`
+## (NO_MOVE_SEQUENCE when it has none). Diagnostics and tests: how much of
+## what a client sent has arrived.
+func last_move_sequence(player_id: String) -> int:
+	var input: Dictionary = _move_inputs.get(player_id, {})
+	return NO_MOVE_SEQUENCE if input.is_empty() else int(input["sequence"])
 
 
 ## Advances authoritative movement of online players by `delta` seconds.

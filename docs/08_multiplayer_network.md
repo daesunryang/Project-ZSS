@@ -124,3 +124,10 @@
 - 이 값은 `BuildInfo.PROTOCOL_VERSION`과 함께 서버·클라이언트가 반드시 공유할 접속 계약이다. 서로 다르면 ENet 연결 자체가 성립하지 않아 join 거부 RPC를 받을 수 없다. 클라이언트는 연결 시작 로그에 자기 압축 모드와 "서버와 같아야 한다"는 안내를 남겨, 뒤의 일반 연결 실패 로그와 함께 원인을 찾게 한다.
 - 기본값은 PERF-2 측정에서 종합 비용이 가장 좋았던 `COMPRESS_FASTLZ`다. `NONE`, `RANGE_CODER`, `FASTLZ`, `ZLIB`, `ZSTD`만 설정 검증을 통과한다. ZSTD는 4KB보다 작은 패킷이 대부분인 현재 트래픽의 기본값으로 쓰지 않는다.
 - 압축은 페이로드를 바꾸지 않으므로 프로토콜 버전 15는 올리지 않았다. 배포·접속 설정에서는 프로토콜 버전과 압축 모드를 한 묶음으로 맞춘다.
+
+### 14.1 ENet 호스트 인자와 대역폭 (2026-11-19)
+
+- 서버: `create_server(port, max_players + TRANSPORT_HEADROOM, CHANNEL_COUNT)`. 클라이언트: `create_client(address, port, CHANNEL_COUNT)`. Godot 4.7 문서의 순서는 `create_server(port, max_clients, max_channels, in_bandwidth, out_bandwidth)`, `create_client(address, port, channel_count, in_bandwidth, out_bandwidth, local_port)`이고 대역폭 0은 무제한이다.
+- 두 호스트 모두 만든 직후, 압축을 걸기 전에 `host.bandwidth_limit(NetworkSettings.UNLIMITED_BANDWIDTH, UNLIMITED_BANDWIDTH)`(0, 0)을 부른다. 서버는 아직 아무도 접속하기 전이다.
+- 이유: Godot 4.7.2에서 `create_server`에 `max_channels > 0`을 주면 대역폭 인자를 0으로 줘도 서버 호스트에 아주 작은 수신 대역폭 제한이 남는다. 접속하는 클라이언트는 그 제한을 전달받고, 클라이언트의 ENet이 비신뢰 패킷(이동 의도)을 보내기 전에 버린다(측정과 경과는 docs/15 TT-001). `create_server` 뒤의 `bandwidth_limit(0, 0)`은 지우면 안 된다. `tests/integration/enet_bandwidth_net_test.gd`가 지킨다.
+- 대역폭 제한을 실제로 쓰고 싶어지면 이 호출의 값을 설정으로 빼고, 제한이 비신뢰 패킷을 버린다는 점을 같이 잰다.

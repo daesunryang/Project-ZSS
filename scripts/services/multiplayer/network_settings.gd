@@ -14,6 +14,9 @@ const CHANNEL_ENTITY_SNAPSHOT: int = 2
 const CHANNEL_COUNT: int = 3
 ## Extra transport slots so a full server can still answer "server_full".
 const TRANSPORT_HEADROOM: int = 2
+## ENetConnection.bandwidth_limit(): 0 = no limit, bytes per second. Both
+## hosts are set to it right after they are created (docs/08 §14.1).
+const UNLIMITED_BANDWIDTH: int = 0
 
 ## ENet packet compression. This transport setting is part of the connection
 ## contract: the server and every client must use the same mode.

@@ -180,6 +180,13 @@ func start_server(world: ServerWorld, persistence: WorldPersistence, settings: N
 		GameLogger.error("net", "failed to start server", {"port": port, "error": error_string(error), "operation": "start_server"})
 		_peer = null
 		return error
+	# No bandwidth limit, said explicitly and before anybody can connect
+	# (docs/08 §14.1, docs/15 TT-001). Godot 4.7.2: create_server() with
+	# max_channels > 0 leaves the host with a tiny INCOMING bandwidth limit
+	# even when in_bandwidth is passed as 0 (measured; with max_channels 0
+	# there is none). A connecting client is told that limit and its ENet
+	# then drops most unreliable packets (move intents) before sending them.
+	_peer.host.bandwidth_limit(NetworkSettings.UNLIMITED_BANDWIDTH, NetworkSettings.UNLIMITED_BANDWIDTH)
 	# Compression is a host property and must be installed after create_host.
 	# A different client mode cannot complete the ENet connection.
 	_peer.host.compress(settings.compression_mode)
@@ -215,6 +222,9 @@ func start_client(address: String, port: int, player_key: String, settings: Netw
 		GameLogger.error("net", "failed to create client", {"address": address, "port": port, "error": error_string(error), "operation": "start_client"})
 		_peer = null
 		return error
+	# The client host has no limit after create_client() (measured); it is
+	# said explicitly so both ends are set the same way (docs/08 §14.1).
+	_peer.host.bandwidth_limit(NetworkSettings.UNLIMITED_BANDWIDTH, NetworkSettings.UNLIMITED_BANDWIDTH)
 	# This must match the server. ENet reports only a failed connection when it
 	# does not, so retain the configured value for the diagnostic below.
 	_peer.host.compress(settings.compression_mode)

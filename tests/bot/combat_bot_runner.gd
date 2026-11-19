@@ -35,8 +35,9 @@ extends RefCounted
 ##      The limits themselves are tested in the *_net_test files.
 ##   3. ENet may drop unreliable packets (move intents, position / zombie
 ##      snapshots) when it thinks the line is slow or over a bandwidth
-##      limit. The server host of the run has no bandwidth limit (see
-##      `_set_up` for why it has one otherwise), the throttle of both ends
+##      limit. The game's hosts have no bandwidth limit (NetworkService
+##      lifts the one Godot leaves on a server host, docs/15 TT-001;
+##      enet_bandwidth_net_test.gd guards it), the throttle of both ends
 ##      is told never to slow down (`_keep_unreliable_packets`), and a run
 ##      in which the throttle is not fully open is an error
 ##      (`_check_unreliable_packets_pass`).
@@ -86,8 +87,6 @@ const THROTTLE_INTERVAL_MSEC: int = 5000
 const THROTTLE_ACCELERATION: int = 2
 const THROTTLE_DECELERATION: int = 0
 const SERVER_PEER_ID: int = 1
-## ENetConnection.bandwidth_limit: 0 = no limit.
-const UNLIMITED_BANDWIDTH: int = 0
 
 const END_CLEARED: String = "cleared"
 const END_DEAD: String = "dead"
@@ -278,17 +277,6 @@ func _set_up() -> String:
 	_cluster.extra_module_factories.append(func() -> NetModule: return CombatBotSyncModule.new())
 	if _cluster.start_server(_world, null) != OK:
 		return "the server did not start"
-	# Godot 4.7.2: ENetMultiplayerPeer.create_server(port, clients, channels)
-	# with channels > 0 gives the host an INCOMING BANDWIDTH LIMIT of
-	# (channels + 2) bytes per second (measured here 2026-11-19: with the
-	# game's 3 channels a client's ENet throttle limit drops to 1/32 in
-	# alternate seconds and most of its move intents never leave it; docs/15
-	# §16.6). The bot must not depend on which intents survive, so its server
-	# host is told there is no limit before the client connects.
-	var server_peer: ENetMultiplayerPeer = _cluster.server.multiplayer.multiplayer_peer as ENetMultiplayerPeer
-	if server_peer == null or server_peer.host == null:
-		return "the server has no ENet host"
-	server_peer.host.bandwidth_limit(UNLIMITED_BANDWIDTH, UNLIMITED_BANDWIDTH)
 	# The client connects at once but asks to join at a fixed server tick:
 	# how long the connection takes depends on the machine, and everything
 	# the server counts from its start (snapshot periods) or from the first
