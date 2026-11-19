@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="CombatBotScene" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/bot/combat_bot_scene.gd" id="1_scene"]
+
+[resource]
+script = ExtResource("1_scene")
+scene_id = "zombie_behind_door"
+title = "닫힌 문 뒤 좀비 1마리 (테스트 맵 house_a), 맨손"
+rng_seed = 103
+player_spawn = Vector3(10.5, 0, 3)
+use_test_map = true
+zombie_offsets = PackedVector3Array(0, 0, 7)
+max_sim_sec = 90.0
+expect_cleared = true
+verify_repeat = true

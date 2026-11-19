@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="CombatBotScene" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/bot/combat_bot_scene.gd" id="1_scene"]
+
+[resource]
+script = ExtResource("1_scene")
+scene_id = "horde_of_eight_with_pipe"
+title = "좀비 8마리 무리, 쇠파이프와 붕대를 주워서"
+rng_seed = 104
+zombie_offsets = PackedVector3Array(0, 0, -14, -5, 0, -15, 5, 0, -15, -10, 0, -17, 10, 0, -17, -3, 0, -20, 3, 0, -20, 0, 0, -23)
+item_definition_ids = PackedStringArray("dev_melee_pipe", "dev_bandage")
+item_offsets = PackedVector3Array(1, 0, 0.5, -1, 0, 0.5)
+item_quantities = PackedInt32Array(1, 3)
+max_sim_sec = 300.0
+expect_cleared = true
+verify_repeat = true

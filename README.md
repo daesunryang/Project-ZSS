@@ -8,7 +8,8 @@
 
 ```bash
 export GODOT=/path/to/Godot_v4.7.2-stable_linux.x86_64   # 선택(기본 경로가 있음)
-tools/check.sh          # 테스트 + 서버/클라이언트 스모크 (로컬 CI)
+tools/check.sh          # 테스트 + 서버/클라이언트 스모크 (로컬 CI, 병합 전 전체 검사)
+tools/test_changed.sh   # 바뀐 파일에 맞는 테스트만 (P0 + 관련 테스트 + 전투 봇, docs/12 §9)
 tools/run_server.sh     # headless 전용 서버, 빈 월드
 tools/run_client.sh     # 클라이언트 창(디스플레이 필요), 접속: --connect=127.0.0.1:24680 --player-key=alice
 ```

@@ -172,7 +172,9 @@ P3-6의 좀비 초기 구현은 아래의 장기 `NavigationServer3D` 방향과 
 | 용도 | 명령 |
 |---|---|
 | 전체 로컬 검사(테스트 + 스모크) | `tools/check.sh` |
-| 테스트만 | `tools/run_tests.sh [--filter=<부분문자열>]` |
+| 테스트만 | `tools/run_tests.sh [--filter=<부분문자열>] [--tier=p0\|p1\|all] [--files=<a>,<b>] [--list]` (docs/12 §9) |
+| 바뀐 파일에 맞는 테스트만 | `tools/test_changed.sh [<기준 커밋>] [--dry-run] [--list] [--no-smoke]` (docs/12 §9.2) |
+| 전투 봇만 | `tools/combat_bot.sh [<scene_id>[,<scene_id>]]` (docs/12 §9.3) |
 | 서버/클라이언트 스모크 | `tools/smoke_test.sh` (`SMOKE_FRAMES`로 프레임 수 조정) |
 | headless 전용 서버 | `tools/run_server.sh [--log-level=DEBUG] [--run-frames=N]` |
 | 클라이언트(창, 디스플레이 필요) | `tools/run_client.sh` |

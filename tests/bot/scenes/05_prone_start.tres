@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="CombatBotScene" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/bot/combat_bot_scene.gd" id="1_scene"]
+
+[resource]
+script = ExtResource("1_scene")
+scene_id = "prone_start"
+title = "엎드린 채 시작, 좀비 1마리가 6 m 앞, 맨손"
+rng_seed = 105
+start_prone = true
+zombie_offsets = PackedVector3Array(0, 0, -6)
+max_sim_sec = 60.0
+expect_cleared = true
+verify_repeat = true
