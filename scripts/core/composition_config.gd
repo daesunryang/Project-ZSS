@@ -74,6 +74,8 @@ var npc: NpcSettings
 var npc_definitions: NpcCatalog
 ## P4-2 (docs/09 §17.2): calendar-time NPC need definitions and rates.
 var npc_needs: NpcNeedSettings
+## P4-6: passive emotion decay and bounded memory tuning.
+var npc_mind: NpcMindSettings
 ## P4-1: the NPCs a world is given, once (NpcService). null (the default of
 ## from_defaults(): tests, tools) = the world gets no NPCs. A dedicated
 ## server sets the dev roster (NpcRoster.DEFAULT_PATH, GameBootstrap), which
@@ -117,6 +119,7 @@ static func from_defaults() -> CompositionConfig:
 	config.npc = NpcSettings.load_or_default()
 	config.npc_definitions = NpcCatalog.load_directory()
 	config.npc_needs = NpcNeedSettings.load_or_default()
+	config.npc_mind = NpcMindSettings.load_or_default()
 	return config
 
 
@@ -124,10 +127,11 @@ static func from_defaults() -> CompositionConfig:
 ## the world is to get one) against the definitions and the map content.
 func _validate_npcs() -> PackedStringArray:
 	var errors: PackedStringArray = []
-	if npc == null or npc_definitions == null or npc_needs == null:
+	if npc == null or npc_definitions == null or npc_needs == null or npc_mind == null:
 		errors.append("composition config is incomplete (npc)")
 		return errors
 	errors.append_array(npc.validate())
+	errors.append_array(npc_mind.validate())
 	errors.append_array(npc_definitions.validate_against(appearance))
 	errors.append_array(npc_needs.validate())
 	if npc_roster != null:

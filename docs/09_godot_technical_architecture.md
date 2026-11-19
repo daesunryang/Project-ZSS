@@ -2608,3 +2608,33 @@ Phase 4(docs/13 §6, §16) 티켓의 계약을 티켓마다 한 절씩 적는다
 `advance_to`, 활동/modifier 전환, 실제 `satisfy`로 저장 문서가 바뀌면 붙어 있는 `NpcService.mark_npc_dirty(npc_id)`를 부른다. 이 호출은 셀 저장 캐시의 revision을 올려 강제 종료 복구에서 변화가 빠지지 않게 한다.
 
 **테스트**: `tests/unit/npc_needs_test.gd`가 출하 설정/0-rate 정의, 조립 등록과 처음 값, 1초 대 10초 적분·저장 문서 동일성, 휴식/업무 비율, 다음 경계 절대 시각, `satisfy` 검증·event·dirty 표시, JSON-safe 저장/복구와 잘못된 구성 요소 문서의 원자적 거부를 검사한다.
+
+### 17.4 NPC 감정·기억·관계 데이터(P4-6, component id `emotions`·`memories`·`relationships`)
+
+행동 선택이나 사회 행동이 아니라 **서버 데이터와 저장 경로만** 만든다. `ServerComposition`이 P4-1의 `NpcService`를 등록한 바로 뒤 세 `NpcComponent` factory를 등록한다. 새 RPC·전송 데이터가 없으므로 `PROTOCOL_VERSION`은 바꾸지 않았다. 감정·기억·관계는 P4-7의 공개 행에도 들어가지 않는다(D9).
+
+**설정(`NpcMindSettings`, `data/tuning/npc_mind_settings.tres`)**: 감정 공통 반감기 `emotion_half_life_world_sec`, 새 기억에 복사하는 기본 반감기 `memory_half_life_world_sec`, NPC 한 명의 기억 상한 `max_memories`. 셋 모두 `CompositionConfig.npc_mind`를 거쳐 조립되며 유한한 양수/1 이상의 값인지 시작 전에 검사한다. 현재 값은 전부 PROVISIONAL(docs/15 §17.4)이다.
+
+**감정(`NpcEmotions`, schema 1)**
+
+- docs/05 §5의 축 13개를 이름 그대로 가진다: `happiness`, `sadness`, `anger`, `fear`, `disgust`, `surprise`, `loneliness`, `shame`, `guilt`, `jealousy`, `hope`, `grief`, `frustration`. 각 값은 0~1이고 복수 축이 동시에 존재한다.
+- 저장값은 `{stored_at_world_time, values: {축: 값}}`. 매 틱 갱신하지 않는다. 조회 `value_at(axis, t)`는 `saved_value * 0.5^((t-stored_at)/half_life)`를 계산만 하고 저장값을 바꾸지 않는다. `emotion_values_at(t)`가 13축을 한 번에 돌려준다.
+- `apply_emotion(axis, delta, world_time)`은 먼저 그 시각까지 13축을 한 번 지연 계산한 뒤 지정 축에 delta를 더하고 0~1로 제한한다. 축·유한한 값·시간 역행을 검사하고, 저장값이 바뀌면 `NpcService.mark_npc_dirty`를 부른다. 감정이 행동을 자동 결정하지는 않는다.
+
+**기억(`NpcMemory`, `NpcMemoryStore`, schema 1)**
+
+- 한 기억은 `memory_id`, `event_id`, `event_type`, 참여자 행(`entity_id`, 역할 `actor`/`target`/`witness`/`helper`), `location`, `event_world_time`, 관찰 신뢰도(`direct`/`witnessed`/`reported`), `importance`, `emotional_intensity`, `repetition_count`, `interpretation_tags`, `strength`, `strength_stored_at`, `decay_half_life_world_sec`, `long_term`을 저장한다. 중요도·감정 강도·강도는 0~1이다.
+- `record_memory(...)`가 모든 입력을 검사하고 기록한다. 빈 `event_id`는 월드의 저장되는 `EntityIdGenerator`에서 `event_<번호>`를 발급한다. 기억도 같은 발급기에서 `memory_<번호>`를 받는다. 이 ID들은 셀 재로딩·서버 재시작 뒤 재사용되지 않지만, 사건 원장(`WorldEvent`)은 Phase 5라 지금은 만들지 않는다.
+- 같은 `event_id`가 이미 있으면 새 기억을 늘리지 않는다. 사건 종류·장소·사건 시각이 다르면 충돌로 거부한다. 같으면 참여자와 해석 태그를 합치고 반복 횟수를 1 늘리며, 중요도·감정 강도·현재 강도·반감기·관찰 신뢰도는 더 강한 쪽, `long_term`은 OR로 합친다(`direct > witnessed > reported`).
+- `strength_at(memory_id, t)`는 저장 시각에서 반감기 감쇠를 계산만 한다. 매 틱 작업은 없다.
+- 상한에 닿으면 `long_term`이 아닌 기억 중 중요도가 가장 낮은 것을 후보로 고른다. 동률은 현재 감쇠 강도, 오래된 사건 시각, ID 순으로 결정한다. 새 기억도 비교 대상이라 기존 최저보다 덜 중요하거나 같은 중요도·강도면 새 기억 자체를 남기지 않는다. `long_term` 기억은 축출되지 않지만 강도는 계속 감쇠한다. 전부 보호된 경우 새 기억을 거부한다.
+- 저장 문서는 `{memories: [NpcMemory...]}`이며 ID 순으로 쓴다. 복구는 상한, 행 모양, 중복 `memory_id`/`event_id`를 전부 검사한 뒤 한 번에 적용한다. 조회는 방어 복사본을 돌려줘 dirty 표시를 우회한 변경을 막는다.
+
+**관계(`RelationshipState`, `RelationshipStore`, schema 1)**
+
+- docs/14 §3의 필드 전부: `source_entity_id`, `target_entity_id`, `trust`, `liking`, `respect`, `fear`, `resentment`, `attraction`, `jealousy`, `dependence`, `status`, `last_interaction_time`. 축 여덟은 독립적인 0~1 값이다. 대상은 `npc_<번호>` 또는 `player_<번호>`이고 자기 자신은 대상이 될 수 없다.
+- 한 `relationships` 구성 요소는 바깥 `NpcState`의 NPC가 source인 레코드만 소유한다. `put_relationship(state)`는 source가 소유 NPC인지와 모든 필드를 검사하고 target별로 넣거나 바꾼다. A→B는 A의 구성 요소, B→A는 B의 구성 요소에 있어 서로 영향을 주지 않는다.
+- `status`는 받은 snake_case 값을 그대로 저장할 뿐 점수로 만들거나 바꾸지 않는다. 상태 전이·점수 변화식·상호 동의 규칙은 Phase 5다. `relationship(target)`은 방어 복사본을 돌려준다.
+- 저장 문서는 `{owner_npc_id, relationships: [RelationshipState...]}`이고 target ID 순이다. 내부 source와 owner가 다른 문서는 거부한다. 바깥 NPC와 중복 owner가 어긋난 옛/손상 문서는 바깥 NPC를 기준으로 source를 복구하고 경고한 뒤 dirty로 표시한다.
+
+**저장·테스트**: 세 구성 요소 모두 값이 바뀔 때 `mark_npc_dirty`를 부르며 P4-1의 셀 문서 `systems.npc.npcs[].components` 안에 저장된다. `npc_mind_test.gd`가 13축/반감기 지연 계산, 동일 사건 통합, 중요도 축출·장기 보호, ID 발급과 감정·기억 셀 해제→재로딩을 검증한다. `relationship_store_test.gd`가 전체 필드 JSON 왕복, A→B/B→A 분리, NPC/player 대상, status 비자동 변경과 셀 왕복을 검증한다. P4-5b가 아직 없으므로 배고픔 해소·도주 행동과의 연결은 그 티켓에서 이 공개 API를 호출한다.

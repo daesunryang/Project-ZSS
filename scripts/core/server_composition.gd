@@ -91,6 +91,12 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 		return null
 	if npcs.register_component(NpcNeeds.COMPONENT_ID, NpcNeeds.create.bind(config.npc_needs)) != OK:
 		return null
+	if npcs.register_component(NpcEmotions.COMPONENT_ID, NpcEmotions.create.bind(config.npc_mind)) != OK:
+		return null
+	if npcs.register_component(NpcMemoryStore.COMPONENT_ID, NpcMemoryStore.create.bind(config.npc_mind)) != OK:
+		return null
+	if npcs.register_component(RelationshipStore.COMPONENT_ID, RelationshipStore.create) != OK:
+		return null
 	# P2-T16: trades between two players. Last, so its step sees what this
 	# tick did to its parties (a death, a rest, a move). It is told about
 	# every inventory transaction, to keep offers backed by what is carried.

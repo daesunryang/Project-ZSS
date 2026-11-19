@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="NpcMindSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/mind/npc_mind_settings.gd" id="1_mind"]
+
+[resource]
+script = ExtResource("1_mind")
+emotion_half_life_world_sec = 21600.0
+memory_half_life_world_sec = 604800.0
+max_memories = 64
