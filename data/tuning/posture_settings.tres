@@ -5,14 +5,14 @@
 [resource]
 script = ExtResource("1_posture")
 standing_moving_visibility = 1.0
-standing_still_visibility = 0.9
-resting_visibility = 0.8
-prone_moving_visibility = 0.6
-prone_still_visibility = 0.4
+standing_still_visibility = 0.8
+resting_visibility = 0.6
+prone_moving_visibility = 0.4
+prone_still_visibility = 0.2
 moving_min_speed_mps = 0.5
 moving_memory_sec = 0.5
 prone_movement_multiplier = 0.35
-prone_footstep_loudness_multiplier = 0.4
+prone_footstep_loudness_multiplier = 0.5
 prone_footstep_stride_multiplier = 0.5
 prone_blocks_attack = true
 max_pending_events = 256

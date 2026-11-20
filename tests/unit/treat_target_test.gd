@@ -90,7 +90,7 @@ func test_excluded_players_ties_and_bad_rows() -> void:
 func test_keys_settings_and_which_kinds_can_be_used_on_others() -> void:
 	var shipped: ClientPresentationSettings = ClientPresentationSettings.load_or_default()
 	assert_eq(shipped.validate().size(), 0, "; ".join(shipped.validate()))
-	assert_eq(shipped.treat_other_modifier_key, KEY_SHIFT)
+	assert_eq(shipped.treat_other_modifier_key, KEY_ALT)
 	assert_true(shipped.treat_target_range_m > 0.0 and shipped.treat_target_half_angle_deg > 0.0)
 	var camera: CameraSettings = CameraSettings.new()
 	var presentation: ClientPresentationSettings = ClientPresentationSettings.new()
@@ -118,7 +118,7 @@ func test_hud_target_line_result_texts_and_notices() -> void:
 	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
 	# P2-T15: the hand-over keys P2-T14 appended to the line are gone again
 	# (ground_transfer_presentation_test.gd).
-	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "민수", settings), PackedStringArray(["줄 대상: 민수 | 음식 [Shift+F] 물 [Shift+G] 붕대 [Shift+B] 치료제 [Shift+V]"]))
+	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "민수", settings), PackedStringArray(["줄 대상: 민수 | 음식 [Alt+F] 물 [Alt+G] 붕대 [Alt+B] 치료제 [Alt+V]"]))
 	assert_eq(ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "", settings), PackedStringArray(["줄 대상: 없음 (가까이서 바라보기)"]))
 	settings.bandage_key = KEY_N
 	settings.consume_key = KEY_T

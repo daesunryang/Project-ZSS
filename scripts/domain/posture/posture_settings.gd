@@ -14,10 +14,10 @@ const DEFAULT_PATH: String = "res://data/tuning/posture_settings.tres"
 ## moving player is seen best, a sleeping player a little less, a prone
 ## player least; sleeping gives no stealth like lying prone does.
 @export_range(0.0, 1.0) var standing_moving_visibility: float = 1.0
-@export_range(0.0, 1.0) var standing_still_visibility: float = 0.9
-@export_range(0.0, 1.0) var resting_visibility: float = 0.8
-@export_range(0.0, 1.0) var prone_moving_visibility: float = 0.6
-@export_range(0.0, 1.0) var prone_still_visibility: float = 0.4
+@export_range(0.0, 1.0) var standing_still_visibility: float = 0.8
+@export_range(0.0, 1.0) var resting_visibility: float = 0.6
+@export_range(0.0, 1.0) var prone_moving_visibility: float = 0.4
+@export_range(0.0, 1.0) var prone_still_visibility: float = 0.2
 ## A player counts as moving when the server moved it at least this fast in
 ## a tick ...
 @export_range(0.0, 1000.0) var moving_min_speed_mps: float = 0.5
@@ -30,7 +30,7 @@ const DEFAULT_PATH: String = "res://data/tuning/posture_settings.tres"
 @export_range(0.0, 1.0) var prone_movement_multiplier: float = 0.35
 ## Factors on the footsteps of a prone player: loudness of one footstep and
 ## distance crawled between two of them (PlayerNoiseSettings).
-@export_range(0.0, 1.0) var prone_footstep_loudness_multiplier: float = 0.4
+@export_range(0.0, 1.0) var prone_footstep_loudness_multiplier: float = 0.5
 @export_range(0.01, 10.0) var prone_footstep_stride_multiplier: float = 0.5
 ## true: a prone player cannot make a melee attack ("player_prone"); it can
 ## still pick up, put down and use items.

@@ -5,7 +5,8 @@
 [resource]
 script = ExtResource("1_player_noise")
 stride_length_m = 2.0
-footstep_loudness = 8.0
+footstep_loudness = 6.0
+sprint_footstep_loudness = 13.0
 footstep_frequency_profile = "broadband"
 min_speed_mps = 0.5
 teleport_speed_mps = 15.0

@@ -11,7 +11,9 @@ const DEFAULT_PATH: String = "res://data/tuning/player_noise_settings.tres"
 ## Distance walked between two footstep noises, metres (XZ plane).
 @export_range(0.1, 1000.0) var stride_length_m: float = 2.0
 ## NoiseService loudness of one footstep. 0 = footsteps are disabled.
-@export_range(0.0, 100000.0) var footstep_loudness: float = 8.0
+@export_range(0.0, 100000.0) var footstep_loudness: float = 6.0
+## Loudness of a server-authorized running footstep.
+@export_range(0.0, 100000.0) var sprint_footstep_loudness: float = 13.0
 ## NoiseSettings.frequency_profiles entry used for footsteps.
 @export var footstep_frequency_profile: String = "broadband"
 ## Movement slower than this is silent and does not add to the stride.
@@ -30,6 +32,8 @@ func validate() -> PackedStringArray:
 		errors.append("player_noise stride_length_m must be > 0")
 	if not is_finite(footstep_loudness) or footstep_loudness < 0.0:
 		errors.append("player_noise footstep_loudness must be >= 0")
+	if not is_finite(sprint_footstep_loudness) or sprint_footstep_loudness < 0.0:
+		errors.append("player_noise sprint_footstep_loudness must be >= 0")
 	if not is_finite(min_speed_mps) or min_speed_mps < 0.0:
 		errors.append("player_noise min_speed_mps must be >= 0")
 	if not is_finite(teleport_speed_mps) or teleport_speed_mps <= 0.0 or teleport_speed_mps < min_speed_mps:
@@ -46,7 +50,11 @@ func validate_against(noise: NoiseSettings) -> PackedStringArray:
 	var errors: PackedStringArray = []
 	if footstep_loudness > noise.max_loudness:
 		errors.append("player_noise footstep_loudness exceeds noise max_loudness")
-	if footstep_loudness > 0.0 and not noise.is_valid_profile(footstep_frequency_profile):
+	if sprint_footstep_loudness > noise.max_loudness:
+		errors.append("player_noise sprint_footstep_loudness exceeds noise max_loudness")
+	if (footstep_loudness > 0.0 or sprint_footstep_loudness > 0.0) and not noise.is_valid_profile(
+		footstep_frequency_profile
+	):
 		errors.append("player_noise footstep_frequency_profile %s is unknown" % footstep_frequency_profile)
 	return errors
 

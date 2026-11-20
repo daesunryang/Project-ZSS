@@ -9,7 +9,7 @@ extends ServerSystem
 ## Each server tick, for every online living player, the XZ distance
 ## between the previous and the current server position is added to that
 ## player's stride. Every `stride_length_m` a footstep is emitted with
-## NoiseService.emit(player_id, point on the path, footstep_loudness,
+## NoiseService.emit(player_id, point on the path, walking/running loudness,
 ## footstep_frequency_profile). Tick length does not change the result:
 ## several steps of one long tick are placed along the path.
 ##
@@ -69,7 +69,9 @@ func on_player_offline(_world: ServerWorld, player_id: String) -> void:
 func step(world: ServerWorld, action_delta: float, _world_delta: float) -> void:
 	last_footstep_count = 0
 	var noise: NoiseService = world.get_system(NoiseService.SYSTEM_ID) as NoiseService
-	if noise == null or _settings.footstep_loudness <= 0.0:
+	if noise == null or (
+		_settings.footstep_loudness <= 0.0 and _settings.sprint_footstep_loudness <= 0.0
+	):
 		return
 	var survival: SurvivalService = world.get_system(SurvivalService.SYSTEM_ID) as SurvivalService
 	# Sorted ids: footsteps of one tick are emitted in a deterministic order.
@@ -108,7 +110,8 @@ func _advance_stride(world: ServerWorld, noise: NoiseService, player: PlayerStat
 	if not FootstepRules.is_walking(moved, action_delta, _settings.min_speed_mps):
 		return
 	var stride_m: float = _settings.stride_length_m * world.player_footstep_stride_multiplier(player_id)
-	var loudness: float = _settings.footstep_loudness * world.player_footstep_loudness_multiplier(player_id)
+	var base_loudness: float = _settings.sprint_footstep_loudness if world.is_player_sprinting(player_id) else _settings.footstep_loudness
+	var loudness: float = base_loudness * world.player_footstep_loudness_multiplier(player_id)
 	if stride_m <= 0.0:
 		return
 	var carried: float = _carried_m[player_id]

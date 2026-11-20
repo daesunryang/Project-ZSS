@@ -98,11 +98,12 @@ extends ServerSystem
 ## events.
 
 const SYSTEM_ID: String = "containers"
-const SCHEMA_VERSION: int = 1
+const SCHEMA_VERSION: int = 2
 ## Version of this system's part of a cell document.
 const CELL_SCHEMA_VERSION: int = 1
 const ENTITY_KIND_CONTAINER: String = ContainerInstance.ENTITY_KIND
 const KEY_CONTAINERS: String = "containers"
+const KEY_WORLD_LOOT_SEED: String = "world_loot_seed"
 ## Key of a saved container: its items ([ItemInstance.to_dict()]).
 const KEY_ITEMS: String = "items"
 
@@ -194,6 +195,10 @@ var _sources: Dictionary[String, String] = {}
 ## player_id -> its session.
 var _sessions: Dictionary[String, Session] = {}
 var _events: Array[Dictionary] = []
+## Resolved once for this world. -1 means a new/legacy world has not needed
+## a seed yet. Positive settings are deterministic overrides; shipped 0 uses
+## one explicit RNG draw. This value is stored in the world document.
+var _world_loot_seed: int = -1
 
 
 func _init(settings: ContainerSettings, definitions: ContainerCatalog, loot_tables: LootTableCatalog, ids: EntityIdGenerator, registry: EntityRegistry, clock: WorldClock) -> void:
@@ -257,7 +262,7 @@ func create_container(world: ServerWorld, definition_id: String, position: Vecto
 	container.searched = table_id.is_empty()
 	container.source_key = source_key
 	container.created_at = _clock.world_time_sec
-	container.loot_seed = _settings.loot_seed
+	container.loot_seed = world_loot_seed()
 	container.structure_id = structure_id
 	_remember(world, container)
 	GameLogger.info("containers", "container created", {"entity_id": container_id, "definition_id": definition_id, "cell_id": container.cell_id, "inventory_id": inventory_id, "loot_table_id": table_id, "source": source_key})
@@ -504,6 +509,21 @@ func session_count() -> int:
 	return _sessions.size()
 
 
+## The seed shared by every container created in this world.
+func world_loot_seed() -> int:
+	if _world_loot_seed >= 0:
+		return _world_loot_seed
+	if _settings.loot_seed > 0:
+		_world_loot_seed = _settings.loot_seed
+		return _world_loot_seed
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.randomize()
+	# One draw, kept in the JSON-exact integer range and never 0 (the
+	# ContainerSettings sentinel).
+	_world_loot_seed = int(rng.randi()) + 1
+	return _world_loot_seed
+
+
 ## Returns and clears the events recorded since the previous call (oldest
 ## first). At most `max_pending_events` are kept between calls.
 func drain_events() -> Array[Dictionary]:
@@ -557,23 +577,20 @@ func on_character_started(_world_arg: ServerWorld, player_id: String) -> void:
 		_close(session, REASON_TOO_FAR)
 
 
-## The containers that are NOT saved with a cell document ({} = none): all
-## of them in a world without a saved cell store, normally none on a
-## dedicated server.
+## The resolved world loot seed plus containers that are NOT saved with a
+## cell document. The seed is always present so an empty new world keeps it
+## across a save/restart before any container is created.
 func to_world_document() -> Dictionary:
 	var world: ServerWorld = _world()
 	if world == null:
 		return {}
-	if world.saves_all_loaded_entities_in_cells():
-		return {}
 	var containers: Array[Dictionary] = []
-	for container_id: String in _containers:
-		var container: ContainerInstance = _containers[container_id]
-		if not world.saves_cell_document(container.cell_id):
-			containers.append(_document_of(world, container))
-	if containers.is_empty():
-		return {}
-	return {"schema_version": SCHEMA_VERSION, KEY_CONTAINERS: containers}
+	if not world.saves_all_loaded_entities_in_cells():
+		for container_id: String in _containers:
+			var container: ContainerInstance = _containers[container_id]
+			if not world.saves_cell_document(container.cell_id):
+				containers.append(_document_of(world, container))
+	return {"schema_version": SCHEMA_VERSION, KEY_WORLD_LOOT_SEED: world_loot_seed(), KEY_CONTAINERS: containers}
 
 
 func restore_world_document(document: Dictionary) -> PackedStringArray:
@@ -581,9 +598,33 @@ func restore_world_document(document: Dictionary) -> PackedStringArray:
 	if world == null:
 		return PackedStringArray(["containers: not registered with a world"])
 	var errors: PackedStringArray = []
-	var restored: Array[Dictionary] = _read_containers(world, document, SCHEMA_VERSION, "containers", true, errors)
+	var version_value: Variant = document.get("schema_version", null)
+	if not ItemInstance.is_integer_value(version_value) or (
+		int(version_value) != 1 and int(version_value) != SCHEMA_VERSION
+	):
+		return PackedStringArray(["containers: unsupported schema_version"])
+	var normalized: Dictionary = document.duplicate(true)
+	normalized["schema_version"] = SCHEMA_VERSION
+	var restored_seed: int = -1
+	if int(version_value) == SCHEMA_VERSION:
+		var seed_value: Variant = document.get(KEY_WORLD_LOOT_SEED, null)
+		if not ItemInstance.is_integer_value(seed_value) or not ContainerInstance.is_valid_loot_seed(int(seed_value)) or int(seed_value) <= 0:
+			return PackedStringArray(["containers: invalid world_loot_seed"])
+		restored_seed = int(seed_value)
+	else:
+		var legacy_entries: Variant = document.get(KEY_CONTAINERS, [])
+		if typeof(legacy_entries) == TYPE_ARRAY and not (legacy_entries as Array).is_empty():
+			var first: Variant = (legacy_entries as Array)[0]
+			if typeof(first) == TYPE_DICTIONARY and ItemInstance.is_integer_value((first as Dictionary).get(ContainerInstance.KEY_LOOT_SEED, null)):
+				restored_seed = int((first as Dictionary)[ContainerInstance.KEY_LOOT_SEED])
+		if restored_seed <= 0:
+			restored_seed = world_loot_seed()
+	var restored: Array[Dictionary] = _read_containers(world, normalized, SCHEMA_VERSION, "containers", true, errors)
 	if not errors.is_empty():
 		return errors
+	if _world_loot_seed >= 0 and _world_loot_seed != restored_seed:
+		return PackedStringArray(["containers: world_loot_seed does not match the loaded world"])
+	_world_loot_seed = restored_seed
 	for row: Dictionary in restored:
 		errors.append_array(_adopt(world, row["container"] as ContainerInstance, row[KEY_ITEMS] as Array))
 	return errors

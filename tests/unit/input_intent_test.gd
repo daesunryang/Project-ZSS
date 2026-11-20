@@ -6,6 +6,7 @@ const ACTIONS: Array[StringName] = [
 	ClientInputActions.MOVE_BACKWARD,
 	ClientInputActions.MOVE_LEFT,
 	ClientInputActions.MOVE_RIGHT,
+	ClientInputActions.SPRINT,
 	ClientInputActions.PICKUP,
 	ClientInputActions.CAMERA_HEIGHT_UP,
 	ClientInputActions.CAMERA_HEIGHT_DOWN,
@@ -41,6 +42,8 @@ func test_move_sender_changes_resends_and_sends_stop_once() -> void:
 	assert_true(sender.should_send(Vector2(0.0, -1.0), 0.0, 0.20), "held input is refreshed")
 	assert_true(sender.should_send(Vector2(1.0, 0.0), 0.0, 0.21), "direction change is immediate")
 	assert_true(sender.should_send(Vector2(1.0, 0.0), 0.5, 0.22), "yaw change is immediate while moving")
+	assert_true(sender.should_send(Vector2(1.0, 0.0), 0.5, 0.225, true), "run press is immediate")
+	assert_true(sender.should_send(Vector2(1.0, 0.0), 0.5, 0.227, false), "run release is immediate")
 	assert_true(sender.should_send(Vector2.ZERO, 0.5, 0.23), "stop sends one zero")
 	assert_false(sender.should_send(Vector2.ZERO, 1.0, 1.0), "stopped zero is not refreshed")
 
@@ -48,6 +51,7 @@ func test_move_sender_changes_resends_and_sends_stop_once() -> void:
 func test_runtime_actions_use_settings_and_do_not_duplicate() -> void:
 	var settings: CameraSettings = CameraSettings.new()
 	settings.move_forward_key = KEY_UP
+	settings.sprint_key = KEY_SHIFT
 	settings.camera_height_up_key = KEY_HOME
 	settings.camera_height_down_key = KEY_END
 	ClientInputActions.register(settings)
@@ -55,6 +59,7 @@ func test_runtime_actions_use_settings_and_do_not_duplicate() -> void:
 	var events: Array[InputEvent] = InputMap.action_get_events(ClientInputActions.MOVE_FORWARD)
 	assert_eq(events.size(), 1)
 	assert_eq((events[0] as InputEventKey).physical_keycode, KEY_UP)
+	assert_eq((InputMap.action_get_events(ClientInputActions.SPRINT)[0] as InputEventKey).physical_keycode, KEY_SHIFT)
 	assert_eq((InputMap.action_get_events(ClientInputActions.CAMERA_HEIGHT_UP)[0] as InputEventKey).physical_keycode, KEY_HOME)
 	assert_eq((InputMap.action_get_events(ClientInputActions.CAMERA_HEIGHT_DOWN)[0] as InputEventKey).physical_keycode, KEY_END)
 	ClientInputActions.register(settings)

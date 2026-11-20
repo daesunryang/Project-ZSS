@@ -228,6 +228,10 @@ var _step_action_end: float = 0.0
 ## Action seconds per calendar second in this tick (1 / time scale; 0 when a
 ## caller passes no action time).
 var _step_action_per_world_sec: float = 0.0
+## Players whose run intent was accepted by authoritative movement before
+## this system's current step. They spend stamina and do not regenerate it
+## in the same tick; the set is cleared after the step.
+var _sprinting_this_step: Dictionary[String, bool] = {}
 ## Whether the player being integrated rests (set by _advance_player before
 ## every living portion; selects the need rates, _need_rate).
 var _step_resting: bool = false
@@ -295,6 +299,21 @@ func try_spend_stamina(player_id: String, amount: float) -> bool:
 	if vitals.stamina < amount:
 		return false
 	vitals.stamina -= amount
+	return true
+
+
+## Accepts one authoritative running step and spends its action-time cost.
+## Any positive stamina permits the step; a final partial cost reaches zero.
+func try_sprint(player_id: String, action_delta: float) -> bool:
+	var vitals: PlayerVitals = _vitals.get(player_id, null)
+	if vitals == null or not vitals.is_alive() or _resting.has(player_id):
+		return false
+	if not is_finite(action_delta) or action_delta <= 0.0 or vitals.stamina <= 0.0:
+		return false
+	var cost: float = minf(_settings.sprint_stamina_cost_per_sec * action_delta, vitals.stamina)
+	if not try_spend_stamina(player_id, cost):
+		return false
+	_sprinting_this_step[player_id] = true
 	return true
 
 
@@ -780,6 +799,7 @@ func on_player_offline(_world: ServerWorld, player_id: String) -> void:
 
 func step(world: ServerWorld, action_delta: float, world_delta: float) -> void:
 	if world_delta <= 0.0:
+		_sprinting_this_step.clear()
 		return
 	var action_elapsed: float = action_delta if is_finite(action_delta) and action_delta > 0.0 else 0.0
 	# ServerWorld advances its clock before systems. The fallbacks also make
@@ -795,6 +815,7 @@ func step(world: ServerWorld, action_delta: float, world_delta: float) -> void:
 		if vitals == null:
 			continue
 		_advance_player(world, player_id, vitals, step_start, step_end)
+	_sprinting_this_step.clear()
 
 
 func to_player_fragment(player_id: String) -> Dictionary:
@@ -909,7 +930,7 @@ func _advance_living(player_id: String, vitals: PlayerVitals, elapsed: float, st
 	if total_damage > 0.0:
 		vitals.health = maxf(vitals.health - total_damage, 0.0)
 		_accumulate_survival_damage(player_id, vitals, start_time, start_time + elapsed, bleeding_damage, starvation_damage, dehydration_damage, infection_damage)
-	var stamina_recovery: float = _stamina_recovery(vitals, elapsed)
+	var stamina_recovery: float = _stamina_recovery(player_id, vitals, elapsed)
 	if stamina_recovery > 0.0:
 		vitals.stamina = minf(vitals.stamina + stamina_recovery, _settings.max_stamina)
 	_advance_needs(player_id, vitals, elapsed)
@@ -1008,8 +1029,8 @@ func _heal_wounds(vitals: PlayerVitals, elapsed: float) -> void:
 ## The rate is per action second; the worst-need multiplier is integrated
 ## across every (calendar) threshold crossed during the interval instead of
 ## applying the end category to the whole tick.
-func _stamina_recovery(vitals: PlayerVitals, elapsed: float) -> float:
-	if _settings.stamina_regen_per_sec <= 0.0:
+func _stamina_recovery(player_id: String, vitals: PlayerVitals, elapsed: float) -> float:
+	if _sprinting_this_step.has(player_id) or _settings.stamina_regen_per_sec <= 0.0:
 		return 0.0
 	var boundaries: Array[float] = [0.0, elapsed]
 	for kind_index: int in NeedKind.KIND_NAMES.size():

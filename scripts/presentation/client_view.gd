@@ -343,9 +343,10 @@ func _physics_process(_delta: float) -> void:
 	)
 	var local_intent: Vector2 = InputIntentMath.sample_to_local_intent(sample, _settings.input_deadzone)
 	var world_intent: Vector2 = InputIntentMath.camera_relative_direction(local_intent, _yaw)
+	var sprinting: bool = Input.is_action_pressed(ClientInputActions.SPRINT)
 	var now_sec: float = float(Time.get_ticks_msec()) / 1000.0
-	if _intent_sender.should_send(world_intent, _yaw, now_sec):
-		_network.send_move_intent(world_intent, _yaw)
+	if _intent_sender.should_send(world_intent, _yaw, now_sec, sprinting):
+		_network.send_move_intent(world_intent, _yaw, sprinting)
 	if Input.is_action_just_pressed(ClientInputActions.PICKUP) and not bool(build_input["pickup"]):
 		_request_nearest_pickup()
 
@@ -808,7 +809,8 @@ func _refresh_survival_hud() -> void:
 		"resting": _survival_state.is_resting(_survival_state.local_player_id),
 		"posture": PlayerPosture.name_of(_local_posture()),
 	}
-	var lines: PackedStringArray = ClientPresentationFormatter.build_survival_lines(vitals, _presentation)
+	var lines: PackedStringArray = ClientPresentationFormatter.build_movement_lines(_settings)
+	lines.append_array(ClientPresentationFormatter.build_survival_lines(vitals, _presentation))
 	var carried: Array[Dictionary] = _state.inventory if _state != null else ([] as Array[Dictionary])
 	lines.append_array(ClientPresentationFormatter.build_treatment_lines(vitals, carried, _item_catalog, _presentation))
 	lines.append_array(ClientPresentationFormatter.build_rest_lines(vitals, _presentation))

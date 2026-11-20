@@ -62,6 +62,15 @@ func _captured_text() -> String:
 	return "\n".join(GameLogger.captured_lines())
 
 
+func test_shipped_infection_decisions_are_exact() -> void:
+	var shipped: SurvivalSettings = SurvivalSettings.load_or_default()
+	assert_eq(shipped.infection_chance_bite, 0.70)
+	assert_eq(shipped.infection_chance_scratch, 0.10)
+	var total_hours: float = shipped.infection_latent_hours + shipped.infection_early_hours + shipped.infection_progressing_hours + shipped.infection_severe_hours + shipped.infection_terminal_hours
+	assert_true(absf(total_hours - 60.0) <= 0.000001)
+	assert_eq(shipped.infection_treatment_max_stage, InfectionState.Stage.PROGRESSING)
+
+
 func test_stages_advance_at_configured_world_time_boundaries_and_are_logged() -> void:
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)

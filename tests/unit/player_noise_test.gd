@@ -102,6 +102,15 @@ func _walk(world: ServerWorld, player: PlayerState, direction: Vector2, seconds:
 	world.set_move_input(player.player_id, _sequence, Vector2.ZERO, 0.0, _now_msec)
 
 
+func _sprint(world: ServerWorld, player: PlayerState, direction: Vector2, seconds: float) -> void:
+	for tick: int in range(roundi(seconds / TICK)):
+		_sequence += 1
+		world.set_move_input(player.player_id, _sequence, direction, 0.0, _now_msec + TICK_MSEC, true)
+		_tick(world)
+	_sequence += 1
+	world.set_move_input(player.player_id, _sequence, Vector2.ZERO, 0.0, _now_msec)
+
+
 func _run(world: ServerWorld, seconds: float) -> void:
 	for tick: int in range(roundi(seconds / TICK)):
 		_tick(world)
@@ -157,6 +166,10 @@ func test_default_settings_and_composition() -> void:
 	var loaded: PlayerNoiseSettings = PlayerNoiseSettings.load_or_default()
 	assert_true(ResourceLoader.exists(PlayerNoiseSettings.DEFAULT_PATH))
 	assert_eq(loaded.validate().size(), 0, "; ".join(loaded.validate()))
+	assert_eq(loaded.footstep_loudness, 6.0)
+	assert_eq(loaded.sprint_footstep_loudness, 13.0)
+	assert_eq(NoiseService.new(NoiseSettings.load_or_default(), WorldClock.new(), 250.0).max_audible_distance(loaded.footstep_loudness, 1.0), 5.0)
+	assert_eq(NoiseService.new(NoiseSettings.load_or_default(), WorldClock.new(), 250.0).max_audible_distance(loaded.sprint_footstep_loudness, 1.0), 12.0)
 	var config: CompositionConfig = CompositionConfig.from_defaults()
 	assert_eq(config.validate().size(), 0, "; ".join(config.validate()))
 	var ids: PackedStringArray = ServerComposition.create_world(WORLD, config).system_ids()
@@ -165,13 +178,17 @@ func test_default_settings_and_composition() -> void:
 	var broken: PlayerNoiseSettings = PlayerNoiseSettings.new()
 	broken.stride_length_m = 0.0
 	broken.footstep_loudness = -1.0
+	broken.sprint_footstep_loudness = -1.0
 	broken.min_speed_mps = NAN
 	broken.teleport_speed_mps = 0.0
 	broken.max_footsteps_per_tick = 0
-	assert_true(broken.validate().size() >= 5, "; ".join(broken.validate()))
+	assert_true(broken.validate().size() >= 6, "; ".join(broken.validate()))
 	config.player_noise = PlayerNoiseSettings.new()
 	config.player_noise.footstep_loudness = config.noise.max_loudness + 1.0
 	assert_true(config.validate().size() > 0, "louder than the noise system accepts")
+	config.player_noise = PlayerNoiseSettings.new()
+	config.player_noise.sprint_footstep_loudness = config.noise.max_loudness + 1.0
+	assert_true(config.validate().size() > 0, "running louder than the noise system accepts")
 	config.player_noise = PlayerNoiseSettings.new()
 	config.player_noise.footstep_frequency_profile = "ultrasonic"
 	assert_true(config.validate().size() > 0, "unknown frequency profile")
@@ -225,6 +242,20 @@ func test_one_long_tick_gives_the_same_steps_as_many_short_ones() -> void:
 	alice.position += Vector3(4.5, 0, 0)
 	world.step_systems(1.5)
 	assert_eq(service.last_footstep_count, 1, "capped per tick; the extra steps are dropped")
+
+
+func test_running_uses_the_server_authorized_loudness() -> void:
+	_settings.footstep_loudness = 6.0
+	_settings.sprint_footstep_loudness = 13.0
+	var world: ServerWorld = _world()
+	var alice: PlayerState = world.join("alice")
+	_run(world, 0.1)
+	_sprint(world, alice, WALK_PLUS_X, 0.5)
+	var latest: NoiseEvent = _noise(world).get_event(NoiseService.NOISE_ID_PREFIX + str(_footsteps(world).total_footstep_count))
+	assert_not_null(latest)
+	if latest != null:
+		assert_eq(latest.loudness, 13.0)
+	assert_true(_survival(world).get_vitals(alice.player_id).stamina < _survival_settings.max_stamina, "running spent server stamina")
 
 
 func test_standing_or_creeping_players_make_no_noise() -> void:

@@ -76,10 +76,11 @@ func test_manipulated_move_intents_are_rejected() -> void:
 	a.send_raw_move_intent(3, Vector3(100, 0, 0), 0.0)   # wrong type (a position)
 	a.send_raw_move_intent("4", Vector2(1, 0), 0.0)      # wrong sequence type
 	a.send_raw_move_intent(5, Vector2(1, 0), 1e9)        # garbage yaw
-	var counted: bool = await _cluster.wait_until(func() -> bool: return _cluster.server.rejected_intent_count() >= 5)
+	a.send_raw_move_intent(6, Vector2(1, 0), 0.0, "yes") # wrong sprint flag type
+	var counted: bool = await _cluster.wait_until(func() -> bool: return _cluster.server.rejected_intent_count() >= 6)
 	assert_true(counted, "all malformed intents were seen and rejected")
 	assert_eq(_cluster.server.rejected_intent_count(IntentValidator.REASON_BAD_DIRECTION), 2)
-	assert_eq(_cluster.server.rejected_intent_count(IntentValidator.REASON_BAD_TYPE), 2)
+	assert_eq(_cluster.server.rejected_intent_count(IntentValidator.REASON_BAD_TYPE), 3)
 	assert_eq(_cluster.server.rejected_intent_count(IntentValidator.REASON_BAD_YAW), 1)
 	await _cluster.wait_frames(10)
 	assert_eq(_world.get_player(alice_id).position, start, "rejected intents never move the player")

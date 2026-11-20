@@ -104,6 +104,14 @@ func _infect(world: ServerWorld, player: PlayerState, stage: InfectionState.Stag
 	_survival(world).get_vitals(player.player_id).infection.stage = stage
 
 
+func _last_treatable_stage() -> InfectionState.Stage:
+	return _settings.infection_treatment_max_stage as InfectionState.Stage
+
+
+func _first_untreatable_stage() -> InfectionState.Stage:
+	return (int(_last_treatable_stage()) + 1) as InfectionState.Stage
+
+
 func _bleeding_count(world: ServerWorld, player: PlayerState) -> int:
 	return _survival(world).bleeding_wound_ids(player.player_id).size()
 
@@ -227,16 +235,17 @@ func test_a_cure_clears_the_other_players_treatable_infection() -> void:
 	# A healthy target: refused, the cure is kept.
 	_assert_refused(world, [alice, bob], alice, cures, bob.player_id, SurvivalService.REASON_NOT_INFECTED, "bob is not infected")
 	# Too late: refused, kept.
-	_infect(world, bob, InfectionState.Stage.PROGRESSING)
+	_infect(world, bob, _first_untreatable_stage())
 	_assert_refused(world, [alice, bob], alice, cures, bob.player_id, SurvivalService.REASON_TOO_LATE, "bob's infection is past treatment")
 	# Treatable: cured.
-	survival.get_vitals(bob.player_id).infection.stage = InfectionState.Stage.EARLY
+	var last_treatable: InfectionState.Stage = _last_treatable_stage()
+	survival.get_vitals(bob.player_id).infection.stage = last_treatable
 	survival.drain_events()
 	var result: ActionResult = ItemConsumption.try_use_on(world, alice.player_id, cures, bob.player_id)
 	assert_true(result.ok, result.reason)
 	assert_eq(survival.infection_stage(bob.player_id), InfectionState.Stage.NONE, "bob is cured")
 	assert_eq(_quantity(world, cures), 2)
-	assert_eq(result.event.get("infection_cured_from", ""), "early")
+	assert_eq(result.event.get("infection_cured_from", ""), InfectionState.stage_name(last_treatable))
 	assert_eq(result.event.get("bleeding_stopped_wound_ids", ["x"]), [])
 	var events: Array[Dictionary] = survival.drain_events()
 	assert_eq(events.size(), 1, str(events))
@@ -511,7 +520,7 @@ func test_the_check_order_reveals_nothing_before_the_request_is_legitimate() -> 
 	var alice: PlayerState = world.join("alice")
 	var bob: PlayerState = world.join("bob")
 	var cures: String = _give(world, alice, CURE, 1)
-	_infect(world, bob, InfectionState.Stage.SEVERE)
+	_infect(world, bob, _first_untreatable_stage())
 	# Far away: the distance is refused before the infection is looked at,
 	# so a cure cannot test a player across the map.
 	bob.position = alice.position + Vector3(100.0, 0.0, 0.0)

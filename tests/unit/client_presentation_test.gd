@@ -77,6 +77,7 @@ func test_shipped_presentation_settings_load_and_validate() -> void:
 	assert_true(settings.hud_panel_color.a >= 0.8, "the real-window HUD has a readable backdrop")
 	assert_eq(settings.hud_left_column_width_px, 420)
 	assert_eq(settings.keys_shared_with(CameraSettings.load_or_default()).size(), 0)
+	assert_eq(CameraSettings.load_or_default().sprint_key, KEY_SHIFT)
 	var height_clash: ClientPresentationSettings = ClientPresentationSettings.new()
 	height_clash.rest_key = CameraSettings.new().camera_height_up_key
 	assert_true(height_clash.keys_shared_with(CameraSettings.new()).has("rest_key"))
@@ -84,6 +85,18 @@ func test_shipped_presentation_settings_load_and_validate() -> void:
 	invalid.attack_min_interval_sec = 0.0
 	invalid.zombie_capsule_height_m = invalid.zombie_capsule_radius_m
 	assert_true(invalid.validate().size() >= 2)
+	var sprint_clash: ClientPresentationSettings = ClientPresentationSettings.new()
+	sprint_clash.rest_key = CameraSettings.new().sprint_key
+	assert_true(sprint_clash.keys_shared_with(CameraSettings.new()).has("rest_key"))
+
+
+func test_movement_hud_names_walk_and_run_keys() -> void:
+	var settings: CameraSettings = CameraSettings.new()
+	settings.sprint_key = KEY_SHIFT
+	var lines: PackedStringArray = ClientPresentationFormatter.build_movement_lines(settings)
+	assert_eq(lines.size(), 1)
+	assert_true(lines[0].contains("이동 [W/A/S/D]"), lines[0])
+	assert_true(lines[0].contains("달리기 [Shift]"), lines[0])
 
 
 func test_client_view_stacks_the_left_hud_blocks_in_documented_order() -> void:

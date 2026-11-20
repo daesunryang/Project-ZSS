@@ -24,6 +24,7 @@ const DEFAULT_PATH: String = "res://data/tuning/camera_settings.tres"
 @export var move_backward_key: Key = KEY_S
 @export var move_left_key: Key = KEY_A
 @export var move_right_key: Key = KEY_D
+@export var sprint_key: Key = KEY_SHIFT
 @export var pickup_key: Key = KEY_E
 @export var camera_height_up_key: Key = KEY_PAGEUP
 @export var camera_height_down_key: Key = KEY_PAGEDOWN
@@ -59,7 +60,7 @@ func validate() -> PackedStringArray:
 		errors.append("intent change epsilons must be > 0")
 	if capsule_radius_m <= 0.0 or capsule_height_m < capsule_radius_m * 2.0:
 		errors.append("capsule height must be at least twice its radius")
-	var input_keys: Array[Key] = [move_forward_key, move_backward_key, move_left_key, move_right_key, pickup_key, camera_height_up_key, camera_height_down_key]
+	var input_keys: Array[Key] = [move_forward_key, move_backward_key, move_left_key, move_right_key, sprint_key, pickup_key, camera_height_up_key, camera_height_down_key]
 	for key: Key in input_keys:
 		if key == KEY_NONE:
 			errors.append("input keys must not be KEY_NONE")
@@ -69,7 +70,7 @@ func validate() -> PackedStringArray:
 		if key == KEY_NONE:
 			continue
 		if distinct_keys.has(key):
-			errors.append("movement, pickup and camera height keys must be different keys")
+			errors.append("movement, sprint, pickup and camera height keys must be different keys")
 			break
 		distinct_keys[key] = true
 	return errors

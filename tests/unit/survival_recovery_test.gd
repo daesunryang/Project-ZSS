@@ -47,6 +47,13 @@ func _captured_text() -> String:
 	return "\n".join(GameLogger.captured_lines())
 
 
+func test_shipped_natural_recovery_is_twenty_real_minutes_at_default_scale() -> void:
+	var shipped: SurvivalSettings = SurvivalSettings.load_or_default()
+	var real_seconds: float = shipped.max_health / shipped.health_recovery_per_world_sec / 24.0
+	assert_true(absf(real_seconds - 1200.0) <= 0.001, "0 to 100 takes 20 real minutes")
+	assert_true(absf(shipped.wound_recovery_per_world_sec / shipped.health_recovery_per_world_sec - 0.005) <= 0.0000001, "health and wounds kept the same slowdown ratio")
+
+
 func test_wound_bleeding_is_tuned_saved_state_and_can_be_stopped() -> void:
 	_settings.bleeding_min_severity = 0.25
 	var world: ServerWorld = _world()

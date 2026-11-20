@@ -55,11 +55,43 @@ func _walk_one_second(world: ServerWorld, player: PlayerState, sequence: int) ->
 	return player.position.x - before
 
 
+func _run_one_second(world: ServerWorld, player: PlayerState, sequence: int) -> float:
+	var before: float = player.position.x
+	assert_eq(world.set_move_input(player.player_id, sequence, Vector2(1, 0), 0.0, 0, true), "")
+	world.step_movement(1.0, 0, INPUT_TIMEOUT_MSEC)
+	return player.position.x - before
+
+
 func test_healthy_player_moves_at_full_speed() -> void:
 	var world: ServerWorld = _world()
 	var alice: PlayerState = world.join("alice")
 	assert_true(absf(_walk_one_second(world, alice, 1) - world.gameplay.move_speed_mps) < EPSILON)
 	assert_eq(world.player_movement_multiplier(alice.player_id), 1.0)
+
+
+func test_server_authorizes_run_speed_and_spends_stamina() -> void:
+	var world: ServerWorld = _world()
+	var alice: PlayerState = world.join("alice")
+	var survival: SurvivalService = _survival(world)
+	var stamina_before: float = survival.get_vitals(alice.player_id).stamina
+	assert_true(absf(_run_one_second(world, alice, 1) - world.gameplay.run_speed_mps) < EPSILON)
+	assert_true(world.is_player_sprinting(alice.player_id))
+	assert_true(absf(survival.get_vitals(alice.player_id).stamina - (stamina_before - _survival_settings.sprint_stamina_cost_per_sec)) < EPSILON)
+
+
+func test_zero_stamina_and_prone_players_cannot_run() -> void:
+	var world: ServerWorld = _world()
+	var alice: PlayerState = world.join("alice")
+	var survival: SurvivalService = _survival(world)
+	survival.get_vitals(alice.player_id).stamina = 0.0
+	assert_true(absf(_run_one_second(world, alice, 1) - world.gameplay.move_speed_mps) < EPSILON, "zero stamina falls back to walking")
+	assert_false(world.is_player_sprinting(alice.player_id))
+	survival.get_vitals(alice.player_id).stamina = _survival_settings.max_stamina
+	var posture: PostureService = world.get_system(PostureService.SYSTEM_ID) as PostureService
+	assert_true(posture.request_posture(world, alice.player_id, PlayerPosture.Kind.PRONE).ok)
+	var moved: float = _run_one_second(world, alice, 2)
+	assert_true(absf(moved - world.gameplay.move_speed_mps * PostureSettings.load_or_default().prone_movement_multiplier) < EPSILON, "prone stays crawl-speed")
+	assert_false(world.is_player_sprinting(alice.player_id))
 
 
 func test_leg_wound_slows_server_movement() -> void:

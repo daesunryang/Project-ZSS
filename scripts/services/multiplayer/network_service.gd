@@ -15,7 +15,7 @@ extends Node
 ##   server -> client  _rpc_join_rejected(reason:String)                                          reliable, ch0
 ##   server -> client  _rpc_player_joined(player_id:String, position:Vector3, yaw:float)          reliable, ch0
 ##   server -> client  _rpc_player_left(player_id:String)                                         reliable, ch0
-##   client -> server  _rpc_move_intent(sequence:int, direction:Vector2, yaw:float)               unreliable_ordered, ch1
+##   client -> server  _rpc_move_intent(sequence:int, direction:Vector2, yaw:float, sprinting:bool) unreliable_ordered, ch1
 ##   server -> client  _rpc_position_snapshot(tick:int, rows:Array[[player_id, Vector3, yaw]])    unreliable_ordered, ch1
 ##   client -> server  _rpc_request_pickup(request_id:int, item_instance_id:String)              reliable, ch0
 ##   server -> client  _rpc_pickup_result(request_id:int, ok:bool, reason:String)                 reliable, ch0
@@ -504,7 +504,7 @@ func _announce_player(peer_id: int, player_id: String, include_own_peer: bool) -
 
 
 @rpc("any_peer", "call_remote", "unreliable_ordered", 1)
-func _rpc_move_intent(sequence: Variant, direction: Variant, yaw: Variant) -> void:
+func _rpc_move_intent(sequence: Variant, direction: Variant, yaw: Variant, sprinting: Variant) -> void:
 	if _mode != Mode.SERVER:
 		return
 	var peer_id: int = multiplayer.get_remote_sender_id()
@@ -512,7 +512,7 @@ func _rpc_move_intent(sequence: Variant, direction: Variant, yaw: Variant) -> vo
 	if player_id.is_empty():
 		reject_intent(peer_id, "move", NOT_JOINED)
 		return
-	var reason: String = IntentValidator.validate_move(sequence, direction, yaw)
+	var reason: String = IntentValidator.validate_move(sequence, direction, yaw, sprinting)
 	if not reason.is_empty():
 		reject_intent(peer_id, "move", reason, player_id)
 		return
@@ -520,7 +520,7 @@ func _rpc_move_intent(sequence: Variant, direction: Variant, yaw: Variant) -> vo
 	if not _move_limiter.allow(peer_id, now):
 		reject_intent(peer_id, "move", RATE_LIMITED, player_id)
 		return
-	reason = _world.set_move_input(player_id, int(sequence), direction as Vector2, float(yaw), now)
+	reason = _world.set_move_input(player_id, int(sequence), direction as Vector2, float(yaw), now, bool(sprinting))
 	if not reason.is_empty():
 		count_rejection(reason)  # stale sequences are normal on unreliable channels
 
@@ -690,16 +690,16 @@ func send_join_request(protocol_version: Variant, game_version: Variant, player_
 
 
 ## Sends the current movement input (direction on XZ, |d| <= 1; facing).
-func send_move_intent(direction: Vector2, yaw: float) -> void:
+func send_move_intent(direction: Vector2, yaw: float, sprinting: bool = false) -> void:
 	_move_sequence += 1
-	send_raw_move_intent(_move_sequence, direction, yaw)
+	send_raw_move_intent(_move_sequence, direction, yaw, sprinting)
 
 
 ## Sends an arbitrary move intent (tests use this to send malformed input
 ## through the real RPC path).
-func send_raw_move_intent(sequence: Variant, direction: Variant, yaw: Variant) -> void:
+func send_raw_move_intent(sequence: Variant, direction: Variant, yaw: Variant, sprinting: Variant = false) -> void:
 	if _mode == Mode.CLIENT and not client_state.local_player_id.is_empty():
-		_rpc_move_intent.rpc_id(SERVER_PEER_ID, sequence, direction, yaw)
+		_rpc_move_intent.rpc_id(SERVER_PEER_ID, sequence, direction, yaw, sprinting)
 
 
 ## Asks the server to pick up a world item. Returns the request id that the

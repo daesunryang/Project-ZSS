@@ -292,8 +292,15 @@ func test_result_sentences() -> void:
 	assert_eq(ClientPresentationFormatter.nothing_selected_text(), "내려놓을 아이템이 없습니다")
 	assert_eq(ClientPresentationFormatter.nothing_to_pick_up_text(), "가까이에 주울 것이 없습니다")
 	# The target line no longer offers a hand-over.
-	var line: String = ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "민수", ClientPresentationSettings.new())[0]
-	assert_eq(line, "줄 대상: 민수 | 음식 [Shift+F] 물 [Shift+G] 붕대 [Shift+B] 치료제 [Shift+V]")
+	var settings: ClientPresentationSettings = ClientPresentationSettings.new()
+	var modifier: String = ClientPresentationFormatter.key_label(settings.treat_other_modifier_key)
+	var line: String = ClientPresentationFormatter.build_treat_target_lines({"alive": true}, "민수", settings)[0]
+	assert_eq(line, "줄 대상: 민수 | 음식 [%s+%s] 물 [%s+%s] 붕대 [%s+%s] 치료제 [%s+%s]" % [
+		modifier, ClientPresentationFormatter.key_label(settings.consume_key),
+		modifier, ClientPresentationFormatter.key_label(settings.drink_key),
+		modifier, ClientPresentationFormatter.key_label(settings.bandage_key),
+		modifier, ClientPresentationFormatter.key_label(settings.cure_key),
+	])
 	assert_not_contains(line, "건네기")
 
 

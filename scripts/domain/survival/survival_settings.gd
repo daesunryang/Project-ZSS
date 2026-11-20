@@ -60,6 +60,9 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(0.0, 1.0) var fatigue_danger_handling_multiplier: float = 0.6
 ## Stamina regained per real second (action time) while alive.
 @export_range(0.0, 1000.0) var stamina_regen_per_sec: float = 5.0
+## Stamina spent per real second while the server accepts a run intent.
+## A running player does not regenerate stamina in the same tick.
+@export_range(0.0, 1000.0) var sprint_stamina_cost_per_sec: float = 5.0
 ## Damage amount that produces a severity-1.0 wound (severity = amount / this).
 @export_range(0.1, 10000.0) var wound_severity_reference_damage: float = 50.0
 ## Wounds kept per player; further wounds still deal damage but are not listed.
@@ -87,8 +90,8 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(0.0, 100.0) var bleeding_burn_multiplier: float = 0.0
 @export_range(0.0, 100.0) var bleeding_bite_multiplier: float = 0.75
 @export_range(0.0, 100.0) var bleeding_scratch_multiplier: float = 0.25
-@export_range(0.0, 1000.0) var health_recovery_per_world_sec: float = 0.02
-@export_range(0.0, 1.0) var wound_recovery_per_world_sec: float = 0.0001
+@export_range(0.0, 1000.0) var health_recovery_per_world_sec: float = 0.003472222222222222
+@export_range(0.0, 1.0) var wound_recovery_per_world_sec: float = 0.00001736111111111111
 ## Health loss while the corresponding need is exactly at need_max.
 @export_range(0.0, 1000.0) var starvation_health_loss_per_world_sec: float = 0.005
 @export_range(0.0, 1000.0) var dehydration_health_loss_per_world_sec: float = 0.01
@@ -99,15 +102,15 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(0.0, 10000.0) var respawn_thirst: float = 0.0
 @export_range(0.0, 10000.0) var respawn_fatigue: float = 0.0
 ## Infection chance per exposure (docs/02 §7.1: bites are very high risk).
-@export_range(0.0, 1.0) var infection_chance_bite: float = 0.95
-@export_range(0.0, 1.0) var infection_chance_scratch: float = 0.15
+@export_range(0.0, 1.0) var infection_chance_bite: float = 0.70
+@export_range(0.0, 1.0) var infection_chance_scratch: float = 0.10
 @export_range(0.0, 1.0) var infection_chance_blood: float = 0.05
 ## Base duration of each progressing stage in world hours (docs/15 P2-7).
-@export_range(0.000001, 100000.0) var infection_latent_hours: float = 2.0
-@export_range(0.000001, 100000.0) var infection_early_hours: float = 6.0
-@export_range(0.000001, 100000.0) var infection_progressing_hours: float = 12.0
-@export_range(0.000001, 100000.0) var infection_severe_hours: float = 12.0
-@export_range(0.000001, 100000.0) var infection_terminal_hours: float = 6.0
+@export_range(0.000001, 100000.0) var infection_latent_hours: float = 3.1578947368421053
+@export_range(0.000001, 100000.0) var infection_early_hours: float = 9.473684210526315
+@export_range(0.000001, 100000.0) var infection_progressing_hours: float = 18.94736842105263
+@export_range(0.000001, 100000.0) var infection_severe_hours: float = 18.94736842105263
+@export_range(0.000001, 100000.0) var infection_terminal_hours: float = 9.473684210526315
 ## Exposure-specific duration factor (1.0 = base duration).
 @export_range(0.000001, 1000.0) var infection_bite_time_multiplier: float = 1.0
 @export_range(0.000001, 1000.0) var infection_scratch_time_multiplier: float = 1.0
@@ -125,7 +128,7 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(0.0, 1000.0) var infection_severe_health_loss_per_world_sec: float = 0.0005
 @export_range(0.0, 1000.0) var infection_terminal_health_loss_per_world_sec: float = 0.002
 ## Treatment succeeds through this stage (inclusive).
-@export_enum("Latent:1", "Early:2", "Progressing:3", "Severe:4", "Terminal:5") var infection_treatment_max_stage: int = InfectionState.Stage.EARLY
+@export_enum("Latent:1", "Early:2", "Progressing:3", "Severe:4", "Terminal:5") var infection_treatment_max_stage: int = InfectionState.Stage.PROGRESSING
 ## Base seed for per-player infection RNG (seed = hash("<base>:<player_id>")).
 @export var rng_seed: int = 0
 
@@ -134,8 +137,10 @@ func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
 	if max_health <= 0.0 or max_stamina <= 0.0 or need_max <= 0.0:
 		errors.append("max_health, max_stamina and need_max must be > 0")
-	if stamina_regen_per_sec < 0.0:
-		errors.append("stamina_regen_per_sec must be >= 0")
+	if not is_finite(stamina_regen_per_sec) or stamina_regen_per_sec < 0.0:
+		errors.append("stamina_regen_per_sec must be finite and >= 0")
+	if not is_finite(sprint_stamina_cost_per_sec) or sprint_stamina_cost_per_sec < 0.0:
+		errors.append("sprint_stamina_cost_per_sec must be finite and >= 0")
 	if hunger_hours_to_max <= 0.0 or thirst_hours_to_max <= 0.0 or fatigue_hours_to_max <= 0.0:
 		errors.append("need *_hours_to_max must be > 0")
 	if not is_finite(rest_fatigue_hours_from_max) or rest_fatigue_hours_from_max <= 0.0:

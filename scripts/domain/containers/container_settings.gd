@@ -19,11 +19,10 @@ const DEFAULT_PATH: String = "res://data/tuning/container_settings.tres"
 ## true: a hit (SurvivalService.apply_damage) interrupts a running search.
 ## A container that is already open stays open.
 @export var search_interrupted_by_damage: bool = true
-## The world's loot seed: with a container's id it decides what the
-## container holds (LootRoller.seed_for). Every container records the value
-## it was created with (ContainerInstance.loot_seed), so changing it affects
-## only containers created afterwards. The same seed gives the same loot in
-## every new world (PROVISIONAL, docs/15 P3-064). 0..2^53 - 1 (JSON-exact).
+## Optional fixed world loot seed for tests and tools. 0 makes a new world
+## draw one seed from an explicit RandomNumberGenerator and persist it in
+## world_state; positive values keep deterministic assembly. Every container
+## records the resolved world seed. 0..2^53 - 1 (JSON-exact).
 @export var loot_seed: int = 20261116
 ## Most containers one world cell holds.
 @export_range(1, 100000) var max_containers_per_cell: int = 500

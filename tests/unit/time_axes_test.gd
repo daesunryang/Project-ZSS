@@ -116,6 +116,26 @@ func _near(actual: float, expected: float, tolerance: float = TOLERANCE) -> bool
 	return absf(actual - expected) <= tolerance
 
 
+func _infection_elapsed_world_sec(infection: InfectionState) -> float:
+	var elapsed: float = infection.stage_elapsed_world_sec
+	for stage_value: int in range(int(InfectionState.Stage.LATENT), int(infection.stage)):
+		if stage_value > int(InfectionState.Stage.TERMINAL):
+			break
+		elapsed += _survival_settings.infection_stage_duration_world_sec(stage_value as InfectionState.Stage, infection.exposure)
+	return elapsed
+
+
+func _infection_stage_after_world_sec(world_seconds: float, exposure: InfectionState.Exposure) -> InfectionState.Stage:
+	var remaining: float = world_seconds
+	for stage_value: int in range(int(InfectionState.Stage.LATENT), int(InfectionState.Stage.TERMINAL) + 1):
+		var stage: InfectionState.Stage = stage_value as InfectionState.Stage
+		var duration: float = _survival_settings.infection_stage_duration_world_sec(stage, exposure)
+		if remaining < duration:
+			return stage
+		remaining -= duration
+	return InfectionState.Stage.ZOMBIFIED
+
+
 # ------------------------------------------------------------ the clock
 
 func test_default_scale_makes_one_world_day_per_real_hour() -> void:
@@ -430,7 +450,7 @@ func _calendar_outcome(scale: float, real_seconds: float, tick_sec: float) -> Di
 	var infected: PlayerState = world.join("infected")
 	assert_true(survival.apply_damage(bleeder.player_id, DamageInput.create("z", BodyPart.Part.TORSO, Wound.Type.LACERATION, 25.0)).ok)
 	# A bruise does not bleed, so it heals; 200 of 1000 health leaves room for
-	# 7680 world seconds of natural recovery (153.6) without reaching the cap.
+	# this test's accelerated world time without reaching the cap.
 	assert_true(survival.apply_damage(healer.player_id, DamageInput.create("fall", BodyPart.Part.TORSO, Wound.Type.BRUISE, 200.0)).ok)
 	assert_true(survival.apply_infection_exposure(infected.player_id, InfectionState.Exposure.BITE, "zombie_1").ok)
 	var bleeder_health: float = survival.get_vitals(bleeder.player_id).health
@@ -439,12 +459,9 @@ func _calendar_outcome(scale: float, real_seconds: float, tick_sec: float) -> Di
 	for _tick_index: int in roundi(real_seconds / tick_sec):
 		world.step_systems(tick_sec)
 	var vitals: PlayerVitals = survival.get_vitals(infected.player_id)
-	var infection_seconds: float = vitals.infection.stage_elapsed_world_sec
-	if vitals.infection.stage > InfectionState.Stage.LATENT:
-		infection_seconds += _survival_settings.infection_stage_duration_world_sec(InfectionState.Stage.LATENT, InfectionState.Exposure.BITE)
 	return {
 		"hunger": vitals.hunger, "thirst": vitals.thirst, "fatigue": vitals.fatigue,
-		"infection_stage": vitals.infection.stage, "infection_seconds": infection_seconds,
+		"infection_stage": vitals.infection.stage, "infection_seconds": _infection_elapsed_world_sec(vitals.infection),
 		"bleeding_damage": bleeder_health - survival.get_vitals(bleeder.player_id).health,
 		"health_recovered": survival.get_vitals(healer.player_id).health - healer_health,
 		"wound_healed": healer_severity - survival.get_vitals(healer.player_id).injuries[0].severity,
@@ -462,10 +479,10 @@ func test_calendar_rules_run_24_times_faster_at_scale_24() -> void:
 	for key: String in ["hunger", "thirst", "fatigue", "infection_seconds", "bleeding_damage", "health_recovered", "wound_healed"]:
 		assert_true(float(real_time[key]) > 0.0, "%s changed at scale 1" % key)
 		assert_true(_near(float(accelerated[key]), SCALE_DAY_PER_HOUR * float(real_time[key])), "%s is 24x: %f vs %f" % [key, accelerated[key], real_time[key]])
-	# Absolute values at 24x: 320 real seconds = 7680 world seconds.
-	assert_true(_near(float(accelerated["thirst"]), _survival_settings.need_max * 7680.0 / (_survival_settings.thirst_hours_to_max * SECONDS_PER_HOUR)))
-	assert_eq(real_time["infection_stage"], InfectionState.Stage.LATENT, "320 s of a 2 h latent stage at scale 1")
-	assert_eq(accelerated["infection_stage"], InfectionState.Stage.EARLY, "2 world hours pass in 5 real minutes at scale 24")
+	var accelerated_world_seconds: float = REAL_SECONDS * SCALE_DAY_PER_HOUR
+	assert_true(_near(float(accelerated["thirst"]), _survival_settings.need_max * accelerated_world_seconds / (_survival_settings.thirst_hours_to_max * SECONDS_PER_HOUR)))
+	assert_eq(real_time["infection_stage"], _infection_stage_after_world_sec(REAL_SECONDS, InfectionState.Exposure.BITE), "the scale-1 stage follows the configured durations")
+	assert_eq(accelerated["infection_stage"], _infection_stage_after_world_sec(accelerated_world_seconds, InfectionState.Exposure.BITE), "the scale-24 stage follows the configured durations")
 
 
 func test_survival_integration_is_tick_size_independent_at_scale_24() -> void:

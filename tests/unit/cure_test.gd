@@ -121,6 +121,28 @@ func _infect_to_stage(world: ServerWorld, survival: SurvivalService, player_id: 
 		fail("test setup: stage is %s" % InfectionState.stage_name(survival.infection_stage(player_id)))
 
 
+func _last_treatable_stage() -> InfectionState.Stage:
+	return _settings.infection_treatment_max_stage as InfectionState.Stage
+
+
+func _first_untreatable_stage() -> InfectionState.Stage:
+	return (int(_last_treatable_stage()) + 1) as InfectionState.Stage
+
+
+func _treatable_stages() -> Array[InfectionState.Stage]:
+	var stages: Array[InfectionState.Stage] = []
+	for stage_value: int in range(int(InfectionState.Stage.LATENT), int(_last_treatable_stage()) + 1):
+		stages.append(stage_value as InfectionState.Stage)
+	return stages
+
+
+func _untreatable_living_stages() -> Array[InfectionState.Stage]:
+	var stages: Array[InfectionState.Stage] = []
+	for stage_value: int in range(int(_first_untreatable_stage()), int(InfectionState.Stage.TERMINAL) + 1):
+		stages.append(stage_value as InfectionState.Stage)
+	return stages
+
+
 func _events_of(events: Array[Dictionary], event_type: String) -> Array[Dictionary]:
 	var matching: Array[Dictionary] = []
 	for event: Dictionary in events:
@@ -148,8 +170,9 @@ func test_the_treatment_preflight_agrees_with_the_treatment_rule() -> void:
 	assert_eq(survival.check_infection_treatment(alice.player_id), "", "a latent infection is treatable")
 	assert_eq(survival.infection_stage(alice.player_id), InfectionState.Stage.LATENT, "the preflight changes nothing")
 	assert_eq(survival.drain_events().size(), 0, "the preflight reports nothing")
-	world.step_systems(2.5 * STAGE_HOURS * SECONDS_PER_HOUR)
-	assert_eq(survival.infection_stage(alice.player_id), InfectionState.Stage.PROGRESSING)
+	var first_untreatable: InfectionState.Stage = _first_untreatable_stage()
+	world.step_systems((float(int(first_untreatable) - int(InfectionState.Stage.LATENT)) + 0.5) * STAGE_HOURS * SECONDS_PER_HOUR)
+	assert_eq(survival.infection_stage(alice.player_id), first_untreatable)
 	assert_eq(survival.check_infection_treatment(alice.player_id), SurvivalService.REASON_TOO_LATE)
 	assert_eq(survival.apply_infection_treatment(alice.player_id, "item_000001").reason, SurvivalService.REASON_TOO_LATE, "the rule itself is unchanged")
 	assert_true(survival.apply_damage(alice.player_id, DamageInput.create(ZOMBIE, BodyPart.Part.TORSO, Wound.Type.BRUISE, LETHAL_DAMAGE)).ok)
@@ -163,8 +186,9 @@ func test_a_cure_clears_a_treatable_infection_and_uses_one_unit() -> void:
 	var survival: SurvivalService = _survival(world)
 	var alice: PlayerState = world.join("alice")
 	var vitals: PlayerVitals = survival.get_vitals(alice.player_id)
-	var cure_id: String = _give(world, alice, CURE, 2)
-	for stage: InfectionState.Stage in [InfectionState.Stage.LATENT, InfectionState.Stage.EARLY]:
+	var treatable_stages: Array[InfectionState.Stage] = _treatable_stages()
+	var cure_id: String = _give(world, alice, CURE, treatable_stages.size())
+	for stage: InfectionState.Stage in treatable_stages:
 		var stage_label: String = InfectionState.stage_name(stage)
 		_infect_to_stage(world, survival, alice.player_id, stage)
 		survival.drain_events()
@@ -191,7 +215,7 @@ func test_a_cure_clears_a_treatable_infection_and_uses_one_unit() -> void:
 		world.step_systems(3.0 * STAGE_HOURS * SECONDS_PER_HOUR)
 		assert_eq(survival.infection_stage(alice.player_id), InfectionState.Stage.NONE, "%s: a cured player stays healthy" % stage_label)
 		survival.drain_events()
-	# Both units were used: the instance is gone and its id is retired.
+	# Every configured treatable stage used one unit: the instance is gone and its id is retired.
 	assert_null(world.inventory.get_item(cure_id))
 	assert_true(world.registry.is_tombstoned(cure_id))
 	assert_true(survival.is_alive(alice.player_id))
@@ -200,7 +224,7 @@ func test_a_cure_clears_a_treatable_infection_and_uses_one_unit() -> void:
 func test_a_cure_is_refused_and_kept_when_it_is_too_late() -> void:
 	var world: ServerWorld = _world()
 	var survival: SurvivalService = _survival(world)
-	for stage: InfectionState.Stage in [InfectionState.Stage.PROGRESSING, InfectionState.Stage.SEVERE, InfectionState.Stage.TERMINAL]:
+	for stage: InfectionState.Stage in _untreatable_living_stages():
 		var stage_label: String = InfectionState.stage_name(stage)
 		var player: PlayerState = world.join("player_" + stage_label)
 		var cure_id: String = _give(world, player, CURE, 2)
@@ -333,12 +357,13 @@ func test_an_item_with_cure_and_bandage_effects_applies_what_applies() -> void:
 	assert_eq(survival.infection_stage(alice.player_id), InfectionState.Stage.NONE)
 	# Bleeding, too late to cure: the bandage part still applies.
 	survival.apply_damage(alice.player_id, DamageInput.create(ZOMBIE, BodyPart.Part.LEFT_ARM, Wound.Type.LACERATION, LACERATION_DAMAGE))
-	_infect_to_stage(world, survival, alice.player_id, InfectionState.Stage.PROGRESSING)
+	var first_untreatable: InfectionState.Stage = _first_untreatable_stage()
+	_infect_to_stage(world, survival, alice.player_id, first_untreatable)
 	var late: ActionResult = ItemConsumption.try_consume(world, alice.player_id, kit_id)
 	assert_true(late.ok, late.reason)
 	assert_eq((late.event.get("bleeding_stopped_wound_ids", []) as Array).size(), 1)
 	assert_eq(late.event.get("infection_cured_from", "x"), "", "nothing was cured")
-	assert_eq(survival.infection_stage(alice.player_id), InfectionState.Stage.PROGRESSING)
+	assert_eq(survival.infection_stage(alice.player_id), first_untreatable)
 	assert_eq(world.inventory.get_item(kit_id).quantity, 1)
 	# A plain bandage does not cure and a plain cure does not bandage.
 	assert_eq(ItemConsumption.try_consume(world, alice.player_id, bandage_id).reason, SurvivalService.REASON_NOT_BLEEDING)
@@ -373,6 +398,10 @@ func test_the_default_new_world_has_a_few_cures() -> void:
 	assert_eq(world.seed_new_world(config.dev_seed), OK)
 	var cures: int = 0
 	var bandages: int = 0
+	var expected_cures: int = 0
+	for index: int in config.dev_seed.item_definition_ids.size():
+		if config.dev_seed.item_definition_ids[index] == "dev_cure":
+			expected_cures += config.dev_seed.quantity_at(index)
 	var spawn: Vector3 = config.gameplay.player_spawn_position
 	for item_id: String in world.inventory.world_item_ids():
 		var item: ItemInstance = world.inventory.get_item(item_id)
@@ -382,10 +411,11 @@ func test_the_default_new_world_has_a_few_cures() -> void:
 			continue
 		cures += item.quantity
 		assert_true(world.inventory.world_position_of(item_id).distance_to(spawn) <= 10.0, "the cure lies near the spawn point")
+	assert_eq(cures, expected_cures, "the new world contains the configured cure quantity")
 	assert_true(cures >= 1, "cures in a new world: %d" % cures)
 	assert_true(cures <= bandages, "a cure is rarer than a bandage (%d cures, %d bandages)" % [cures, bandages])
-	# The shipped rule: treatable through the early stage.
-	assert_eq(config.survival.infection_treatment_max_stage, int(InfectionState.Stage.EARLY))
+	# The shipped resource and script default describe the same treatment window.
+	assert_eq(config.survival.infection_treatment_max_stage, SurvivalSettings.new().infection_treatment_max_stage)
 
 
 # ------------------------------------------------------------ save round trip
@@ -402,7 +432,7 @@ func test_a_used_cure_and_the_cleared_infection_survive_a_save_round_trip() -> v
 	var alice: PlayerState = world.join("alice")
 	var bob: PlayerState = world.join("bob")
 	var cure_id: String = _give(world, alice, CURE, 3)
-	_infect_to_stage(world, survival, alice.player_id, InfectionState.Stage.EARLY)
+	_infect_to_stage(world, survival, alice.player_id, _last_treatable_stage())
 	_infect(survival, bob.player_id)
 	assert_true(ItemConsumption.try_consume(world, alice.player_id, cure_id).ok)
 	assert_eq(persistence.save(world), OK)

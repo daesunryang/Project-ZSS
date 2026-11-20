@@ -7,6 +7,6 @@ script = ExtResource("1_containers")
 interact_range_m = 2.5
 search_duration_sec = 1.5
 search_interrupted_by_damage = true
-loot_seed = 20261116
+loot_seed = 0
 max_containers_per_cell = 500
 max_pending_events = 4096

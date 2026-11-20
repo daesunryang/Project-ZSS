@@ -22,6 +22,7 @@ move_forward_key = 87
 move_backward_key = 83
 move_left_key = 65
 move_right_key = 68
+sprint_key = 4194325
 pickup_key = 69
 camera_height_up_key = 4194323
 camera_height_down_key = 4194324

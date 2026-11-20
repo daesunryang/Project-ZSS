@@ -8,6 +8,8 @@ const DEFAULT_PATH: String = "res://data/tuning/gameplay_settings.tres"
 
 ## Server-side walking speed, metres per second.
 @export_range(0.1, 20.0) var move_speed_mps: float = 4.0
+## Server-side running speed while the validated run bit is accepted.
+@export_range(0.1, 20.0) var run_speed_mps: float = 6.0
 ## Half size of the square play area around the origin, metres
 ## (docs/00: initial test map 500 m x 500 m -> 250).
 @export_range(1.0, 10000.0) var world_half_extent_m: float = 250.0
@@ -37,6 +39,8 @@ func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
 	if move_speed_mps <= 0.0:
 		errors.append("move_speed_mps must be > 0")
+	if not is_finite(run_speed_mps) or run_speed_mps < move_speed_mps:
+		errors.append("run_speed_mps must be finite and >= move_speed_mps")
 	if world_half_extent_m <= 0.0:
 		errors.append("world_half_extent_m must be > 0")
 	if pickup_range_m <= 0.0:

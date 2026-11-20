@@ -296,7 +296,9 @@ func test_a_partly_looted_container_and_stored_items_survive_restarts() -> void:
 	var water_on_disk: int = _units_on_disk(WATER)
 	var disk_ids: int = _items_on_disk().size()
 	var world_file: Dictionary = _read_json(_save_service().world_dir(WORLD).path_join(SaveService.WORLD_STATE_FILE))
-	assert_false((world_file["systems"] as Dictionary).has(ContainerService.SYSTEM_ID), "containers of cells in memory are saved in their cell files, not in the world file")
+	var world_container_doc: Dictionary = (world_file["systems"] as Dictionary)[ContainerService.SYSTEM_ID]
+	assert_eq((world_container_doc[ContainerService.KEY_CONTAINERS] as Array).size(), 0, "containers stay in cell files")
+	assert_eq(int(world_container_doc[ContainerService.KEY_WORLD_LOOT_SEED]), _containers(world).world_loot_seed(), "the world loot seed is global save state")
 	var cell_file: Dictionary = _read_json(_save_service().world_dir(WORLD).path_join(SaveService.cell_file(HOME_CELL)))
 	assert_eq((((cell_file["systems"] as Dictionary)[ContainerService.SYSTEM_ID] as Dictionary)[ContainerService.KEY_CONTAINERS] as Array).size(), 3)
 	var second: ServerWorld = _boot(config)

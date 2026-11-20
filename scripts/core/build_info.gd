@@ -123,7 +123,10 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ## 17: P4-8 (NPC AI debug overlay, docs/09 §17.9). New module NpcDebugNet:
 ##    authorized development subscriptions and private 2 Hz snapshots on
 ##    reliable channel 0. Dedicated-server defaults remain disabled.
-const PROTOCOL_VERSION: int = 17
+## 18: 2026-11-20 walk/run split. The movement intent adds a server-validated
+##    `sprinting: bool`; clients still send direction/yaw only as intent and
+##    never choose their speed or stamina result.
+const PROTOCOL_VERSION: int = 18
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

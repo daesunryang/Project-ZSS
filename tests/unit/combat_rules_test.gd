@@ -140,6 +140,16 @@ func test_weapon_definition_validation() -> void:
 	assert_true(weapon_without_item.validate().size() > 0, "a real weapon needs the item that grants it")
 
 
+func test_shipped_unarmed_damage_is_ten() -> void:
+	var catalog: MeleeWeaponCatalog = MeleeWeaponCatalog.load_directory()
+	var unarmed: MeleeWeaponDefinition = catalog.get_definition("unarmed")
+	assert_not_null(unarmed)
+	if unarmed != null:
+		assert_eq(unarmed.base_damage, 10.0)
+		assert_eq(MeleeHitRules.damage(unarmed.base_damage, 1.0, 0.9), 9.0)
+		assert_eq(MeleeHitRules.damage(unarmed.base_damage, 1.0, 1.1), 11.0)
+
+
 func test_catalog_lookup_and_duplicates() -> void:
 	var catalog: MeleeWeaponCatalog = MeleeWeaponCatalog.new()
 	assert_eq(catalog.add(_weapon("unarmed", "", 8.0, MeleeWeaponDefinition.Category.UNARMED)), OK)

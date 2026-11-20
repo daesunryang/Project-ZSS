@@ -125,6 +125,14 @@ func _module(service: NetworkService) -> InventoryNetModule:
 	return service.get_module(InventoryNetModule.MODULE_NAME) as InventoryNetModule
 
 
+func _last_treatable_stage() -> InfectionState.Stage:
+	return _config.survival.infection_treatment_max_stage as InfectionState.Stage
+
+
+func _first_untreatable_stage() -> InfectionState.Stage:
+	return (int(_last_treatable_stage()) + 1) as InfectionState.Stage
+
+
 func _survival_module(service: NetworkService) -> SurvivalNetModule:
 	return service.get_module(SurvivalNetModule.MODULE_NAME) as SurvivalNetModule
 
@@ -372,18 +380,20 @@ func test_a_cure_cannot_be_used_on_somebody_else_or_too_late() -> void:
 	assert_eq(_mirror(a).infection_stage(), "none")
 
 	# Too late: bob's infection has progressed past the treatable stage.
-	_survival().get_vitals(bob_id).infection.stage = InfectionState.Stage.PROGRESSING
-	await _assert_owner_mirror_matches(b, "bob progressing")
+	var first_untreatable: InfectionState.Stage = _first_untreatable_stage()
+	_survival().get_vitals(bob_id).infection.stage = first_untreatable
+	await _assert_owner_mirror_matches(b, "bob %s" % InfectionState.stage_name(first_untreatable))
 	var late_request: int = _module(b).request_consume(bobs)
 	assert_true(await _wait(func() -> bool: return b_consumes.size() == 1), "bob got his answer")
 	assert_eq(b_consumes, [[late_request, false, SurvivalService.REASON_TOO_LATE]])
 	assert_eq(_world.inventory.to_snapshot(), before, "the cure was not used up")
 	assert_eq(b.client_state.get_inventory_item(bobs).get("quantity", 0), 1, "bob still carries his cure")
-	assert_eq(_survival().infection_stage(bob_id), InfectionState.Stage.PROGRESSING)
+	assert_eq(_survival().infection_stage(bob_id), first_untreatable)
 
 	# Still treatable: the same request is accepted and cures bob, nobody else.
-	_survival().get_vitals(bob_id).infection.stage = InfectionState.Stage.EARLY
-	await _assert_owner_mirror_matches(b, "bob early")
+	var last_treatable: InfectionState.Stage = _last_treatable_stage()
+	_survival().get_vitals(bob_id).infection.stage = last_treatable
+	await _assert_owner_mirror_matches(b, "bob %s" % InfectionState.stage_name(last_treatable))
 	var a_changes: Array[int] = _mirror_changes_of(a)
 	var cure_request: int = _module(b).request_consume(bobs)
 	assert_true(await _wait(func() -> bool: return b_consumes.size() == 2), "bob got his second answer")

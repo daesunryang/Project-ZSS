@@ -93,8 +93,11 @@ var _player_ids_by_key: Dictionary[String, String] = {}
 var _online: Dictionary[String, bool] = {}
 ## Players with a connection, with or without a character (P2-T9).
 var _connected: Dictionary[String, bool] = {}
-## player_id -> {"direction": Vector2, "sequence": int, "received_msec": int}
+## player_id -> {direction, sequence, received_msec, sprinting}
 var _move_inputs: Dictionary[String, Dictionary] = {}
+## Players whose sprint bit was accepted for the most recent movement step.
+## Later systems in that tick read this for footsteps; it is never saved.
+var _sprinting_players: Dictionary[String, bool] = {}
 var _systems: Dictionary[String, ServerSystem] = {}
 ## Registration order (= step order and save order; deterministic).
 var _system_order: Array[ServerSystem] = []
@@ -392,13 +395,13 @@ func known_player_count() -> int:
 
 ## Stores the latest validated move intent. Older/duplicate sequences are
 ## ignored (unreliable channel may reorder). Returns "" or a reason code.
-func set_move_input(player_id: String, sequence: int, direction: Vector2, yaw: float, now_msec: int) -> String:
+func set_move_input(player_id: String, sequence: int, direction: Vector2, yaw: float, now_msec: int, sprinting: bool = false) -> String:
 	if not _online.has(player_id):
 		return REASON_NOT_ONLINE
 	var previous: Dictionary = _move_inputs.get(player_id, {})
 	if not previous.is_empty() and sequence <= int(previous["sequence"]):
 		return REASON_STALE_SEQUENCE
-	_move_inputs[player_id] = {"direction": direction, "sequence": sequence, "received_msec": now_msec}
+	_move_inputs[player_id] = {"direction": direction, "sequence": sequence, "received_msec": now_msec, "sprinting": sprinting}
 	_players[player_id].yaw = yaw
 	return ""
 
@@ -414,6 +417,7 @@ func last_move_sequence(player_id: String) -> int:
 ## Advances authoritative movement of online players by `delta` seconds.
 ## Input older than `input_timeout_msec` counts as "stopped".
 func step_movement(delta: float, now_msec: int, input_timeout_msec: int) -> void:
+	_sprinting_players.clear()
 	for player_id: String in _move_inputs:
 		var input: Dictionary = _move_inputs[player_id]
 		if now_msec - int(input["received_msec"]) > input_timeout_msec:
@@ -422,9 +426,27 @@ func step_movement(delta: float, now_msec: int, input_timeout_msec: int) -> void
 		if multiplier <= 0.0:
 			continue
 		var state: PlayerState = _players[player_id]
-		var next: Vector3 = MovementRules.step(state.position, input["direction"], gameplay.move_speed_mps * multiplier, delta, gameplay.world_half_extent_m)
+		var direction: Vector2 = input["direction"] as Vector2
+		var speed_mps: float = gameplay.move_speed_mps
+		if bool(input.get("sprinting", false)) and not direction.is_zero_approx() and _try_start_sprint(player_id, delta):
+			speed_mps = gameplay.run_speed_mps
+			_sprinting_players[player_id] = true
+		var next: Vector3 = MovementRules.step(state.position, direction, speed_mps * multiplier, delta, gameplay.world_half_extent_m)
 		# P3-4a: walls and closed doors stop the step (or let it slide).
 		state.position = resolve_movement(ENTITY_KIND_PLAYER, state.position, next)
+
+
+## True only when the server accepted this player's run for the current tick.
+func is_player_sprinting(player_id: String) -> bool:
+	return _sprinting_players.has(player_id)
+
+
+func _try_start_sprint(player_id: String, delta: float) -> bool:
+	var posture: PostureService = get_system(PostureService.SYSTEM_ID) as PostureService
+	if posture != null and posture.is_prone(player_id):
+		return false
+	var survival: SurvivalService = get_system(SurvivalService.SYSTEM_ID) as SurvivalService
+	return survival != null and survival.try_sprint(player_id, delta)
 
 
 ## Where a straight step of a mover from `from` to `to` ends (P3-4a, docs/09

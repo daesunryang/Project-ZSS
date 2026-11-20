@@ -120,6 +120,10 @@ func _new_catalog() -> ItemCatalog:
 	return catalog
 
 
+func _first_untreatable_stage() -> InfectionState.Stage:
+	return (_config.survival.infection_treatment_max_stage + 1) as InfectionState.Stage
+
+
 func _start_server() -> bool:
 	_world = ServerComposition.create_world(WORLD, _config)
 	if _world == null:
@@ -418,7 +422,7 @@ func test_a_client_cures_another_player_and_learns_only_the_result() -> void:
 	assert_eq(c_notices.size(), 1, str(c_notices))
 	_assert_public_notice(c_notices[0], alice_id, bob_id, "carol")
 	# Too late: refused and kept.
-	_infect(bob_id, InfectionState.Stage.SEVERE)
+	_infect(bob_id, _first_untreatable_stage())
 	assert_eq(await _use_on(a, cures, bob_id), [false, SurvivalService.REASON_TOO_LATE])
 	assert_eq(_server_quantity(cures), 2)
 	await _settle()
@@ -738,7 +742,7 @@ func test_use_on_request_before_join_is_rejected_and_floods_are_limited() -> voi
 # ------------------------------------------------------------ rules (no network)
 
 func test_rpc_table_request_validation_and_notice_validation() -> void:
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 17, "the use-on RPCs are part of protocol 8 (P2-T10..T12); 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15), 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a), 13 since the replication scope by cell (P3-2), 14 since the construction RPCs (P3-5), 15 since the container RPCs (P3-3)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 18, "the use-on RPCs are part of protocol 8 (P2-T10..T12); 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15), 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a), 13 since the replication scope by cell (P3-2), 14 since the construction RPCs (P3-5), 15 since the container RPCs (P3-3)")
 	assert_eq(InventoryNetModule.validate_use_on_request(1, "item_000001", "player_000002"), "")
 	assert_eq(InventoryNetModule.validate_use_on_request(0, "item_000001", ""), "", "no target = myself")
 	assert_eq(InventoryNetModule.validate_use_on_request("1", "item_000001", ""), IntentValidator.REASON_BAD_TYPE)

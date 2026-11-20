@@ -404,9 +404,15 @@ func test_a_container_keeps_the_loot_seed_it_was_created_with() -> void:
 	assert_eq(service.get_container(locker_id).loot_seed, seed_at_creation, "the saved seed came back")
 	_open(restored, alice, locker_id)
 	assert_true(_same(service.contents_of(locker_id), expected), "a later change of the setting does not change what an existing container holds")
-	# A container created after the change gets the new seed.
+	# The resolved world seed is stable: changing the settings object after
+	# world creation cannot split one world across two loot layouts.
 	var later_id: String = _container(restored, LOCKER, ALSO_BESIDE)
-	assert_eq(service.get_container(later_id).loot_seed, seed_at_creation + 1)
+	assert_eq(service.get_container(later_id).loot_seed, seed_at_creation)
+	# Tests/tools can still inject a fixed seed for another new world.
+	var another: ServerWorld = _world(WorldCellStore.new())
+	another.join("alice")
+	var another_id: String = _container(another, LOCKER, BESIDE)
+	assert_eq(_service(another).get_container(another_id).loot_seed, seed_at_creation + 1)
 	# A saved container without a seed the save can carry exactly is refused.
 	var entry: Dictionary = _entry("container_000900", "inventory_000900", "item_000900")
 	assert_not_null(ContainerInstance.from_dict(entry), "the valid entry")
@@ -493,11 +499,11 @@ func test_a_world_without_a_cell_store_saves_containers_in_the_world_document() 
 	var restored_alice: PlayerState = restored.join("alice")
 	_open(restored, restored_alice, locker_id)
 	assert_eq(_service(restored).loot_roll_count, 0, "a restored world rolls nothing for a searched container")
-	# A save from before containers existed has no container document at all.
+	# A save from before the world seed existed has no container document at all.
 	var old_world: ServerWorld = _world()
 	old_world.join("alice")
 	var old_documents: Dictionary = old_world.to_documents()
-	assert_false((old_documents["world_state"]["systems"] as Dictionary).has(ContainerService.SYSTEM_ID), "no containers: no key, as in an older save")
+	(old_documents["world_state"]["systems"] as Dictionary).erase(ContainerService.SYSTEM_ID)
 	var from_old: ServerWorld = _world()
 	assert_eq(from_old.restore_documents(_json(old_documents["world_state"]), _json(old_documents["players"])).size(), 0, "an older save loads")
 	assert_eq(_service(from_old).container_count(), 0)
@@ -505,6 +511,20 @@ func test_a_world_without_a_cell_store_saves_containers_in_the_world_document() 
 	var twice: PackedStringArray = _service(restored).restore_world_document(_json(documents["world_state"]["systems"][ContainerService.SYSTEM_ID]))
 	assert_true(twice.size() > 0, "a world document is strict about ids it already has")
 	assert_eq(_service(restored).container_count(), 1)
+
+
+func test_shipped_new_world_draws_and_persists_one_loot_seed() -> void:
+	_settings = ContainerSettings.load_or_default().duplicate() as ContainerSettings
+	assert_eq(_settings.loot_seed, 0, "0 selects world-creation randomization")
+	var world: ServerWorld = _world()
+	var documents: Dictionary = world.to_documents()
+	var saved: Dictionary = documents["world_state"]["systems"][ContainerService.SYSTEM_ID]
+	var seed: int = int(saved[ContainerService.KEY_WORLD_LOOT_SEED])
+	assert_true(seed > 0 and seed <= ContainerInstance.MAX_LOOT_SEED)
+	assert_eq((saved[ContainerService.KEY_CONTAINERS] as Array).size(), 0)
+	var restored: ServerWorld = _world()
+	assert_eq(restored.restore_documents(_json(documents["world_state"]), _json(documents["players"])).size(), 0)
+	assert_eq(_service(restored).world_loot_seed(), seed, "restart keeps the world's seed")
 
 
 # ------------------------------------------------------------ memory first

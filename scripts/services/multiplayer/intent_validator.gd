@@ -35,8 +35,8 @@ static func validate_join(protocol_version: Variant, game_version: Variant, play
 	return ""
 
 
-static func validate_move(sequence: Variant, direction: Variant, yaw: Variant) -> String:
-	if typeof(sequence) != TYPE_INT or typeof(direction) != TYPE_VECTOR2 or typeof(yaw) != TYPE_FLOAT:
+static func validate_move(sequence: Variant, direction: Variant, yaw: Variant, sprinting: Variant = false) -> String:
+	if typeof(sequence) != TYPE_INT or typeof(direction) != TYPE_VECTOR2 or typeof(yaw) != TYPE_FLOAT or typeof(sprinting) != TYPE_BOOL:
 		return REASON_BAD_TYPE
 	if int(sequence) < 0:
 		return REASON_BAD_SEQUENCE

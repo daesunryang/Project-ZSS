@@ -49,6 +49,15 @@ static func build_survival_lines(vitals: Dictionary, settings: ClientPresentatio
 	return lines
 
 
+## Always-visible movement key hint for the local client's configured keys.
+static func build_movement_lines(settings: CameraSettings) -> PackedStringArray:
+	return PackedStringArray(["이동 [%s/%s/%s/%s] | 달리기 [%s]" % [
+		key_label(settings.move_forward_key), key_label(settings.move_left_key),
+		key_label(settings.move_backward_key), key_label(settings.move_right_key),
+		key_label(settings.sprint_key),
+	]])
+
+
 ## Number of the owner's wounds that bleed (malformed entries are skipped).
 static func bleeding_wound_count(vitals: Dictionary) -> int:
 	var count: int = 0

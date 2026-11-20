@@ -6,6 +6,7 @@ const MOVE_FORWARD: StringName = &"move_forward"
 const MOVE_BACKWARD: StringName = &"move_backward"
 const MOVE_LEFT: StringName = &"move_left"
 const MOVE_RIGHT: StringName = &"move_right"
+const SPRINT: StringName = &"sprint"
 const PICKUP: StringName = &"pickup"
 ## Raise / lower the local camera look target. No server intent is sent.
 const CAMERA_HEIGHT_UP: StringName = &"camera_height_up"
@@ -76,6 +77,7 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 	_add_key_action(MOVE_BACKWARD, settings.move_backward_key, settings.input_deadzone)
 	_add_key_action(MOVE_LEFT, settings.move_left_key, settings.input_deadzone)
 	_add_key_action(MOVE_RIGHT, settings.move_right_key, settings.input_deadzone)
+	_add_key_action(SPRINT, settings.sprint_key, settings.input_deadzone)
 	_add_key_action(PICKUP, settings.pickup_key, settings.input_deadzone)
 	_add_key_action(CAMERA_HEIGHT_UP, settings.camera_height_up_key, settings.input_deadzone)
 	_add_key_action(CAMERA_HEIGHT_DOWN, settings.camera_height_down_key, settings.input_deadzone)

@@ -89,7 +89,7 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 ## Treating another player (P2-T12, docs/15 P2-199): holding this key while
 ## pressing the bandage or the cure key asks the server to use the item on
 ## the player the camera looks at instead of on oneself.
-@export var treat_other_modifier_key: Key = KEY_SHIFT
+@export var treat_other_modifier_key: Key = KEY_ALT
 ## Which player that is: the nearest other living player within this
 ## distance and this half angle around the camera direction, in the mirror.
 ## Only a suggestion: the server checks its own positions and range.
@@ -432,7 +432,7 @@ func assigned_keys() -> Dictionary[String, Key]:
 ## Names of the settings of this resource whose key is also a movement,
 ## pickup or camera-height key of `camera`. Empty = no clash.
 func keys_shared_with(camera: CameraSettings) -> PackedStringArray:
-	var taken: Array[Key] = [camera.move_forward_key, camera.move_backward_key, camera.move_left_key, camera.move_right_key, camera.pickup_key, camera.camera_height_up_key, camera.camera_height_down_key]
+	var taken: Array[Key] = [camera.move_forward_key, camera.move_backward_key, camera.move_left_key, camera.move_right_key, camera.sprint_key, camera.pickup_key, camera.camera_height_up_key, camera.camera_height_down_key]
 	var shared: PackedStringArray = []
 	var own: Dictionary[String, Key] = assigned_keys()
 	for key_name: String in own:

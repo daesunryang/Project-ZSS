@@ -171,6 +171,8 @@ func test_shipped_posture_settings_and_validation() -> void:
 	assert_true(shipped.standing_still_visibility <= shipped.standing_moving_visibility and shipped.standing_still_visibility > shipped.resting_visibility)
 	assert_true(shipped.prone_movement_multiplier > 0.0 and shipped.prone_movement_multiplier < 1.0, "prone is slow")
 	assert_true(shipped.prone_footstep_loudness_multiplier < 1.0, "and quiet")
+	assert_eq([shipped.standing_moving_visibility, shipped.standing_still_visibility, shipped.resting_visibility, shipped.prone_moving_visibility, shipped.prone_still_visibility], [1.0, 0.8, 0.6, 0.4, 0.2])
+	assert_eq(shipped.prone_footstep_loudness_multiplier, 0.5)
 	assert_true(shipped.prone_blocks_attack)
 	assert_eq(ZombieSettings.load_or_default().tracked_target_min_visibility, 1.0)
 	assert_eq(PlayerPosture.NAMES, PackedStringArray(["standing", "prone", "resting"]))
