@@ -46,7 +46,10 @@ extends ServerSystem
 ##   2. damage  - it was hit by a player it cannot see: turn to the attacker
 ##                and investigate the attacker's position
 ##   3. sound   - the strongest new noise: investigate its position
-##   4. memory  - lost a chased target: search the last known position
+##   4. pursuit - keep following a valid chased target at its live server
+##                position through lost sight while it is within
+##                `pursuit_break_distance_m`; otherwise search the last
+##                tracked position
 ##   5. timers  - investigate -> search -> idle, idle wandering
 ## When sight and sound happen in the same decision, sight wins and the
 ## noise is discarded (it will not be investigated later).
@@ -694,6 +697,7 @@ func _cross_border(world: ServerWorld, zombie: ZombieState, previous: Vector3, c
 
 ## One AI decision for one living zombie (see the priority list above).
 func _think(context: _Context, zombie: ZombieState) -> void:
+	var had_target: bool = zombie.state == ZombieState.State.CHASE or zombie.state == ZombieState.State.ATTACK
 	var alert_id: String = ""
 	var alert_position: Vector3 = Vector3.ZERO
 	if not zombie.alerted_by.is_empty():
@@ -702,11 +706,18 @@ func _think(context: _Context, zombie: ZombieState) -> void:
 			alert_position = context.world.get_player(alert_id).position
 			_face(zombie, alert_position)
 		zombie.alerted_by = ""
-	var seen_id: String = _visible_target(context, zombie)
+	# Distance is the target-loss rule for an existing pursuit. Once the
+	# current target is beyond it, do not let seeing that same target suppress
+	# the break; another visible player may still take priority as before.
+	var ignored_sight_id: String = ""
+	if had_target and _is_valid_target(context, zombie.target_player_id):
+		var tracked_position: Vector3 = context.world.get_player(zombie.target_player_id).position
+		if ZombiePerception.flat_distance(zombie.position, tracked_position) > _settings.pursuit_break_distance_m:
+			ignored_sight_id = zombie.target_player_id
+	var seen_id: String = _visible_target(context, zombie, ignored_sight_id)
 	if not seen_id.is_empty():
 		_on_target_seen(context, zombie, seen_id)
 		return
-	var had_target: bool = zombie.state == ZombieState.State.CHASE or zombie.state == ZombieState.State.ATTACK
 	zombie.target_visible = false
 	if not alert_id.is_empty():
 		_push_event(EVENT_DETECTED, zombie.zombie_id, {"sense": SENSE_DAMAGE, "target_id": alert_id, "position": _to_array(alert_position)})
@@ -718,6 +729,8 @@ func _think(context: _Context, zombie: ZombieState) -> void:
 		_begin_investigate(context, zombie, heard.event.position, "", CAUSE_NOISE)
 		return
 	if had_target:
+		if _continue_pursuit(context, zombie):
+			return
 		_begin_search(context, zombie, CAUSE_TARGET_LOST)
 		return
 	match zombie.state:
@@ -791,15 +804,34 @@ func _attack(context: _Context, zombie: ZombieState, target_id: String) -> void:
 	})
 
 
+## Keeps an existing pursuit without using sight. Returns false when the
+## target is dead/offline or strictly beyond the configured break distance.
+## Damage, sound and a different visible target have already had their
+## existing higher-priority turns before this is called.
+func _continue_pursuit(context: _Context, zombie: ZombieState) -> bool:
+	if not _is_valid_target(context, zombie.target_player_id):
+		return false
+	var target_position: Vector3 = context.world.get_player(zombie.target_player_id).position
+	if ZombiePerception.flat_distance(zombie.position, target_position) > _settings.pursuit_break_distance_m:
+		return false
+	zombie.focus_position = target_position
+	zombie.has_move_target = false
+	if zombie.state == ZombieState.State.ATTACK and ZombiePerception.flat_distance(zombie.position, target_position) > _settings.attack_range_m:
+		_set_state(context, zombie, ZombieState.State.CHASE, CAUSE_SIGHT)
+	return true
+
+
 ## Nearest visible living online player ("" = none). The current target is
 ## kept while it stays visible; ties resolve by player id order. The sight
 ## range towards each player is the zombie's range times that player's
 ## visibility (P2-T11, _sight_range_to).
-func _visible_target(context: _Context, zombie: ZombieState) -> String:
+func _visible_target(context: _Context, zombie: ZombieState, ignored_player_id: String = "") -> String:
 	var half_angle: float = deg_to_rad(_settings.sight_half_angle_deg)
 	var best_id: String = ""
 	var best_distance: float = INF
 	for player_id: String in context.online_ids:
+		if player_id == ignored_player_id:
+			continue
 		if not _is_valid_target(context, player_id):
 			continue
 		var player_position: Vector3 = context.world.get_player(player_id).position
@@ -1137,10 +1169,11 @@ func _cancel_navigation(zombie_id: String) -> void:
 	_navigation_plan_goals.erase(zombie_id)
 
 
-## Live position of a target that was visible at the last AI decision,
-## otherwise the last known position.
+## Live server position of an online pursued target, including while sight
+## is blocked. The saved focus position remains the fallback and the place
+## searched after the pursuit breaks.
 func _tracked_target_position(world: ServerWorld, zombie: ZombieState) -> Vector3:
-	if zombie.target_visible and world.is_online(zombie.target_player_id):
+	if world.is_online(zombie.target_player_id):
 		var player: PlayerState = world.get_player(zombie.target_player_id)
 		if player != null:
 			return player.position

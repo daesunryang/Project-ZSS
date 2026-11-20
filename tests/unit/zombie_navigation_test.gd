@@ -181,6 +181,24 @@ func test_chasing_zombie_walks_around_a_wall() -> void:
 	assert_true(_zombies(world).total_plan_count > 0)
 
 
+func test_hidden_pursuit_inside_break_distance_walks_around_wall_and_reaches_target() -> void:
+	_zombie.ai_period_sec = 0.1
+	_zombie.ai_bucket_count = 1
+	var world: ServerWorld = _world()
+	var player: PlayerState = world.join("alice")
+	player.position = Vector3(9.5, 0.0, 5.5)
+	var zombie_id: String = str(_zombies(world).spawn_zombie(world, Vector3(2.5, 0.0, 5.5), -PI / 2.0).event["zombie_id"])
+	_run(world, 0.2)
+	assert_eq(_zombies(world).get_zombie(zombie_id).state, ZombieState.State.CHASE, "saw the unobstructed target first")
+	_place_vertical_barrier(world, 6, 3, 7)
+	_run(world, 5.0)
+	var zombie: ZombieState = _zombies(world).get_zombie(zombie_id)
+	assert_true(ZombiePerception.flat_distance(zombie.position, player.position) <= _zombie.attack_range_m, "kept pursuit and went around the wall: %s" % str(zombie.position))
+	assert_true(zombie.state == ZombieState.State.CHASE or zombie.state == ZombieState.State.ATTACK)
+	assert_eq(zombie.target_player_id, player.player_id)
+	assert_true(_zombies(world).total_plan_count > 0)
+
+
 func test_closed_door_keeps_chaser_out_and_opening_is_seen_by_replan() -> void:
 	_navigation.max_search_radius_m = 5.0
 	var world: ServerWorld = _world()

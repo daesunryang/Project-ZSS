@@ -154,12 +154,14 @@ func test_default_settings_and_composition() -> void:
 	assert_eq(loaded.validate().size(), 0, "; ".join(loaded.validate()))
 	assert_true(ResourceLoader.exists(ZombieSettings.DEFAULT_PATH))
 	assert_true(loaded.dev_spawn_count >= 10 and loaded.dev_spawn_count <= 20, "docs/13 initial test scale")
+	assert_eq(loaded.pursuit_break_distance_m, 30.0, "the confirmed pursuit distance is data")
 	var broken: ZombieSettings = ZombieSettings.new()
 	broken.attack_body_parts = PackedStringArray(["tail"])
 	broken.chase_stop_distance_m = broken.attack_range_m + 1.0
+	broken.pursuit_break_distance_m = -1.0
 	broken.dev_spawn_count = broken.max_active_zombies + 1
 	broken.ai_period_sec = 0.0
-	assert_true(broken.validate().size() >= 4, "; ".join(broken.validate()))
+	assert_true(broken.validate().size() >= 5, "; ".join(broken.validate()))
 	var world: ServerWorld = ServerComposition.create_world(WORLD, CompositionConfig.from_defaults())
 	# Later bundles register more systems (combat, ...); only the order of
 	# the systems the zombies depend on is asserted here.
@@ -370,21 +372,31 @@ func test_quiet_or_distant_noise_is_not_heard() -> void:
 	assert_eq(_count(events, zombie_id, ZombieService.EVENT_STATE_CHANGED), 0)
 
 
-func test_lost_target_is_searched_then_zombie_returns_to_idle() -> void:
-	_whole_map_active = true  # alice goes 280 m away to be lost
+func test_pursuit_breaks_only_beyond_configured_distance_then_searches() -> void:
+	_whole_map_active = true
+	_settings.chase_speed_mps = 0.0
 	var world: ServerWorld = _world()
 	var alice: PlayerState = world.join("alice")
 	var zombie_id: String = _spawn(world, Vector3(0, 0, 12), 0.0)
 	var events: Array[Dictionary] = []
 	_run(world, 1.0, events)
 	assert_eq(_state(world, zombie_id), "chase")
-	var last_known: Vector3 = alice.position
-	alice.position = Vector3(200, 0, 200)  # gone (far out of sight)
-	_run(world, 1.0, events)
-	assert_eq(_state(world, zombie_id), "search", "target lost -> search")
 	var zombie: ZombieState = _zombies(world).get_zombie(zombie_id)
+	# Outside the 25 m sight range and view cone, but exactly on the pursuit
+	# boundary: it is still the live chase target.
+	alice.position = zombie.position + Vector3(_settings.pursuit_break_distance_m, 0.0, 0.0)
+	_run(world, 1.0, events)
+	assert_eq(_state(world, zombie_id), "chase", "the boundary is inclusive")
+	assert_eq(zombie.target_player_id, alice.player_id)
+	var last_tracked: Vector3 = zombie.focus_position
+	# Leave enough margin that movement before the next AI decision cannot
+	# bring the distance back under the strict greater-than boundary.
+	alice.position = zombie.position + Vector3(_settings.pursuit_break_distance_m + 5.0, 0.0, 0.0)
+	_run(world, 1.0, events)
+	assert_eq(_state(world, zombie_id), "search", "beyond the pursuit distance -> search")
 	assert_eq(zombie.target_player_id, "")
-	assert_eq(zombie.focus_position, last_known, "searches the last known position")
+	assert_eq(zombie.focus_position, last_tracked, "searches the last tracked position")
+	var search_start_distance: float = ZombiePerception.flat_distance(zombie.position, last_tracked)
 	_run(world, _settings.search_duration_sec + 1.0, events)
 	assert_eq(_state(world, zombie_id), "idle", "gave up after the search time")
 	var chase: int = _find(events, 0, zombie_id, ZombieService.EVENT_STATE_CHANGED, "to", "chase")
@@ -396,7 +408,7 @@ func test_lost_target_is_searched_then_zombie_returns_to_idle() -> void:
 	# Event world_time is calendar time; the search duration is real seconds
 	# (the two clocks are separate sums of tick lengths, hence the tolerance).
 	assert_true(events[idle]["world_time"] - events[search]["world_time"] >= _settings.search_duration_sec * world.clock.time_scale - POSITION_TOLERANCE)
-	assert_true(ZombiePerception.flat_distance(zombie.position, last_known) <= _settings.search_radius_m + _settings.arrive_radius_m, "searched around the last known position")
+	assert_true(ZombiePerception.flat_distance(zombie.position, last_tracked) < search_start_distance, "moved toward the last tracked position while searching")
 	assert_eq(zombie.home_position, zombie.position, "stays where it ended up")
 	_run(world, 5.0, events)
 	assert_eq(_state(world, zombie_id), "idle")
@@ -715,6 +727,40 @@ func test_save_recreate_load_keeps_state_and_rng() -> void:
 	assert_eq(restored.living_count(), service.living_count() + 1)
 	_run(restored_world, _settings.corpse_remove_delay_sec)
 	assert_false(restored.has_zombie(ids[0]), "the restored corpse is still removed on time")
+
+
+func test_save_recreate_load_continues_hidden_pursuit_deterministically() -> void:
+	var world: ServerWorld = _world()
+	var alice: PlayerState = world.join("alice")
+	var zombie_id: String = _spawn(world, Vector3(0, 0, 12), 0.0)
+	_run(world, 1.0)
+	assert_eq(_state(world, zombie_id), "chase")
+	var zombie: ZombieState = _zombies(world).get_zombie(zombie_id)
+	alice.position = zombie.position + Vector3(10.0, 0.0, 0.0)
+	zombie.target_visible = false
+	zombie.focus_position = alice.position
+	assert_eq(zombie.target_player_id, alice.player_id)
+
+	var documents: Dictionary = world.to_documents()
+	assert_true(SaveService.is_json_safe(documents), "the pursuit save is JSON-safe")
+	var parsed: Variant = JSON.parse_string(JSON.stringify(documents))
+	assert_eq(typeof(parsed), TYPE_DICTIONARY, "save serialization round-trips")
+	var saved_documents: Dictionary = parsed as Dictionary
+	var resumed_documents: Array[Dictionary] = []
+	for copy_index: int in range(2):
+		var restored_world: ServerWorld = ServerComposition.create_world(WORLD, _config())
+		assert_eq(restored_world.restore_documents(saved_documents["world_state"], saved_documents["players"], saved_documents["cells"]).size(), 0)
+		var restored_alice: PlayerState = restored_world.join("alice")
+		var restored: ZombieState = _zombies(restored_world).get_zombie(zombie_id)
+		assert_not_null(restored)
+		assert_eq(restored.state, ZombieState.State.CHASE)
+		assert_eq(restored.target_player_id, restored_alice.player_id)
+		var distance_before: float = ZombiePerception.flat_distance(restored.position, restored_alice.position)
+		_run(restored_world, 1.0)
+		assert_true(ZombiePerception.flat_distance(restored.position, restored_alice.position) < distance_before, "loaded pursuit follows the live target")
+		assert_eq(restored.state, ZombieState.State.CHASE)
+		resumed_documents.append(restored.to_dict())
+	assert_true(_approx_equal(resumed_documents[0], resumed_documents[1]), "same save and inputs resume identically")
 
 
 func test_world_persistence_does_not_reseed_existing_worlds() -> void:

@@ -546,16 +546,14 @@ func test_going_prone_in_front_of_a_chasing_zombie_does_not_end_the_chase() -> v
 		assert_eq(_zombie_state(world, zombie_id), "chase", "the zombie saw the standing player")
 		assert_true(_want(world, alice, PlayerPosture.Kind.PRONE).ok)
 		_stand(world, alice, 2.0)
-		if tracked_floor >= 1.0:
-			assert_eq(_zombie_state(world, zombie_id), "chase", "default: a zombie that already sees you is not fooled")
-			assert_eq(_zombies(world).get_zombie(zombie_id).target_player_id, alice.player_id)
-		else:
-			assert_eq(_zombie_state(world, zombie_id), "search", "floor 0: the tracked target is hidden like anybody else")
-			assert_ne(_zombies(world).get_zombie(zombie_id).target_player_id, alice.player_id)
+		var zombie: ZombieState = _zombies(world).get_zombie(zombie_id)
+		assert_eq(_zombie_state(world, zombie_id), "chase", "visibility does not end a pursuit inside 30 m")
+		assert_eq(zombie.target_player_id, alice.player_id)
+		assert_eq(zombie.target_visible, tracked_floor >= 1.0, "the floor still controls whether the pursued target is currently seen")
 
 
 func test_a_lost_target_that_lies_prone_is_not_found_again() -> void:
-	# The chase ends out of the zombie's sight range; after that the prone
+	# The chase ends beyond the pursuit distance; after that the prone
 	# factor counts. The zombie stands and keeps facing where it lost her.
 	_zombie_settings.chase_speed_mps = 0.1
 	_zombie_settings.search_speed_mps = 0.0
@@ -567,11 +565,11 @@ func test_a_lost_target_that_lies_prone_is_not_found_again() -> void:
 	var zombie_id: String = _spawn_zombie(world, Vector3.ZERO)
 	_stand(world, alice, 1.5)
 	assert_eq(_zombie_state(world, zombie_id), "chase")
-	# Far out of sight range: the chase ends.
+	# Far beyond the 30 m pursuit distance: the chase ends.
 	alice.position = Vector3(0.0, 0.0, -SIGHT_RANGE * 5.0)
 	assert_true(_want(world, alice, PlayerPosture.Kind.PRONE).ok)
 	_stand(world, alice, 1.5)
-	assert_eq(_zombie_state(world, zombie_id), "search", "out of sight range the target is lost")
+	assert_eq(_zombie_state(world, zombie_id), "search", "beyond the pursuit distance the target is lost")
 	# Back at the old distance, prone: not seen again.
 	alice.position = Vector3(0.0, 0.0, -distance)
 	_stand(world, alice, 2.0)

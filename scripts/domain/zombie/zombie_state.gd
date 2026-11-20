@@ -13,7 +13,7 @@ enum State { IDLE, INVESTIGATE, CHASE, ATTACK, SEARCH, DORMANT, DEAD }
 ## Save/network names, indexed by State.
 ##   idle        waiting / wandering around the home point
 ##   investigate walking to a heard noise (or to whoever hit it)
-##   chase       following a target it can see
+##   chase       pursuing a previously detected target
 ##   attack      in range of a visible target
 ##   search      looking around the last known position
 ##   dormant     inactive (field only; nothing enters it yet, docs/15 P2-29)
@@ -32,7 +32,8 @@ var health: float = 0.0
 var home_position: Vector3 = Vector3.ZERO
 ## Player being chased/attacked ("" = none).
 var target_player_id: String = ""
-## Whether the target was seen at the last AI decision.
+## Whether the target was seen at the last AI decision. A false value does
+## not end CHASE while the live target stays within the pursuit distance.
 var target_visible: bool = false
 ## Last known target position, heard noise position or search centre.
 var focus_position: Vector3 = Vector3.ZERO

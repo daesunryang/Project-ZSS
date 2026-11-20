@@ -51,10 +51,14 @@ enum PlayerDeathZombieRule { NEVER = 0, INFECTION_DEATH = 1, INFECTED_AT_DEATH =
 ## player (posture, movement). For the target a zombie is chasing or
 ## attacking and saw at its last decision, the factor is never below this
 ## value: 1.0 = lying down in front of a zombie that already sees you does
-## not hide you (the chase only ends out of its full sight range or view
-## cone); 0.0 = a tracked target is hidden like anybody else. PROVISIONAL
-## (docs/15 P2-192).
+## not make you unseen; 0.0 = a tracked target can become unseen like
+## anybody else. Losing sight no longer ends pursuit; the separate pursuit
+## distance below does (docs/00 ADR-028, docs/15 P2-192).
 @export_range(0.0, 1.0) var tracked_target_min_visibility: float = 1.0
+## An already engaged target is pursued through lost sight until its current
+## server position is farther than this distance. This does not change first
+## detection by sight, posture visibility or sound.
+@export_range(0.0, 10000.0) var pursuit_break_distance_m: float = 30.0
 ## Passed to NoiseService.query_audible().
 @export_range(0.0, 100.0) var hearing_multiplier: float = 1.0
 
@@ -113,7 +117,7 @@ func validate() -> PackedStringArray:
 		errors.append("zombie dev spawn radii must satisfy 0 <= min <= max")
 	if max_health <= 0.0:
 		errors.append("zombie max_health must be > 0")
-	for value: float in [corpse_remove_delay_sec, sight_range_m, light_sight_multiplier, hearing_multiplier, wander_speed_mps, investigate_speed_mps, chase_speed_mps, search_speed_mps, chase_stop_distance_m, wander_radius_m, wander_pause_min_sec, investigate_timeout_sec, search_duration_sec, search_radius_m, attack_range_m, attack_windup_sec, attack_cooldown_sec]:
+	for value: float in [corpse_remove_delay_sec, sight_range_m, light_sight_multiplier, pursuit_break_distance_m, hearing_multiplier, wander_speed_mps, investigate_speed_mps, chase_speed_mps, search_speed_mps, chase_stop_distance_m, wander_radius_m, wander_pause_min_sec, investigate_timeout_sec, search_duration_sec, search_radius_m, attack_range_m, attack_windup_sec, attack_cooldown_sec]:
 		if not is_finite(value) or value < 0.0:
 			errors.append("zombie distances, speeds and durations must be finite and >= 0")
 			break
