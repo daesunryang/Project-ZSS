@@ -784,6 +784,19 @@ P2-T6부터 `ItemConsumption`은 아이템 정의의 사용 효과 전부를 적
 
 테스트: `tests/unit/item_consumption_test.gd`(욕구 감소·하한·사망자와 잘못된 양 거부, 소비의 성공·수량 감소·삭제, 거부 경우마다 아이템과 욕구가 그대로임, 생존 시스템 없는 월드, 정의 데이터, 기본 개발용 월드, seed 수량, 저장 → 재생성 → 로드), `tests/integration/consume_net_test.gd`(서버 1 + 클라이언트 2, 실제 ENet: 주워서 먹고 마시면 서버와 본인 미러의 욕구 범주·인벤토리가 일치하고 다른 클라이언트는 아무것도 받지 않음, 조작된 요청 13종, join 전 요청, 빈도 초과와 버킷 분리, 죽은 플레이어, 클라이언트가 보낸 결과 RPC, 소비 저장 방침과 재시작, 즉시 저장 설정, 설정·검증 규칙), `tests/unit/client_presentation_test.gd`(첫 소비 가능 아이템 선택, 인벤토리 요약, 결과 문구, 소비 키 등록·설정 검증).
 
+#### 14.18.1 음식·음료 다양화(F-1, 2026-11-23)
+
+계획: `notes/feature-plan-2026-11-20.md` F-1과 "목록" 절(사용자 답 음식·음료 "그대로"). 임시 수치는 docs/15 §21 F1-001~F1-008. 조리 과정(F-8), 부패(F-14), 농사(F-7)는 이 절 범위가 아니다.
+
+- **데이터**: `ItemDefinition`에 먹기 효과 필드 5개를 더했다. `consume_fatigue_reduction`(피로 감소), `consume_health_restore`(체력 소량 회복), `consume_sickness_chance`(0~1, 탈 확률), `consume_mood_change`·`consume_causes_hand_tremor`(데이터만, 적용 안 함). `lowers_needs()`는 이제 허기·갈증·피로 중 하나라도 낮추면 참이다. 체력·탈·기분·손떨림은 먹기 효과의 일부라, 욕구를 하나도 낮추지 않는 정의에 있으면 `validate()`가 거부한다.
+- **아이템 28종**(`resources/definitions/items/`): 통조림(콩·참치·과일), 라면, 과자, 초콜릿, 빵, 쌀, 밀가루, 생고기, 생선, 달걀, 감자, 채소, 과일, 조리된 결과(구운 고기·구운 생선·삶은 달걀·구운 감자·끓인 물, 조리 과정 없이 아이템만), 더러운 물, 주스, 탄산음료, 커피, 차, 우유, 에너지 음료, 술. 생수는 기존 `dev_water_bottle`("생수")을 그대로 쓴다.
+- **서버 규칙**: `SurvivalService.consume_food(player_id, hunger, thirst, fatigue, health, sickness_chance, source_id)`와 사전 검사 `check_consume_food(...)`. 허기·갈증·피로를 낮추고(0 아래로 안 감) 체력을 더한 뒤(최대 체력 위로 안 감), 탈 확률이 0보다 크면 그 플레이어의 저장되는 생존 RNG(`PlayerVitals.rng`, 감염 판정과 같은 것)로 `randf()`를 한 번 굴린다. 확률 0이면 굴리지 않아 RNG 상태가 그대로다(기존 감염 판정 순서가 바뀌지 않음). 탈이 나면 그 자리에서 체력 `SurvivalSettings.food_sickness_health_loss`(기본 8)를 잃고(단 `food_sickness_min_health` 기본 1 아래로는 안 내려감: 음식으로는 죽지 않는다) 갈증이 `food_sickness_thirst_gain`(기본 15) 오른다. **지속되는 질병 상태는 아직 없다**(질병 시스템이 생기면 이 자리를 바꾼다). 이벤트 `player_needs_reduced`에 `fatigue_reduced`, `health_restored`, `fatigue_after`, `health_after`, `sickness_chance`, `sick`, `sickness_health_lost`, `sickness_thirst_added`가 더해졌다. `reduce_needs`/`check_reduce_needs`는 그대로 있고 `consume_food`를 피로·체력·탈 0으로 부른다.
+- **`ItemConsumption`**: 먹기 효과에 `consume_food`를 쓴다. 성공 이벤트(`item_consumed`, `item_used_on_player`)에 `fatigue_reduced`, `health_restored`, `sick`, `sickness_health_lost`, `sickness_thirst_added`가 더해졌다. 다른 플레이어에게 먹이면 탈 판정은 먹은 쪽(대상)의 RNG로 한다. 검사 순서·거부 사유는 그대로다.
+- **루팅 표**: `dev_house`(부엌 음식·음료 고루, 생고기·생선은 드묾), `dev_store`(통조림·과자·음료 많음, 에너지 음료·술 드묾, 날것 없음), `dev_warehouse`(통조림·쌀·밀가루·더러운 물, 에너지 음료·술 드묾), `dev_clinic`(주스·차·초콜릿 조금)에 넣었다. 굴림 횟수와 "없음" 가중치는 그대로다. 조리 결과와 끓인 물은 루팅에 없다(F-8 요리로 얻음).
+- **네트워크·저장**: 바뀌지 않았다. 체력·욕구 변화는 기존 소유자 스냅샷으로 간다. 탈이 났다는 사실은 따로 복제되지 않는다(클라이언트는 체력·갈증 변화만 본다). RNG 상태는 이미 생존 fragment에 저장된다.
+- **클라이언트**: 종류별 사용 키(`ConsumeIntentPolicy`)는 그대로다. 허기를 낮추면 음식 키(F), 갈증을 낮추면 물 키(G)가 고르므로 커피·술 등은 물 키로, 날고기는 음식 키로 쓰인다. 무엇을 먼저 고를지 고르는 화면은 없다(미러 순서의 첫 항목).
+- **테스트**: `tests/unit/food_drink_consumption_test.gd`.
+
 ### 14.19 영구 사망(P2-T4, docs/00 ADR-007)
 
 캐릭터가 죽으면 그 캐릭터는 끝난다. 소지품은 죽은 자리의 월드에 남고, 플레이어는 설정된 대기 시간 뒤 새 캐릭터로 시작한다. Phase 2의 개발용 리스폰(인벤토리 유지, §14.6의 B3 서술)을 대체하며 이 절이 §14.6보다 우선한다. 임시 가정은 docs/15 §11.2 P2-126~P2-131. P2-T9부터 전용 서버에서는 "대기 시간 뒤 저절로 새 캐릭터가 시작한다"가 "대기 시간 뒤 플레이어가 새 캐릭터를 만들면 시작한다"로 바뀌었고 그 부분은 §14.24가 우선한다. 이 절의 자동 시작은 캐릭터 생성이 필요 없는 조립(테스트·도구의 호환 기본값)에 그대로 적용된다.

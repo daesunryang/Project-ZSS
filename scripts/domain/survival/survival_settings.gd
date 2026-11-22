@@ -101,6 +101,15 @@ const SECONDS_PER_HOUR: float = 3600.0
 @export_range(0.0, 10000.0) var respawn_hunger: float = 0.0
 @export_range(0.0, 10000.0) var respawn_thirst: float = 0.0
 @export_range(0.0, 10000.0) var respawn_fatigue: float = 0.0
+## Food sickness (F-1, docs/09 §14.18.1, docs/15 F1-004, PROVISIONAL): what
+## happens at once when eating / drinking an item with
+## ItemDefinition.consume_sickness_chance makes the eater sick. There is no
+## lasting sickness state yet: the eater loses this much health (never
+## below food_sickness_min_health, so food never kills) and gains this much
+## thirst (vomiting; never above need_max).
+@export_range(0.0, 10000.0) var food_sickness_health_loss: float = 8.0
+@export_range(0.0, 10000.0) var food_sickness_thirst_gain: float = 15.0
+@export_range(0.001, 10000.0) var food_sickness_min_health: float = 1.0
 ## Infection chance per exposure (docs/02 §7.1: bites are very high risk).
 @export_range(0.0, 1.0) var infection_chance_bite: float = 0.70
 @export_range(0.0, 1.0) var infection_chance_scratch: float = 0.10
@@ -175,6 +184,10 @@ func validate() -> PackedStringArray:
 		errors.append("survival max_pending_events must be >= 1")
 	if not is_finite(survival_damage_event_interval_sec) or survival_damage_event_interval_sec < 0.0:
 		errors.append("survival_damage_event_interval_sec must be >= 0")
+	if not is_finite(food_sickness_health_loss) or food_sickness_health_loss < 0.0 or not is_finite(food_sickness_thirst_gain) or food_sickness_thirst_gain < 0.0:
+		errors.append("food sickness health loss and thirst gain must be finite and >= 0")
+	if not is_finite(food_sickness_min_health) or food_sickness_min_health <= 0.0 or food_sickness_min_health > max_health:
+		errors.append("food_sickness_min_health must be within (0, max_health]")
 	for chance: float in [infection_chance_bite, infection_chance_scratch, infection_chance_blood]:
 		if chance < 0.0 or chance > 1.0:
 			errors.append("infection chances must be within [0, 1]")

@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="ItemDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/inventory/item_definition.gd" id="1_item"]
+
+[resource]
+script = ExtResource("1_item")
+definition_id = "energy_drink"
+display_name = "에너지 음료"
+max_stack = 5
+consume_hunger_reduction = 0.0
+consume_thirst_reduction = 20.0
+consume_fatigue_reduction = 40.0

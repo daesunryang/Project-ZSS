@@ -9,7 +9,12 @@ extends RefCounted
 ##
 ## Effects (ItemDefinition) and when each applies:
 ##   eating / drinking (consume_*_reduction)  always: hunger / thirst drop,
-##       also when they are already 0 (docs/15 P2-122).
+##       also when they are already 0 (docs/15 P2-122). Since F-1 (docs/09
+##       §14.18.1) also fatigue drops (consume_fatigue_reduction), health
+##       comes back (consume_health_restore) and raw food / dirty water may
+##       make the eater sick (consume_sickness_chance, rolled with the
+##       eater's saved RNG; SurvivalService.consume_food). The mood change
+##       and hand-tremor flag of a definition are data only, not applied.
 ##   bandage (treat_bleeding_wound_count)     when at least one wound of the
 ##       treated player bleeds: its worst bleeding wounds stop bleeding
 ##       (SurvivalService.stop_worst_bleeding).
@@ -37,6 +42,9 @@ extends RefCounted
 ##   {event_type: "item_consumed", player_id, item_instance_id, definition_id,
 ##    remaining_quantity (0 = the item is gone), hunger_reduced,
 ##    thirst_reduced (what was actually taken off),
+##    fatigue_reduced, health_restored, sick (bool: the food made the eater
+##    sick), sickness_health_lost, sickness_thirst_added (F-1; 0 / false for
+##    an item without that effect),
 ##    bleeding_stopped_wound_ids: Array of String (worst first, [] = none),
 ##    infection_cured_from: String (stage name that was cured, "" = none),
 ##    world_time}
@@ -186,7 +194,7 @@ static func _use(world: ServerWorld, survival: SurvivalService, user_id: String,
 	# Which effects apply now. Eating has no precondition beyond usable data;
 	# a treatment needs something to treat.
 	if feeds:
-		var need_reason: String = survival.check_reduce_needs(treated_id, definition.consume_hunger_reduction, definition.consume_thirst_reduction)
+		var need_reason: String = survival.check_consume_food(treated_id, definition.consume_hunger_reduction, definition.consume_thirst_reduction, definition.consume_fatigue_reduction, definition.consume_health_restore, definition.consume_sickness_chance)
 		if not need_reason.is_empty():
 			return ActionResult.failure(need_reason)
 	# Reason of the first treatment that cannot be given.
@@ -212,12 +220,22 @@ static func _use(world: ServerWorld, survival: SurvivalService, user_id: String,
 		return ActionResult.failure(removal.reason)
 	var hunger_reduced: float = 0.0
 	var thirst_reduced: float = 0.0
+	var fatigue_reduced: float = 0.0
+	var health_restored: float = 0.0
+	var sick: bool = false
+	var sickness_health_lost: float = 0.0
+	var sickness_thirst_added: float = 0.0
 	if feeds:
-		var reduction: ActionResult = survival.reduce_needs(treated_id, definition.consume_hunger_reduction, definition.consume_thirst_reduction, item_instance_id)
+		var reduction: ActionResult = survival.consume_food(treated_id, definition.consume_hunger_reduction, definition.consume_thirst_reduction, definition.consume_fatigue_reduction, definition.consume_health_restore, definition.consume_sickness_chance, item_instance_id)
 		if not reduction.ok:
 			return _effect_lost(user_id, item_instance_id, reduction.reason)
 		hunger_reduced = float(reduction.event.get("hunger_reduced", 0.0))
 		thirst_reduced = float(reduction.event.get("thirst_reduced", 0.0))
+		fatigue_reduced = float(reduction.event.get("fatigue_reduced", 0.0))
+		health_restored = float(reduction.event.get("health_restored", 0.0))
+		sick = bool(reduction.event.get("sick", false))
+		sickness_health_lost = float(reduction.event.get("sickness_health_lost", 0.0))
+		sickness_thirst_added = float(reduction.event.get("sickness_thirst_added", 0.0))
 	var stopped_wound_ids: Array = []
 	if bandages:
 		var treated: ActionResult = survival.stop_worst_bleeding(treated_id, definition.treat_bleeding_wound_count, item_instance_id)
@@ -239,6 +257,11 @@ static func _use(world: ServerWorld, survival: SurvivalService, user_id: String,
 		"remaining_quantity": int(removal.event.get("remaining_quantity", 0)),
 		"hunger_reduced": hunger_reduced,
 		"thirst_reduced": thirst_reduced,
+		"fatigue_reduced": fatigue_reduced,
+		"health_restored": health_restored,
+		"sick": sick,
+		"sickness_health_lost": sickness_health_lost,
+		"sickness_thirst_added": sickness_thirst_added,
 		"bleeding_stopped_wound_ids": stopped_wound_ids,
 		"infection_cured_from": cured_from,
 		"world_time": world.clock.world_time_sec,

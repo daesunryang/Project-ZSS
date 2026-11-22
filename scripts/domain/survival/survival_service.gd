@@ -21,6 +21,9 @@ extends ServerSystem
 ##   infection_stage(player_id) -> InfectionState.Stage
 ##   check_reduce_needs(player_id, hunger, thirst) -> String   (preflight)
 ##   reduce_needs(player_id, hunger, thirst, source_id) -> ActionResult
+##   check_consume_food(player_id, hunger, thirst, fatigue, health, sickness_chance) -> String
+##   consume_food(player_id, hunger, thirst, fatigue, health, sickness_chance, source_id) -> ActionResult
+##                                                   (F-1: eating with fatigue, health, food sickness)
 ##   is_resting(player_id) -> bool
 ##   start_rest(player_id) -> ActionResult
 ##   stop_rest(player_id) -> ActionResult
@@ -588,48 +591,100 @@ func apply_infection_treatment(player_id: String, source_id: String) -> ActionRe
 ## its failure reason. Changes nothing: callers that must commit something
 ## else together with the reduction (ItemConsumption) check first.
 func check_reduce_needs(player_id: String, hunger_amount: float, thirst_amount: float) -> String:
-	if not is_finite(hunger_amount) or not is_finite(thirst_amount) or hunger_amount < 0.0 or thirst_amount < 0.0:
-		return REASON_BAD_NEED_AMOUNT
-	if hunger_amount <= 0.0 and thirst_amount <= 0.0:
-		return REASON_BAD_NEED_AMOUNT
-	return _check_living(player_id)
+	return check_consume_food(player_id, hunger_amount, thirst_amount, 0.0, 0.0, 0.0)
 
 
 ## Lowers hunger and thirst by the given need units (server rule entry, e.g.
 ## eating and drinking; P2-T3). A need never drops below 0. Fatigue is not
-## touched. Success event (also queued and logged):
-##   {event_type: "player_needs_reduced", player_id, source_id,
-##    hunger_reduced, thirst_reduced (what was actually taken off),
-##    hunger_after, thirst_after, world_time}
-## followed in the queue by "need_category_changed" for every category that
-## changed. Failure reasons: bad_need_amount, unknown_player, player_dead;
-## a refused call changes nothing.
+## touched. consume_food() with no fatigue, health or sickness: the same
+## event, refusals and queue.
 func reduce_needs(player_id: String, hunger_amount: float, thirst_amount: float, source_id: String) -> ActionResult:
-	var reason: String = check_reduce_needs(player_id, hunger_amount, thirst_amount)
+	return consume_food(player_id, hunger_amount, thirst_amount, 0.0, 0.0, 0.0, source_id)
+
+
+## "" when consume_food() with these arguments would succeed now, otherwise
+## its failure reason (bad_need_amount, unknown_player, player_dead).
+## Changes nothing (ItemConsumption's preflight). Every amount must be
+## finite and >= 0, at least one need amount (hunger, thirst, fatigue) > 0,
+## and the sickness chance within [0, 1].
+func check_consume_food(player_id: String, hunger_amount: float, thirst_amount: float, fatigue_amount: float, health_amount: float, sickness_chance: float) -> String:
+	for amount: float in [hunger_amount, thirst_amount, fatigue_amount, health_amount]:
+		if not is_finite(amount) or amount < 0.0:
+			return REASON_BAD_NEED_AMOUNT
+	if hunger_amount <= 0.0 and thirst_amount <= 0.0 and fatigue_amount <= 0.0:
+		return REASON_BAD_NEED_AMOUNT
+	if not is_finite(sickness_chance) or sickness_chance < 0.0 or sickness_chance > 1.0:
+		return REASON_BAD_NEED_AMOUNT
+	return _check_living(player_id)
+
+
+## The effect of eating / drinking one unit (P2-T3, F-1 docs/09 §14.18.1):
+## lowers hunger, thirst and fatigue by the given need units (never below
+## 0), gives back `health_amount` health (never above max_health), then,
+## when `sickness_chance` > 0, rolls food sickness with the player's saved
+## survival RNG (one randf(); no roll and no RNG use at chance 0). A sick
+## eater loses SurvivalSettings.food_sickness_health_loss health (never
+## below food_sickness_min_health: food never kills) and gains
+## food_sickness_thirst_gain thirst (never above need_max). There is no
+## lasting sickness state.
+## Success event (also queued and logged):
+##   {event_type: "player_needs_reduced", player_id, source_id,
+##    hunger_reduced, thirst_reduced, fatigue_reduced, health_restored (what
+##    was actually changed), hunger_after, thirst_after, fatigue_after,
+##    health_after, sickness_chance, sick (bool), sickness_health_lost,
+##    sickness_thirst_added, world_time}
+## followed in the queue by "need_category_changed" for every category that
+## changed (before -> after the whole effect). Failure reasons:
+## check_consume_food(); a refused call changes nothing.
+func consume_food(player_id: String, hunger_amount: float, thirst_amount: float, fatigue_amount: float, health_amount: float, sickness_chance: float, source_id: String) -> ActionResult:
+	var reason: String = check_consume_food(player_id, hunger_amount, thirst_amount, fatigue_amount, health_amount, sickness_chance)
 	if not reason.is_empty():
 		GameLogger.warning("survival", "need reduction rejected", {"player_id": player_id, "source_id": source_id, "reason": reason, "operation": "reduce_needs"})
 		return ActionResult.failure(reason)
 	var vitals: PlayerVitals = _vitals[player_id]
-	var hunger_before: NeedKind.Category = need_category(player_id, NeedKind.Kind.HUNGER)
-	var thirst_before: NeedKind.Category = need_category(player_id, NeedKind.Kind.THIRST)
+	var before: Array[NeedKind.Category] = []
+	for kind_index: int in NeedKind.KIND_NAMES.size():
+		before.append(need_category(player_id, kind_index as NeedKind.Kind))
 	var hunger_reduced: float = minf(vitals.hunger, hunger_amount)
 	var thirst_reduced: float = minf(vitals.thirst, thirst_amount)
+	var fatigue_reduced: float = minf(vitals.fatigue, fatigue_amount)
+	var health_restored: float = clampf(_settings.max_health - vitals.health, 0.0, health_amount)
 	vitals.hunger = maxf(vitals.hunger - hunger_reduced, 0.0)
 	vitals.thirst = maxf(vitals.thirst - thirst_reduced, 0.0)
+	vitals.fatigue = maxf(vitals.fatigue - fatigue_reduced, 0.0)
+	vitals.health = minf(vitals.health + health_restored, _settings.max_health)
+	var sick: bool = sickness_chance > 0.0 and vitals.rng.randf() < sickness_chance
+	var sickness_health_lost: float = 0.0
+	var sickness_thirst_added: float = 0.0
+	if sick:
+		sickness_health_lost = clampf(vitals.health - _settings.food_sickness_min_health, 0.0, _settings.food_sickness_health_loss)
+		sickness_thirst_added = clampf(_settings.need_max - vitals.thirst, 0.0, _settings.food_sickness_thirst_gain)
+		vitals.health -= sickness_health_lost
+		vitals.thirst = minf(vitals.thirst + sickness_thirst_added, _settings.need_max)
 	var event: Dictionary = {
 		"event_type": EVENT_PLAYER_NEEDS_REDUCED,
 		"player_id": player_id,
 		"source_id": source_id,
 		"hunger_reduced": hunger_reduced,
 		"thirst_reduced": thirst_reduced,
+		"fatigue_reduced": fatigue_reduced,
+		"health_restored": health_restored,
 		"hunger_after": vitals.hunger,
 		"thirst_after": vitals.thirst,
+		"fatigue_after": vitals.fatigue,
+		"health_after": vitals.health,
+		"sickness_chance": sickness_chance,
+		"sick": sick,
+		"sickness_health_lost": sickness_health_lost,
+		"sickness_thirst_added": sickness_thirst_added,
 		"world_time": _clock.world_time_sec,
 	}
 	_push_event(event)
 	GameLogger.info("survival", "player needs reduced", event)
-	_report_need_category_change(player_id, vitals, NeedKind.Kind.HUNGER, hunger_before)
-	_report_need_category_change(player_id, vitals, NeedKind.Kind.THIRST, thirst_before)
+	if sick:
+		GameLogger.info("survival", "player sick from food", {"player_id": player_id, "source_id": source_id, "health_lost": sickness_health_lost, "thirst_added": sickness_thirst_added})
+	for kind_index: int in NeedKind.KIND_NAMES.size():
+		_report_need_category_change(player_id, vitals, kind_index as NeedKind.Kind, before[kind_index])
 	return ActionResult.success(event)
 
 

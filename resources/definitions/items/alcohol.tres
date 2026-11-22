@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="ItemDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/inventory/item_definition.gd" id="1_item"]
+
+[resource]
+script = ExtResource("1_item")
+definition_id = "alcohol"
+display_name = "술"
+max_stack = 5
+consume_hunger_reduction = 0.0
+consume_thirst_reduction = 10.0
+consume_mood_change = 15.0
+consume_causes_hand_tremor = true
