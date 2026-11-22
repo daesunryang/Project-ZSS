@@ -941,7 +941,7 @@ func test_a_completed_trade_is_saved_at_once_and_survives_a_server_restart() -> 
 # ------------------------------------------------------------ rules (no network)
 
 func test_rpc_table_request_validation_and_state_validation() -> void:
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 18, "the trade RPCs were a protocol change (11, P2-T16); 12 since the structure RPCs (P3-4a), 13 since the replication scope by cell (P3-2), 14 since the construction RPCs (P3-5), 15 since the container RPCs (P3-3)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 19, "the trade RPCs were a protocol change (11, P2-T16); 12 since the structure RPCs (P3-4a), 13 since the replication scope by cell (P3-2), 14 since the construction RPCs (P3-5), 15 since the container RPCs (P3-3)")
 	const ITEM: String = "item_000001"
 	const ALICE: String = "player_000001"
 	const BOB: String = "player_000002"

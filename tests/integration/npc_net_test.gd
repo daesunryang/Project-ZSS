@@ -166,7 +166,7 @@ func test_two_clients_follow_one_public_row_then_receive_left_outside_interest()
 
 
 func test_rpc_channels_and_modes_are_the_budgeted_ones() -> void:
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 18, "NpcNet join/events/snapshots are protocol 16")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 19, "NpcNet join/events/snapshots are protocol 16")
 	var script: Script = NpcNetModule
 	var config: Dictionary = script.get_rpc_config()
 	var snapshot: Dictionary = config[&"_rpc_npc_snapshot"]

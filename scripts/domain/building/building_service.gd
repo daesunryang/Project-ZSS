@@ -56,7 +56,10 @@ extends ServerSystem
 ## docs/15 §15.5):
 ##   - A placement makes a `blueprint`: it takes its slot, blocks nothing,
 ##     costs nothing yet and has no work done. `inventory_costs` is what it
-##     needs (the definition's build_costs when it was placed).
+##     needs: the definition's build_costs when it was placed, lowered by
+##     the building skill level of the player who placed it (F-9, FD-8:
+##     SkillService.reduced_costs; each material rounded up, never below
+##     1). A piece placed by a server rule pays the full costs.
 ##     BuildingSettings.instant_completion (off by default; tests and
 ##     development) makes it `completed` at once instead, with nothing paid.
 ##   - try_deliver: a player in range puts carried items of a kind the piece
@@ -88,6 +91,10 @@ extends ServerSystem
 ##     (player_resting), leaves the world (not_online), when the materials
 ##     run out (materials_missing), the work is done (work_finished) or the
 ##     piece goes away (structure_removed, structure_unloaded).
+##   - Building experience (F-9): when the work on a piece reaches progress
+##     1, every player still working on it gets building experience once
+##     (SkillService.record_structure_built), also when the piece then
+##     waits for a clear edge. instant_completion gives none.
 ##   - Completion: at progress 1 the piece becomes `completed`, gets its
 ##     full health and starts to block. A blocking piece does not complete
 ##     while a living player or zombie stands within blocker_clearance_m of
@@ -862,8 +869,12 @@ func _place(world: ServerWorld, definition: StructureDefinition, tile: Vector2i,
 	structure.health = definition.max_health if _settings.instant_completion else 0.0
 	structure.construction_progress = StructureInstance.FULL_PROGRESS if _settings.instant_completion else StructureInstance.NO_PROGRESS
 	structure.material_quality = _settings.default_material_quality
-	for item_id: String in definition.build_costs:
-		structure.inventory_costs[item_id] = definition.build_costs[item_id]
+	var costs: Dictionary[String, int] = definition.build_costs
+	var skills: SkillService = world.get_system(SkillService.SYSTEM_ID) as SkillService
+	if skills != null and not placed_by.is_empty():
+		costs = skills.reduced_costs(placed_by, SkillService.SKILL_BUILDING, definition.build_costs)
+	for item_id: String in costs:
+		structure.inventory_costs[item_id] = costs[item_id]
 	structure.last_modified_at = _clock.world_time_sec
 	structure.placed_by = placed_by
 	structure.door_open = door_open
@@ -1151,8 +1162,10 @@ func _add_work(world: ServerWorld, structure: StructureInstance, work_sec: float
 		structure.construction_state = StructureInstance.State.CONSTRUCTING
 		GameLogger.info("building", "construction started", {"entity_id": structure.structure_id, "definition_id": structure.definition_id})
 	if progress >= StructureInstance.FULL_PROGRESS:
+		var finishers: PackedStringArray = workers_of(structure.structure_id)
 		_release_crew(structure.structure_id, STOP_FINISHED)
 		_finish(world, structure, definition)
+		_award_building_xp(world, structure, finishers)
 	elif progress >= cap:
 		# The materials ran out: the clients get the progress it stopped at.
 		_push_event(EVENT_CHANGED, structure, "", {"cause": CAUSE_PROGRESS})
@@ -1208,6 +1221,17 @@ func _linked_container_removal_reason(world: ServerWorld, structure: StructureIn
 	if containers == null:
 		return ContainerService.REASON_UNAVAILABLE
 	return containers.empty_removal_reason(world, structure.container_id, structure.structure_id)
+
+
+## F-9: building experience for the players whose work finished a piece.
+func _award_building_xp(world: ServerWorld, structure: StructureInstance, finishers: PackedStringArray) -> void:
+	var skills: SkillService = world.get_system(SkillService.SYSTEM_ID) as SkillService
+	if skills == null:
+		return
+	for player_id: String in finishers:
+		var result: ActionResult = skills.record_structure_built(player_id)
+		if not result.ok:
+			GameLogger.warning("building", "building experience refused", {"entity_id": structure.structure_id, "player_id": player_id, "reason": result.reason, "operation": "award_building_xp"})
 
 
 ## Makes an unfinished structure a completed one. Returns the event.

@@ -138,6 +138,8 @@ var _container_selected_index: int = 0
 var _container_hud_key: String = ""
 ## P3-4b is isolated in BuildPresentation so this shared view only wires it.
 var _build_presentation: BuildPresentation = null
+## F-9: the local player's skill levels (owner-only mirror).
+var _skill_state: ClientSkillState = null
 
 
 func _ready() -> void:
@@ -453,6 +455,13 @@ func _bind_network() -> void:
 	var structure_module: StructureNetModule = _network.get_module(StructureNetModule.MODULE_NAME) as StructureNetModule
 	if structure_module != null:
 		_build_presentation = BuildPresentation.new(_structures_root, _build_label, _presentation, BuildingSettings.load_or_default(), StructureCatalog.load_directory(), _item_catalog, structure_module, _state)
+	var skill_module: SkillNetModule = _network.get_module(SkillNetModule.MODULE_NAME) as SkillNetModule
+	if skill_module != null:
+		_skill_state = skill_module.client_state
+		if not _skill_state.changed.is_connected(_refresh_survival_hud):
+			_skill_state.changed.connect(_refresh_survival_hud)
+		if _build_presentation != null:
+			_build_presentation.set_skills(_skill_state, SkillSettings.load_or_default())
 	_on_map_changed()
 	_sync_creation_screen()
 	_sync_player_visuals()
@@ -816,6 +825,8 @@ func _refresh_survival_hud() -> void:
 	lines.append_array(ClientPresentationFormatter.build_rest_lines(vitals, _presentation))
 	lines.append_array(ClientPresentationFormatter.build_posture_lines(vitals, _presentation))
 	lines.append_array(ClientPresentationFormatter.build_treat_target_lines(vitals, _player_label(_treat_target) if not _treat_target.is_empty() else "", _presentation))
+	if _skill_state != null:
+		lines.append_array(SkillPresentationFormatter.build_skill_lines(_skill_state.rows))
 	_survival_label.text = "\n".join(lines)
 	_survival_label.visible = true
 

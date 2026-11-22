@@ -28,6 +28,10 @@ var _candidate_valid: bool = false
 var _target_id: String = ""
 var _result_text: String = ""
 var _ghost_key: String = ""
+## F-9: the local building level, so the shown cost is what the server will
+## ask for (null = full costs).
+var _skill_state: ClientSkillState = null
+var _skill_settings: SkillSettings = null
 
 
 func _init(root: Node3D, hud: Label, settings: ClientPresentationSettings, building: BuildingSettings, catalog: StructureCatalog, items: ItemCatalog, module: StructureNetModule, world: ClientWorldState) -> void:
@@ -49,6 +53,24 @@ func _init(root: Node3D, hud: Label, settings: ClientPresentationSettings, build
 	_module.structure_result.connect(_on_structure_result)
 	_mirror.work_changed.connect(_on_work_changed)
 	_refresh_hud()
+
+
+## F-9: shows costs lowered by the local building level from now on.
+func set_skills(state: ClientSkillState, settings: SkillSettings) -> void:
+	_skill_state = state
+	_skill_settings = settings
+	if not _skill_state.changed.is_connected(_refresh_hud):
+		_skill_state.changed.connect(_refresh_hud)
+	_refresh_hud()
+
+
+## The costs of one piece for the local player (F-9: building level).
+func shown_costs(definition: StructureDefinition) -> Dictionary[String, int]:
+	if definition == null:
+		return {}
+	if _skill_state == null or _skill_settings == null:
+		return definition.build_costs
+	return SkillRules.reduced_costs(definition.build_costs, _skill_state.level_of(SkillService.SKILL_BUILDING), _skill_settings)
 
 
 ## Returns whether this frame's attack and pickup actions were consumed.
@@ -193,7 +215,7 @@ func _refresh_hud() -> void:
 	var definition: StructureDefinition = _catalog.get_definition(_selected_definition_id)
 	var mode: String = "켜짐" if _build_mode else "꺼짐"
 	var piece: String = definition.display_name if definition != null else _selected_definition_id
-	var cost: String = StructurePresentationFormatter.material_text(definition.build_costs if definition != null else {}, {}, _items)
+	var cost: String = StructurePresentationFormatter.material_text(shown_costs(definition), {}, _items)
 	var entry: Dictionary = _mirror.get_structure(_target_id) if not _target_id.is_empty() else {}
 	var shown_rotation: int = int(_candidate.get("rotation", _rotation_steps)) if _build_mode else _rotation_steps
 	var lines: PackedStringArray = PackedStringArray([

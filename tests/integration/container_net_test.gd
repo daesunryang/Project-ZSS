@@ -746,7 +746,7 @@ func test_a_search_takes_time_and_tells_nothing_until_it_is_over() -> void:
 # ------------------------------------------------------------ rules (no network)
 
 func test_rpc_table_settings_and_composition() -> void:
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 18, "the container RPCs are a protocol change (15, P3-3; 14 was P3-5)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 19, "the container RPCs are a protocol change (15, P3-3; 14 was P3-5)")
 	var shipped: ContainerNetSettings = ContainerNetSettings.load_or_default()
 	assert_eq(shipped.validate().size(), 0)
 	var config: CompositionConfig = CompositionConfig.from_defaults()

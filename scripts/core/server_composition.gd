@@ -54,6 +54,10 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# Survival only announces deaths; the zombie system decides. The world
 	# owns both systems, and the connection holds no reference to either.
 	survival.player_died.connect(zombies.on_player_died)
+	# F-9: player skill levels. Before building, which reads the levels for
+	# material costs and gives building experience. It does not step.
+	if world.register_system(SkillService.new(config.skills)) != OK:
+		return null
 	# P3-4a (docs/09 §15.4): grid structures. After the zombies, whose
 	# positions a placement looks at. It constrains the movement of players
 	# and zombies. P3-5 (docs/09 §15.5): its step() advances the work on
@@ -235,6 +239,12 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	# P3-3 (docs/09 §15.3): container intents, containers to the peers that
 	# are told about their cell, contents to whoever has one open. After the
 	# inventory module, whose pending save it flushes for a take or a put.
+	# F-9: the owner's skill levels (owner only, no client -> server RPC).
+	var skill_net: SkillNetModule = SkillNetModule.new(config.skills)
+	var skill_net_error: Error = service.register_module(skill_net)
+	if skill_net_error != OK:
+		skill_net.free()
+		return skill_net_error
 	var container_net: ContainerNetModule = ContainerNetModule.new(config.container_net, config.container_definitions)
 	var container_net_error: Error = service.register_module(container_net)
 	if container_net_error != OK:

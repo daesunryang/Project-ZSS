@@ -58,6 +58,9 @@ var structures: StructureCatalog
 var structure_net: StructureNetSettings
 ## P3-6 (bounded zombie path finding and structure line blocking).
 var navigation: NavigationSettings
+## F-9 (player skill levels): skill ids, level curve, material reduction
+## and experience per action (servers; clients for the HUD).
+var skills: SkillSettings
 ## P3-3 (containers, docs/09 §15.3): the container rules, the container
 ## definitions (servers and client mirrors) and the loot tables (servers).
 var containers: ContainerSettings
@@ -135,6 +138,7 @@ static func from_defaults() -> CompositionConfig:
 	config.structures = StructureCatalog.load_directory()
 	config.structure_net = StructureNetSettings.load_or_default()
 	config.navigation = NavigationSettings.load_or_default()
+	config.skills = SkillSettings.load_or_default()
 	config.containers = ContainerSettings.load_or_default()
 	config.container_definitions = ContainerCatalog.load_directory()
 	config.loot_tables = LootTableCatalog.load_directory()
@@ -224,6 +228,10 @@ func validate() -> PackedStringArray:
 	if navigation == null:
 		errors.append("composition config is incomplete (navigation)")
 		return errors
+	if skills == null:
+		errors.append("composition config is incomplete (skills)")
+		return errors
+	errors.append_array(skills.validate())
 	errors.append_array(building.validate())
 	errors.append_array(structures.validate_against(catalog))
 	errors.append_array(structure_net.validate())

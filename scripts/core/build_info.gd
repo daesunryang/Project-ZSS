@@ -126,7 +126,11 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ## 18: 2026-11-20 walk/run split. The movement intent adds a server-validated
 ##    `sprinting: bool`; clients still send direction/yaw only as intent and
 ##    never choose their speed or stamina result.
-const PROTOCOL_VERSION: int = 18
+## 19: F-9 player skill levels. New module SkillNet: the owner's skill rows
+##    in the join snapshot ("SkillNet" fragment) and _rpc_skill_snapshot to
+##    the owner on change. No client -> server RPC; no existing message
+##    changed (structure costs may now be lower than the definition's).
+const PROTOCOL_VERSION: int = 19
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"
