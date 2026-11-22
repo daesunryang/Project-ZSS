@@ -37,6 +37,7 @@ const DANGER_BOUND_CALENDAR_MIN: float = 30.0
 ## The same failure of one NPC in a row with nothing finished in between.
 const FAILURE_STREAK_BOUND: int = 3
 ## At least this often per NPC and calendar day.
+## "rest" is lying down: the nap (rest) and, since F-6, the night sleep.
 const MIN_PER_DAY: Dictionary = {"eat": 1, "drink": 2, "rest": 1, "work": 1}
 
 const SOAK_ENV: String = "ZSS_NPC_SOAK"
@@ -44,6 +45,12 @@ const SOAK_DAYS: int = 10
 
 var _root: String = ""
 var _cluster: NetTestCluster = null
+
+
+## How often an NPC did `action` on a day; "rest" counts the naps and the
+## night sleeps that ended by themselves (F-6).
+func _times(day: Dictionary, action: String) -> int:
+	return int(day[action]) + (int(day["sleep"]) if action == "rest" else 0)
 
 
 func before_each() -> void:
@@ -76,7 +83,7 @@ func _log_days(run: NpcLifeRun, tag: String) -> void:
 		var per_day: PackedStringArray = []
 		for index: int in range(run.days.size()):
 			var day: Dictionary = run.days[index][npc_id]
-			per_day.append("d%d eat %d drink %d rest %d(+%d cut) work %d wander %d failed %d worked %.1fh" % [index + 1, day["eat"], day["drink"], day["rest"], day["rest_cut"], day["work"], day["wander"], day["failed"], float(day["worked_usec"]) / 1000000.0 * 24.0 / 3600.0])
+			per_day.append("d%d eat %d drink %d sleep %d(+%d cut) nap %d(+%d cut) work %d wander %d failed %d worked %.1fh" % [index + 1, day["eat"], day["drink"], day["sleep"], day["sleep_cut"], day["rest"], day["rest_cut"], day["work"], day["wander"], day["failed"], float(day["worked_usec"]) / 1000000.0 * 24.0 / 3600.0])
 		var danger: PackedStringArray = []
 		for kind: String in NpcNeedKind.SIMULATED_KINDS:
 			danger.append("%s %.0f" % [kind, _calendar_min(int((run.danger_ticks[npc_id] as Dictionary).get(kind, 0)))])
@@ -159,7 +166,7 @@ func test_five_npcs_live_three_days_and_a_restarted_server_goes_on_the_same() ->
 		for index: int in range(DAYS):
 			var day: Dictionary = run.days[index][npc_id]
 			for action: String in MIN_PER_DAY:
-				assert_true(int(day[action]) >= int(MIN_PER_DAY[action]), "%s on day %d: %s %d times (at least %d)" % [npc_id, index + 1, action, int(day[action]), int(MIN_PER_DAY[action])])
+				assert_true(_times(day, action) >= int(MIN_PER_DAY[action]), "%s on day %d: %s %d times (at least %d)" % [npc_id, index + 1, action, _times(day, action), int(MIN_PER_DAY[action])])
 			assert_true(int(day["worked_usec"]) > 0, "%s worked on day %d" % [npc_id, index + 1])
 		for kind: String in NpcNeedKind.SIMULATED_KINDS:
 			var minutes: float = _calendar_min(int((run.danger_ticks[npc_id] as Dictionary).get(kind, 0)))
@@ -472,7 +479,7 @@ func test_soak_ten_calendar_days() -> void:
 			if empty_day < 0 or index < empty_day:
 				# With food: a whole life, as in the three days.
 				for action: String in MIN_PER_DAY:
-					assert_true(int(day[action]) >= int(MIN_PER_DAY[action]), "%s on day %d: %s %d times" % [npc_id, index + 1, action, int(day[action])])
+					assert_true(_times(day, action) >= int(MIN_PER_DAY[action]), "%s on day %d: %s %d times" % [npc_id, index + 1, action, _times(day, action)])
 			else:
 				# Without food (20 units per house and nothing refills them,
 				# docs/15 P4-213): what the rules say happens, not a stall. The
@@ -480,7 +487,7 @@ func test_soak_ten_calendar_days() -> void:
 				# when it cannot eat. An NPC whose hunger is in the danger
 				# category refuses to work (D3) and is woken by it (P4-172).
 				assert_true(int(day["drink"]) >= int(MIN_PER_DAY["drink"]), "%s on day %d without food: drink %d times" % [npc_id, index + 1, int(day["drink"])])
-				assert_true(int(day["rest"]) + int(day["rest_cut"]) >= 1, "%s on day %d without food: it lies down" % [npc_id, index + 1])
+				assert_true(int(day["rest"]) + int(day["rest_cut"]) + int(day["sleep"]) + int(day["sleep_cut"]) >= 1, "%s on day %d without food: it lies down" % [npc_id, index + 1])
 				assert_true(int(day["work"]) + int(day["wander"]) >= 1, "%s on day %d without food: it goes on with something" % [npc_id, index + 1])
 		for kind: String in [NpcNeedKind.THIRST, NpcNeedKind.FATIGUE]:
 			var minutes: float = _calendar_min(int((run.danger_ticks[npc_id] as Dictionary).get(kind, 0)))

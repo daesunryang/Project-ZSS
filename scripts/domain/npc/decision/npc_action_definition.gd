@@ -72,6 +72,17 @@ const ID_MAX_LENGTH: int = 32
 ## No candidate while any simulated need of the NPC is in the DANGER
 ## category (docs/13 §16.3 D3: "업무 거부").
 @export var blocked_by_danger_need: bool = false
+## The night sleep (F-6): a candidate only from the NPC's own bedtime
+## (NpcDefinition.bedtime_hour) for NpcDecisionSettings
+## .night_sleep_window_hours, and only until the NPC has finished it once in
+## that night (NpcDecisionComponent.last_sleep_night).
+@export var requires_bedtime: bool = false
+## A sleeper wakes on danger (F-6): no candidate while a simulated need
+## other than `need_kind` is in the DANGER category AND a selectable action
+## that answers that need is not on its retry cooldown (the NPC gets up to
+## eat or drink). When nothing can be done about the need (no such action,
+## or it just failed), the NPC may lie down all the same.
+@export var yields_to_danger_need: bool = false
 
 @export_group("Keeping")
 ## True: once started, the utility choice neither replaces nor stops the

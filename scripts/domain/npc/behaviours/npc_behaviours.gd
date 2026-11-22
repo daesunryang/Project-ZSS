@@ -1,7 +1,7 @@
 class_name NpcBehaviours
 extends NpcStage
 ## WHAT the basic actions do (P4-5b, docs/09 §17.8, docs/13 §16.3 D2 / D7 /
-## D10): eat, drink, rest, work, wander and flee. One NpcStage, stage id
+## D10): eat, drink, rest, sleep, work, wander and flee. One NpcStage, stage id
 ## "behaviours", added after the executor. It stands between the decision
 ## layer (P4-4), whose NpcActionExecutor contract it fulfils through
 ## NpcBehaviourExecutor (action_executor()), and the movement executor
@@ -26,7 +26,13 @@ extends NpcStage
 ##           falls over calendar time). It gets up by itself when its
 ##           fatigue is at most rest_until_fatigue (looked at every
 ##           rest_check_period_sec), or when the decision layer cancels the
-##           action (a visible zombie: the flee interrupt wins).
+##           action (a visible zombie: the flee interrupt wins). Since
+##           F-6 this is the nap.
+##   sleep   The night sleep (F-6, docs/09 §17.11). Like rest, with two
+##           differences: without a free bed the NPC walks to its home tile
+##           and sleeps there (without a home on this map: where it stands),
+##           and it gets up by itself only when its fatigue is at most
+##           sleep_until_fatigue (0).
 ##   work    Walks to the work spot of its work building and works there
 ##           for work_shift_sec ("working" for the need model: fatigue
 ##           rises faster). The time is added to the NPC's worked time.
@@ -80,10 +86,11 @@ const MAX_STOCKED: int = 4096
 const ACTION_EAT: String = "eat"
 const ACTION_DRINK: String = "drink"
 const ACTION_REST: String = "rest"
+const ACTION_SLEEP: String = "sleep"
 const ACTION_WORK: String = "work"
 const ACTION_WANDER: String = "wander"
 const ACTION_FLEE: String = "flee"
-const ACTIONS: PackedStringArray = [ACTION_EAT, ACTION_DRINK, ACTION_REST, ACTION_WORK, ACTION_WANDER, ACTION_FLEE]
+const ACTIONS: PackedStringArray = [ACTION_EAT, ACTION_DRINK, ACTION_REST, ACTION_SLEEP, ACTION_WORK, ACTION_WANDER, ACTION_FLEE]
 ## Count of an action that was cut short while it was being done:
 ## "<action id>_cut" (NpcBehaviourState.counts).
 const COUNT_CUT_SUFFIX: String = "_cut"
@@ -187,7 +194,9 @@ func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, action: NpcActio
 		ACTION_DRINK:
 			code = _begin_at_spot(npc, state, NpcSpotDefinition.KIND_WATER, definition.home_building_id if definition != null else "", npc.position, _settings.drink_duration_sec)
 		ACTION_REST:
-			code = _begin_rest(world, npc, state, definition)
+			code = _begin_rest(world, npc, state, definition, false)
+		ACTION_SLEEP:
+			code = _begin_rest(world, npc, state, definition, true)
 		ACTION_WORK:
 			code = _begin_at_spot(npc, state, NpcSpotDefinition.KIND_WORK, definition.work_building_id if definition != null else "", _place_of(definition, false, npc.position), _settings.work_shift_sec)
 		ACTION_WANDER:
@@ -309,9 +318,9 @@ func step(world: ServerWorld, npcs: NpcService, action_delta: float, _world_delt
 		match state.action_id:
 			ACTION_EAT:
 				_finish_eating(world, npcs, npc, state)
-			ACTION_REST:
+			ACTION_REST, ACTION_SLEEP:
 				var needs: NpcNeeds = _advanced_needs(world, npc)
-				if needs == null or needs.value(NpcNeedKind.FATIGUE) <= _settings.rest_until_fatigue:
+				if needs == null or needs.value(NpcNeedKind.FATIGUE) <= (_settings.sleep_until_fatigue if state.action_id == ACTION_SLEEP else _settings.rest_until_fatigue):
 					_executor.cancel(npc_id)
 					_finish(world, npcs, npc, state, {NpcNeedKind.FATIGUE: needs.value(NpcNeedKind.FATIGUE)} if needs != null else {})
 				else:
@@ -375,11 +384,19 @@ func _begin_eat(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, def
 	return NpcActionExecutor.FAIL_NO_RESOURCE
 
 
-func _begin_rest(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, definition: NpcDefinition) -> String:
+## Rest and sleep. `go_home` (the night sleep): without a bed the NPC walks
+## to its home tile first.
+func _begin_rest(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, definition: NpcDefinition, go_home: bool) -> String:
 	var picked: Dictionary = _pick_spot(npc.npc_id, NpcSpotDefinition.KIND_BED, definition.home_building_id if definition != null else "", _place_of(definition, true, npc.position))
 	if str(picked["code"]).is_empty():
 		var code: String = _use_spot(npc.npc_id, state, str(picked["spot"]), NpcExecutor.HOLD)
 		if code.is_empty():
+			return ""
+	if go_home:
+		# No bed for it: it sleeps on its home tile, when it has one here and
+		# is not there yet (the walk ends in _on_done).
+		var home: Vector3 = _place_of(definition, true, npc.position)
+		if _grid.tile_of(home) != _grid.tile_of(npc.position) and _move(npc.npc_id, state, home, false).is_empty():
 			return ""
 	# No bed for it: it rests where it stands.
 	_start_resting(world, npc, state)
@@ -509,7 +526,7 @@ func _on_arrived(world: ServerWorld, npcs: NpcService, npc: NpcState, state: Npc
 				_fail(world, npcs, npc, state, NpcActionExecutor.FAIL_NO_RESOURCE)
 				return
 			state.step = NpcBehaviourState.STEP_PERFORMING
-		ACTION_REST:
+		ACTION_REST, ACTION_SLEEP:
 			_start_resting(world, npc, state)
 		ACTION_WORK:
 			state.step = NpcBehaviourState.STEP_PERFORMING
@@ -532,6 +549,14 @@ func _on_done(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBeh
 			_finish(world, npcs, npc, state, {NpcNeedKind.THIRST: needs.value(NpcNeedKind.THIRST)} if needs != null else {})
 		ACTION_WORK:
 			_finish(world, npcs, npc, state, {INFO_WORKED: state.worked_usec})
+		ACTION_SLEEP:
+			if state.step == NpcBehaviourState.STEP_GOING and state.spot_id.is_empty():
+				# The walk home is over (no bed was free): it lies down there.
+				_start_resting(world, npc, state)
+				npcs.mark_npc_dirty(npc.npc_id)
+				_report(npc.npc_id, NpcActionExecutor.REPORT_ARRIVED)
+			else:
+				_finish(world, npcs, npc, state, {})
 		ACTION_WANDER:
 			if _settings.wander_linger_sec > 0.0:
 				state.step = NpcBehaviourState.STEP_PERFORMING
@@ -590,7 +615,7 @@ func _fail(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBehavi
 ## Whatever ends the action: the NPC is busy with nothing for the need
 ## model, and this stage forgets the action.
 func _end(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBehaviourState) -> void:
-	if state.step == NpcBehaviourState.STEP_PERFORMING and (state.action_id == ACTION_REST or state.action_id == ACTION_WORK):
+	if state.step == NpcBehaviourState.STEP_PERFORMING and (state.action_id == ACTION_REST or state.action_id == ACTION_SLEEP or state.action_id == ACTION_WORK):
 		_set_activity(world, npc, NpcNeedKind.IDLE)
 	state.clear_action()
 	if _running.erase(npc.npc_id):

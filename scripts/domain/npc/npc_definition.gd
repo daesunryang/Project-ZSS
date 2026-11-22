@@ -20,6 +20,7 @@ const AGE_GROUPS: PackedStringArray = ["young_adult", "adult", "middle_aged", "e
 ## docs/05 §12. "" = no job.
 const JOB_ROLES: PackedStringArray = ["guard", "farming", "cooking", "medical", "construction", "maintenance", "cleaning", "gathering", "hunting", "research", "animal_care"]
 const NAME_MAX_LENGTH: int = 32
+const HOURS_PER_DAY: float = 24.0
 const MAX_BACKGROUND_TAGS: int = 16
 
 ## Stable snake_case id. Saved with every NPC of this definition: never
@@ -72,6 +73,14 @@ const MAX_BACKGROUND_TAGS: int = 16
 @export var work_building_id: String = ""
 @export var work_tile_offset: Vector2i = Vector2i.ZERO
 
+@export_group("Sleep (F-6, docs/09 §17.11)")
+## The hour of the calendar day (0 <= hour < 24) at which the NPC goes to
+## bed: an early hour is a morning type, a late one (it may be past
+## midnight, e.g. 0.5) an evening type. The night sleep may begin from this
+## hour for NpcDecisionSettings.night_sleep_window_hours, once per night.
+## PROVISIONAL per NPC (docs/15 F6-001).
+@export_range(0.0, 23.99, 0.25, "suffix:h") var bedtime_hour: float = 22.0
+
 
 ## {trait name: value} of every personality trait, in PERSONALITY_TRAITS
 ## order.
@@ -120,6 +129,8 @@ func validate() -> PackedStringArray:
 			errors.append("npc %s: %s_building_id '%s' must be snake_case or empty" % [definition_id, row[0], building_id])
 		if offset.x < 0 or offset.y < 0:
 			errors.append("npc %s: %s_tile_offset must not be negative" % [definition_id, row[0]])
+	if not is_finite(bedtime_hour) or bedtime_hour < 0.0 or bedtime_hour >= HOURS_PER_DAY:
+		errors.append("npc %s: bedtime_hour must be within 0..24 (24 excluded)" % definition_id)
 	return errors
 
 

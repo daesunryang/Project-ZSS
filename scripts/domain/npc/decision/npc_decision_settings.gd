@@ -44,6 +44,13 @@ const DEFAULT_PATH: String = "res://data/tuning/npc_decision_settings.tres"
 ## Calendar seconds of one day (the hours of an action's window).
 @export_range(1.0, 10000000.0) var day_length_world_sec: float = 86400.0
 
+@export_group("Night sleep (F-6)")
+## For how many calendar hours after an NPC's bedtime
+## (NpcDefinition.bedtime_hour) its night sleep may still begin (an action
+## with `requires_bedtime`). An NPC that was kept up longer than this has
+## missed the night and only naps.
+@export_range(0.25, 24.0, 0.25, "suffix:h") var night_sleep_window_hours: float = 8.0
+
 @export_group("Decision records (debug overlay, tests)")
 ## Decision records kept per NPC (a ring: the oldest goes first). Not saved.
 @export_range(1, 1024) var record_capacity: int = 16
@@ -59,9 +66,11 @@ func validate() -> PackedStringArray:
 	for entry: Array in [["current_action_bonus", current_action_bonus], ["score_jitter", score_jitter]]:
 		if not is_finite(float(entry[1])) or float(entry[1]) < 0.0 or float(entry[1]) > 1.0:
 			errors.append("npc decision %s must be within 0..1" % str(entry[0]))
-	for entry: Array in [["threat_check_period_sec", threat_check_period_sec], ["day_length_world_sec", day_length_world_sec]]:
+	for entry: Array in [["threat_check_period_sec", threat_check_period_sec], ["day_length_world_sec", day_length_world_sec], ["night_sleep_window_hours", night_sleep_window_hours]]:
 		if not is_finite(float(entry[1])) or float(entry[1]) <= 0.0:
 			errors.append("npc decision %s must be > 0" % str(entry[0]))
+	if is_finite(night_sleep_window_hours) and night_sleep_window_hours > NpcActionDefinition.HOURS_PER_DAY:
+		errors.append("npc decision night_sleep_window_hours must be at most 24")
 	if errors.is_empty() and retry_cooldown_max_sec < retry_cooldown_sec:
 		errors.append("npc decision retry_cooldown_max_sec must be >= retry_cooldown_sec")
 	for entry: Array in [["fallback_action_id", fallback_action_id], ["flee_action_id", flee_action_id]]:

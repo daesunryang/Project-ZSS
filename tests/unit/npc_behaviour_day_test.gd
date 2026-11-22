@@ -190,10 +190,11 @@ func test_five_npcs_eat_drink_rest_and_work_through_a_calendar_day_by_themselves
 		var state: NpcBehaviourState = run.npcs().get_npc(npc_id).component(NpcBehaviourState.COMPONENT_ID) as NpcBehaviourState
 		var seen: PackedStringArray = PackedStringArray((run.labels[npc_id] as Dictionary).keys())
 		seen.sort()
-		var rests: int = state.count_of("rest") + state.count_of("rest_cut")
+		# Lying down: the naps (rest) and, since F-6, the night sleeps.
+		var rests: int = state.count_of("rest") + state.count_of("rest_cut") + state.count_of("sleep") + state.count_of("sleep_cut")
 		print("[npc day] %s %s: eat %d drink %d rest %d (%d to the end) work %d wander %d failed %d, worked %.0f s, highest hunger %.1f thirst %.1f fatigue %.1f, decisions %d, labels %s" % [
 			npc_id, run.npcs().get_npc(npc_id).definition_id,
-			state.count_of("eat"), state.count_of("drink"), rests, state.count_of("rest"), state.count_of("work"), state.count_of("wander"), state.count_of("failed"),
+			state.count_of("eat"), state.count_of("drink"), rests, state.count_of("rest") + state.count_of("sleep"), state.count_of("work"), state.count_of("wander"), state.count_of("failed"),
 			float(state.worked_usec) / 1000000.0,
 			float(run.highest[npc_id]["hunger"]), float(run.highest[npc_id]["thirst"]), float(run.highest[npc_id]["fatigue"]),
 			int(run.decision_counts[npc_id]), ",".join(seen)])
@@ -287,7 +288,7 @@ func test_the_same_seed_decides_the_same_and_a_restored_run_goes_on_as_one_that_
 	var expected_documents: Dictionary = _json(_npc_documents(run))
 	assert_true(run.decisions.size() > 500, "the NPCs decide: %d decisions" % run.decisions.size())
 	var happened: String = " ".join(run.events)
-	for what: String in ["finished", "drink", "work", "rest", "cancelled"]:
+	for what: String in ["finished", "drink", "work", "sleep", "cancelled"]:
 		assert_contains(happened, what, "the hours cover %s" % what)
 	# The same seed again: the same decisions and events in the same ticks.
 	var twin: Run = _begin()

@@ -17,11 +17,15 @@ extends NpcComponent
 ##            failures: {action_id: failures in a row},
 ##            last_failure: {} | {action_id, code, at_usec},
 ##            recover_until_usec: int (-1 = not recovering),
-##            decision_count: int}
+##            decision_count: int,
+##            last_sleep_night: int (-1 = none; schema 2, F-6)}
 ## The decision records (the ring the debug overlay reads) are NOT saved.
 
 const COMPONENT_ID: String = "decision"
-const SCHEMA_VERSION: int = 1
+## 2 (F-6): + last_sleep_night. A document of schema 1 is still read (it
+## has no night: the NPC has not slept yet).
+const SCHEMA_VERSION: int = 2
+const OLDEST_SCHEMA_VERSION: int = 1
 const NO_TIME: int = -1
 ## Largest time a document may hold (2^53 - 1, JSON-exact).
 const MAX_TIME: int = NpcScheduleComponent.NO_TIME
@@ -38,6 +42,7 @@ const KEY_FAILURES: String = "failures"
 const KEY_LAST_FAILURE: String = "last_failure"
 const KEY_RECOVER_UNTIL: String = "recover_until_usec"
 const KEY_DECISION_COUNT: String = "decision_count"
+const KEY_LAST_SLEEP_NIGHT: String = "last_sleep_night"
 const KEY_CODE: String = "code"
 const KEY_AT: String = "at_usec"
 
@@ -55,6 +60,9 @@ var last_failure: Dictionary = {}
 var recover_until_usec: int = NO_TIME
 ## Decisions made for this NPC so far (the sequence number of its records).
 var decision_count: int = 0
+## The night (NpcBedtime.night_of) whose night sleep this NPC has finished
+## (NpcBedtime.NO_NIGHT = none yet): it does not begin another one in it.
+var last_sleep_night: int = NpcBedtime.NO_NIGHT
 ## Transitions the state machine refused (a bug of the decider; tests
 ## expect 0). Not saved.
 var illegal_transition_count: int = 0
@@ -197,14 +205,19 @@ func to_document() -> Dictionary:
 		KEY_LAST_FAILURE: last_failure.duplicate(),
 		KEY_RECOVER_UNTIL: recover_until_usec,
 		KEY_DECISION_COUNT: decision_count,
+		KEY_LAST_SLEEP_NIGHT: last_sleep_night,
 	}
 
 
 func restore_document(document: Dictionary) -> PackedStringArray:
 	var errors: PackedStringArray = []
-	if not ItemInstance.is_integer_value(document.get(NpcComponent.KEY_SCHEMA_VERSION, null)) or int(document[NpcComponent.KEY_SCHEMA_VERSION]) != SCHEMA_VERSION:
+	if not ItemInstance.is_integer_value(document.get(NpcComponent.KEY_SCHEMA_VERSION, null)) or int(document[NpcComponent.KEY_SCHEMA_VERSION]) < OLDEST_SCHEMA_VERSION or int(document[NpcComponent.KEY_SCHEMA_VERSION]) > SCHEMA_VERSION:
 		errors.append("unsupported schema_version")
 		return errors
+	# Schema 1 (before F-6) has no night.
+	var saved_night: Variant = NpcBedtime.NO_NIGHT if int(document[NpcComponent.KEY_SCHEMA_VERSION]) < 2 else document.get(KEY_LAST_SLEEP_NIGHT, null)
+	if not _is_time(saved_night, NpcBedtime.NO_NIGHT):
+		errors.append("last_sleep_night must be a whole number >= -1")
 	var saved_state: Variant = document.get(KEY_STATE, null)
 	if typeof(saved_state) != TYPE_STRING or not NpcDecisionState.RESTING_STATES.has(str(saved_state)):
 		errors.append("state must be idle, navigate, perform or recover")
@@ -254,6 +267,7 @@ func restore_document(document: Dictionary) -> PackedStringArray:
 		last_failure = {KEY_ACTION_ID: str(saved_failure[KEY_ACTION_ID]), KEY_CODE: str(saved_failure[KEY_CODE]), KEY_AT: int(saved_failure[KEY_AT])}
 	recover_until_usec = int(document[KEY_RECOVER_UNTIL])
 	decision_count = int(document[KEY_DECISION_COUNT])
+	last_sleep_night = int(saved_night)
 	return errors
 
 

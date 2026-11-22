@@ -2821,6 +2821,7 @@ score = base
 | `drink` | eat / walk | 60 | 0 | thirst × 1.0 | - | - | 긴급도 ≥ 0.25 | 5초 |
 | `eat` | eat / walk | 50 | 0 | hunger × 1.0 | - | - | 긴급도 ≥ 0.25 | 5초 |
 | `rest` | sleep / walk | 40 | 0 | fatigue × 1.0 | - | 22~6시 × 0.3 | 긴급도 ≥ 0.3 | 30초 |
+| (F-6에서 바뀜) | | | | | | | `rest`는 낮잠(긴급도 ≥ 0.7, 시간대 없음)이 되고 밤잠 `sleep`이 생겼다: §17.11 | |
 | `work` | work / walk | 30 | 0.2 | - | conscientiousness × 0.1 | 8~18시 × 0.2 | 직업 있음, 위험 범주 욕구 없음 | 20초 |
 | `wander` | idle / walk | 10 | 0.1 | - | openness × 0.05 | - | - | 3초 |
 | `flee` | flee / flee | 100 | 1.0 | - | - | - | 후보 아님(하드 인터럽트만) | 0초, 재시도 2초 |
@@ -2865,7 +2866,7 @@ score = base
 | `failure` | `{}` 또는 `{action_id, code}` |
 | `target` | 실행기에 준 목표 |
 
-`runs_until_done`(P4-Z, `NpcActionDefinition`, 기본 꺼짐, 쉬기만 켬): 켜진 행동이 진행 중이면 Utility 선택이 바꾸거나 멈추지 않고 결정 기록 `outcome` 이 `until_done` 이다. 끝나는 것은 실행기의 완료·실패 보고, 하드 인터럽트(도주), 다른 욕구가 위험 범주에 든 때뿐이다(docs/15 P4-172).
+`runs_until_done`(P4-Z, `NpcActionDefinition`, 기본 꺼짐, 쉬기(낮잠)와 F-6의 밤잠 `sleep`만 켬. 밤잠·낮잠 규칙은 §17.11): 켜진 행동이 진행 중이면 Utility 선택이 바꾸거나 멈추지 않고 결정 기록 `outcome` 이 `until_done` 이다. 끝나는 것은 실행기의 완료·실패 보고, 하드 인터럽트(도주), 다른 욕구가 위험 범주에 든 때뿐이다(docs/15 P4-172).
 
 **저장(`decision` 구성 요소 문서, schema 1)**: `{state, action_id, action_started_at_usec, target, cooldowns: {action_id: 끝 시각}, failures: {action_id: 연속 횟수}, last_failure: {} | {action_id, code, at_usec}, recover_until_usec, decision_count}`. 시각은 전부 스케줄러 시계의 정수 µs(-1 = 없음)다. `restore_document`가 모양과 일관성(행동·시작 시각은 `navigate`·`perform`에만, `recover_until_usec`은 `recover`에만)을 검증한다. `recover_done`·`need_boundary`·`threat_seen` 인터럽트는 `schedule` 구성 요소(§17.3)에 저장된다.
 
@@ -3039,3 +3040,41 @@ systems.npc.stages.behaviours = {schema_version: 1, stocked: [spot_id]}
 **클라이언트 표시**: `ClientView`의 F4는 `NpcDebugPresentation`을 켜고 끈다. 열린 동안 카메라 중심에서 설정 반경 안에 가장 가까운 공개 NPC 이름표 하나(기본 최대 50m)를 고르고 그 ID만 구독한다. 패널은 상태·행동·목표·LOD, 실패/취소 사유, 상위 후보의 합계/항별 점수, 욕구 막대, 남은 waypoint 수와 다음 결정 시간을 한국어로 표시한다. 남은 경로는 NPC의 현재 위치에서 waypoint를 잇는 월드 선이다. 서버가 꺼져 있으면 `서버에서 디버그가 꺼져 있음`, 권한이 없으면 별도 권한 문구, 관심/메모리 밖이면 `NPC 없음`을 표시하고 경로를 지운다. 이 화면은 개발 진단이며 게임 속 정보 공개나 저장 상태가 아니다.
 
 **비용·테스트**: 꺼진 서버, 구독 없음, 조회/서비스 없음이면 서버 물리 틱이 즉시 끝난다. `tests/unit/npc_debug_query_test.gd`는 공개 조회 원천을 한 스냅샷으로 모으고 조회 전후 NPC 저장 상태가 같으며 텍스트 덤프가 여러 줄임을 검사한다. `tests/integration/npc_debug_net_test.gd`는 실제 ENet 서버 1 + 클라이언트 2에서 꺼짐/권한 없음의 조회 0회, 허용된 한 peer만 2Hz 수신, 다른 peer 미수신, 관심 밖의 `found=false`와 조회 0회, 해제·접속 종료 정리를 고정 틱으로 검사한다. 실제 창의 글자 배치와 경로선 미술은 확인하지 않았다.
+
+### 17.11 NPC 밤잠·낮잠(F-6, 행동 `sleep`·`rest`)
+
+FD-11("NPC마다 정해진 시각", 피로 0까지 잠)의 구현이다. 잠 빨리감기(F-5)와 기분대로 일하기(F-19)는 이 절에 없다. 수치는 모두 임시다(docs/15 §17.11, F6-001~F6-010). 전선 형식은 바뀌지 않았다(`PROTOCOL_VERSION` 그대로): 자는 NPC는 전부터 있던 행동 라벨 `sleep`으로 보인다(§17.5).
+
+**데이터**
+
+| 어디 | 값 | 뜻 |
+|---|---|---|
+| `NpcDefinition.bedtime_hour` | 0 이상 24 미만, 기본 22.0 | 그 NPC가 잠자리에 드는 달력 시각. 이른 값이 아침형, 늦은 값(자정을 넘겨 0.5 같은 값도 됨)이 저녁형. 개발용 NPC: 강말순 21.0, 오태식 21.5, 한서윤 22.0, 민지호 23.0, 류도현 0.5 |
+| `NpcDecisionSettings.night_sleep_window_hours` | 8.0 | 잠드는 시각부터 이만큼(달력 시간) 안에만 밤잠을 시작할 수 있다. 그보다 오래 깨어 있었으면 그 밤은 놓친 것이고 낮잠 규칙만 남는다 |
+| `NpcBehaviourSettings.sleep_until_fatigue` | 0.0 | 밤잠에서 스스로 일어나는 fatigue(낮잠은 전과 같이 `rest_until_fatigue` 5) |
+| `NpcActionDefinition.requires_bedtime` | `sleep`만 켬 | 아래 "밤잠" 선행조건 |
+| `NpcActionDefinition.yields_to_danger_need` | `sleep`·`rest` 켬 | 아래 "위험하면 깬다" |
+
+출하 행동 표(§17.6)에서 바뀐 줄과 새 줄:
+
+| action_id | 라벨(수행/이동) | 고정 우선순위 | base | 욕구 항 | 환경 항 | 선행조건 | 최소 지속 |
+|---|---|---|---|---|---|---|---|
+| `sleep`(새로) | sleep / walk | 45 | 0.55 | fatigue × 0.5 | - | 긴급도 ≥ 0.1, `requires_bedtime`, `yields_to_danger_need`, `runs_until_done` | 30초 |
+| `rest`(낮잠이 됨) | sleep / walk | 40 | 0 | fatigue × 1.0 | 없앰(전에는 22~6시 × 0.3) | 긴급도 ≥ **0.7**(전에는 0.3), `yields_to_danger_need`, `runs_until_done` | 30초 |
+
+**밤(`NpcBedtime`, 순수 함수)**: "밤"은 잠드는 시각에서 다음 잠드는 시각까지의 달력 하루다. `night_of(world_time, day_length, bedtime_hour)`는 그 번호(월드 첫 잠드는 시각 전이 0, 그 뒤 1, 2, …), `is_bedtime(world_time, day_length, bedtime_hour, window_hours)`는 잠드는 시각부터 창 길이 안인지다. 둘 다 행동 시간대와 같은 여유(`NpcUtilityScorer.HOUR_EPSILON`)를 둬서, 저장이 달력 시각 끝자리를 반올림해도 경계 틱의 결정이 갈리지 않는다.
+
+**밤잠(`sleep`)**: `requires_bedtime` 행동은 (1) 지금이 그 NPC의 `is_bedtime`이고 (2) `NpcDecisionComponent.last_sleep_night`가 지금의 `night_of`보다 작을 때만 후보다. 아니면 결정 기록의 거부 사유가 `not_bedtime` / `slept_tonight`이다. 실행기가 밤잠의 완료(`action_done`)를 보고하면 결정 함수가 `last_sleep_night`에 그 밤 번호를 적는다. 그래서 **하룻밤에 한 번**이고, 중간에 끊긴 밤잠(도주, 목마름)은 적히지 않아 같은 밤 창 안에서 다시 잠자리로 돌아간다. 잠드는 시각에 맞춘 타이머는 따로 없다: 평소 결정 주기(가까운 NPC 2초, 먼 NPC 10초 = 달력 48초~4분)에 후보가 된다. `runs_until_done`이라 한번 잠들면 자기 선행조건(긴급도 0.1)과 다른 후보를 다시 보지 않고, 실행 계층이 `rest_check_period_sec`마다 보다가 fatigue ≤ `sleep_until_fatigue`(0)일 때 끝낸다. 점수는 잠드는 시각에 fatigue 0.7 이상이어도 낮잠보다 밤잠이 높게 잡았다(0.55 + 0.5f > f + 흔들림 0.02).
+
+**자는 곳**(`NpcBehaviours`, §17.8): 쉬기와 같이 비어 있는 bed 지점(자기 집 건물 먼저, 집 타일에 가까운 것)으로 걸어가 눕는다. 빈 침대가 없으면 낮잠은 전처럼 제자리에서 자고, **밤잠은 집 타일(`home_building_id` + `home_tile_offset`)까지 걸어가서** 잔다(이미 그 타일이거나 이 맵에 집이 없으면 제자리). 걷는 동안은 `walk`, 누우면 `sleep` 라벨이고 `NpcNeeds` 활동이 `resting`이 된다. 횟수는 `counts.sleep` / `counts.sleep_cut`으로 따로 센다.
+
+**낮잠(`rest`)**: 밤잠과 상관없이 fatigue 긴급도 0.7(= 70, 주의 40과 위험 75 사이) 이상일 때만 후보다. 시간대 항은 없앴다. 일어나는 기준은 전과 같다(fatigue ≤ 5). **밤잠을 시작할 수 있는 동안에는 낮잠이 후보가 아니다**(거부 사유 `bedtime_now`): 잠드는 시각에 많이 피곤해도 낮잠이 아니라 밤잠을 자고, 자고 있던 낮잠은 잠드는 시각이 되면 `runs_until_done` 보호가 풀려 밤잠으로 바뀐다(침대에서 일어났다가 다시 눕는다). 이게 없으면 잠드는 시각 직전에 시작한 낮잠이 끝날 때까지(달력 2시간쯤) 잠드는 시각이 밀린다.
+
+**위험하면 깬다**: 플레이어의 잠(§14.25: 체력·목마름·배고픔·감염 위험에 깨고, 그 위험 중에는 눕지 못함)에 맞춘 것이다. NPC에게는 체력·감염이 아직 없다(F-25).
+- 보이는 좀비: 전부터 있던 하드 인터럽트(§17.6)가 자는 NPC도 깨워 도주시킨다. 시야 규칙은 깨어 있을 때와 같다(15m, 구조물이 가리면 못 봄, 방향 없음). 위협 센서가 0.5초마다 본다.
+- 다른 욕구(목마름·배고픔)가 위험 범주(75)에 듦: 욕구 경계 인터럽트로 결정이 오고, `runs_until_done` 보호가 풀려 평소 선택으로 간다(P4-172). `yields_to_danger_need` 행동은 그때 "그 욕구에 답하는 선택 가능한 행동이 재시도 쿨다운 중이 아니면" 후보가 아니다(`need_in_danger`). 그래서 일어나 마시거나 먹고, 끝나면 같은 밤이면 다시 잔다. 먹을 것이 없어 먹기가 방금 실패했으면(쿨다운 중) 굶은 채로 다시 눕는다: 잠을 영영 못 자는 일은 없다. 쿨다운이 끝나면 다시 깨서 먹으러 가 본다.
+- 최소 지속(30초) 안에는 욕구 위험으로 깨지 않는다(하드 인터럽트는 깨운다).
+
+**저장**: `decision` 구성 요소 스키마 2. `last_sleep_night`(정수, -1 = 아직 없음)가 더해졌다. 스키마 1 문서(이 키 없음)는 그대로 읽고 -1로 둔다. 진행 중인 밤잠·낮잠은 전부터 저장되던 `decision.action_id`·`behaviour`(행동, 단계, 타이머, 지점)와 `needs.activity`로 복구된다. 새 월드 문서는 없다.
+
+**테스트**: `tests/unit/npc_decision_test.gd`의 F-6 절(밤 번호와 창, 출하 데이터, 아침형·저녁형이 각자 시각에 잠자리에 듦, 끝까지 자고 하룻밤에 한 번·낮잠 문턱, 위험에 깨고 다시 잠, 저장·옛 스키마), `tests/unit/npc_behaviour_test.gd`(밤잠은 fatigue 0까지·낮잠은 5까지, 침대 없으면 집 타일), `tests/unit/npc_sleep_test.gd`(전용 서버 조립에서 개발용 NPC 5명의 첫 하루와 그 밤).

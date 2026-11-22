@@ -41,3 +41,4 @@ home_building_id = "house_b"
 home_tile_offset = Vector2i(1, 1)
 work_building_id = "warehouse"
 work_tile_offset = Vector2i(3, 3)
+bedtime_hour = 21.5

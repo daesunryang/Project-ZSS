@@ -16,5 +16,6 @@ flee_action_id = "flee"
 threat_sight_range_m = 15.0
 threat_check_period_sec = 0.5
 day_length_world_sec = 86400.0
+night_sleep_window_hours = 8.0
 record_capacity = 16
 record_top_candidates = 5

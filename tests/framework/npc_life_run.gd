@@ -17,7 +17,7 @@ extends RefCounted
 const NEVER: float = 1.0e9
 const OBSERVER: String = "alice"
 ## The actions whose counts are kept per calendar day.
-const COUNTED: PackedStringArray = ["eat", "drink", "rest", "rest_cut", "work", "wander", "failed"]
+const COUNTED: PackedStringArray = ["eat", "drink", "rest", "rest_cut", "sleep", "sleep_cut", "work", "wander", "failed"]
 
 var world: ServerWorld = null
 var persistence: WorldPersistence = null

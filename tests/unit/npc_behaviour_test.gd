@@ -629,6 +629,13 @@ func test_a_world_without_spots_has_nowhere_to_go_but_rest_and_wander_still_work
 	assert_eq(_begin(started, npc_id, NpcBehaviours.ACTION_REST), "", "resting needs no bed")
 	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.RESTING)
 	_cancel(started, npc_id)
+	# Neither does the night sleep of an NPC without a home on this map.
+	var stood: Vector3 = _position(world, npc_id)
+	assert_eq(_begin(started, npc_id, NpcBehaviours.ACTION_SLEEP), "", "sleeping needs no bed")
+	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.RESTING)
+	assert_eq(_position(world, npc_id), stood)
+	_cancel(started, npc_id)
+	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.IDLE)
 	assert_eq(_begin(started, npc_id, NpcBehaviours.ACTION_WANDER), "")
 	_until_told(world, npc_id, DONE)
 
@@ -794,3 +801,86 @@ func test_an_action_and_what_the_npc_carries_survive_a_restart_and_a_cell_unload
 	assert_eq(second.inventory.item_count(), items_before - 1)
 	assert_null(second.inventory.get_item(kept_id))
 	assert_true(second.registry.is_tombstoned(kept_id), "its id is never used again")
+
+
+# ------------------------------------------------------------ F-6: the night sleep
+
+func test_the_night_sleep_lasts_until_fatigue_is_zero() -> void:
+	var started: Dictionary = _start([Vector3(5.5, 0.0, 3.5), Vector3(6.5, 0.0, 8.5)])
+	var world: ServerWorld = started["world"]
+	var executor: NpcExecutor = started["executor"]
+	var sleeper: String = started["ids"][0]
+	var napper: String = started["ids"][1]
+	# 9 calendar hours: fatigue 50.
+	_run(world, 9 * HOUR_TICKS)
+	assert_true(is_equal_approx(_need(world, sleeper, NpcNeedKind.FATIGUE), 50.0))
+	assert_eq(_begin(started, sleeper, NpcBehaviours.ACTION_SLEEP), "")
+	assert_eq(_needs(world, sleeper).activity(), NpcNeedKind.IDLE, "not resting before it lies down")
+	_until_told(world, sleeper, ARRIVED)
+	assert_eq(_position(world, sleeper), _tile_centre(BED_TILE), "it sleeps in the bed")
+	assert_eq(_needs(world, sleeper).activity(), NpcNeedKind.RESTING)
+	assert_eq(executor.holder_of(BED), sleeper)
+	# A nap beside it, for comparison: that one gets up at fatigue 5.
+	assert_eq(_begin(started, napper, NpcBehaviours.ACTION_REST), "")
+	_until_told(world, napper, DONE, 400)
+	assert_false(_recorder.told(sleeper).has(DONE), "the nap is over, the night sleep is not")
+	assert_true(_need(world, sleeper, NpcNeedKind.FATIGUE) > 0.0)
+	_until_told(world, sleeper, DONE, 400)
+	assert_eq(_events.log, PackedStringArray(["started %s sleep" % sleeper, "started %s rest" % napper, "finished %s rest" % napper, "finished %s sleep" % sleeper]))
+	var nap_end: float = float(_events.infos[0][NpcNeedKind.FATIGUE])
+	assert_true(nap_end > 0.0 and nap_end <= _behaviour.rest_until_fatigue, "the nap ended at %f" % nap_end)
+	assert_eq(float(_events.infos[1][NpcNeedKind.FATIGUE]), 0.0, "the night sleep ended at fatigue 0")
+	assert_eq(_needs(world, sleeper).activity(), NpcNeedKind.IDLE)
+	assert_eq(executor.holder_of(BED), "", "the bed is free")
+	assert_false(executor.is_busy(sleeper))
+	assert_eq(_state(world, sleeper).count_of(NpcBehaviours.ACTION_SLEEP), 1)
+	assert_eq(_state(world, sleeper).count_of(NpcBehaviours.ACTION_REST), 0)
+	# A sleep that is cut (the flee interrupt) is counted as cut, and the
+	# NPC is awake at once.
+	assert_eq(_begin(started, sleeper, NpcBehaviours.ACTION_SLEEP), "")
+	_until_told(world, sleeper, ARRIVED)
+	_run(world, 5)
+	_cancel(started, sleeper)
+	assert_eq(_needs(world, sleeper).activity(), NpcNeedKind.IDLE)
+	assert_eq(executor.holder_of(BED), "")
+	assert_eq(_state(world, sleeper).count_of(NpcBehaviours.ACTION_SLEEP + NpcBehaviours.COUNT_CUT_SUFFIX), 1)
+	assert_eq(_state(world, sleeper).count_of(NpcBehaviours.ACTION_SLEEP), 1)
+
+
+func test_without_a_free_bed_the_night_sleep_is_on_the_home_tile() -> void:
+	var empty: NpcSpotSet = NpcSpotSet.new()
+	empty.spot_set_id = "no_spots"
+	var config: CompositionConfig = _config(_recorder, empty)
+	config.map_content = MapContentDefinition.load_or_null()
+	assert_not_null(config.map_content, "test setup: the shipped map")
+	var homer: NpcDefinition = NpcDefinition.new()
+	homer.definition_id = "t45b_homer"
+	homer.display_name = "집돌이"
+	homer.home_building_id = "house_b"
+	homer.home_tile_offset = Vector2i(3, 2)
+	config.npc_definitions.add(homer)
+	var home: Variant = NpcRoster.spot_position(config.map_content, StructureGrid.new(config.building.grid_module_m), homer.home_building_id, homer.home_tile_offset)
+	assert_not_null(home, "test setup: the home tile")
+	var world: ServerWorld = ServerComposition.create_world(WORLD, config)
+	(world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService).set_store(WorldCellStore.new())
+	world.join("alice")
+	world.step_systems(TICK)
+	var spawned: ActionResult = _npcs(world).spawn_npc(world, homer.definition_id, (home as Vector3) + Vector3(4.0, 0.0, 0.0))
+	assert_true(spawned.ok, "test setup: npc: " + spawned.reason)
+	var npc_id: String = str(spawned.event.get(NpcService.KEY_NPC_ID, ""))
+	var started: Dictionary = {"world": world, "behaviours": _recorder.behaviours()}
+	assert_eq(_begin(started, npc_id, NpcBehaviours.ACTION_SLEEP), "")
+	assert_eq(_state(world, npc_id).step, NpcBehaviourState.STEP_GOING, "it walks home first")
+	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.IDLE)
+	assert_false(_recorder.told(npc_id).has(ARRIVED))
+	_until_told(world, npc_id, ARRIVED, 400)
+	assert_true(_recorder.told(npc_id).has(ARRIVED), "it arrived")
+	assert_true(_position(world, npc_id).distance_to(home as Vector3) < 0.01, "it sleeps on its home tile: %s" % str(_position(world, npc_id)))
+	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.RESTING)
+	assert_eq(_state(world, npc_id).step, NpcBehaviourState.STEP_PERFORMING)
+	assert_false(_recorder.told(npc_id).has(DONE))
+	# Already at home: it lies down where it stands.
+	_cancel(started, npc_id)
+	assert_eq(_begin(started, npc_id, NpcBehaviours.ACTION_SLEEP), "")
+	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.RESTING, "no walk: it is at home")
+	_cancel(started, npc_id)

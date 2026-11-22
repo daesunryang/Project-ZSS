@@ -18,6 +18,13 @@ const NEVER: float = 1.0e9
 ## An NPC with a job and one without.
 const WORKER: String = "t44_worker"
 const DRIFTER: String = "t44_drifter"
+## F-6: a morning type (bedtime 21:00) and an evening type (00:30).
+const LARK: String = "t44_lark"
+const OWL: String = "t44_owl"
+const LARK_BEDTIME: float = 21.0
+const OWL_BEDTIME: float = 0.5
+const HOUR_SEC: float = 3600.0
+const CHORES: String = "chores"
 const WALL: String = "dev_wall"
 const SPAWN: Vector3 = Vector3(5.5, 0.0, 5.5)
 ## 3 m west of the player: near.
@@ -28,6 +35,7 @@ const USEC: int = NpcScheduleSettings.USEC_PER_SEC
 const EAT: String = "eat"
 const DRINK: String = "drink"
 const REST: String = "rest"
+const SLEEP: String = "sleep"
 const WORK: String = "work"
 const WANDER: String = "wander"
 const FLEE: String = "flee"
@@ -220,6 +228,12 @@ func _config(decider: NpcDecider) -> CompositionConfig:
 	drifter.definition_id = DRIFTER
 	drifter.display_name = "떠돌이"
 	config.npc_definitions.add(drifter)
+	for entry: Array in [[LARK, "아침형", LARK_BEDTIME], [OWL, "저녁형", OWL_BEDTIME]]:
+		var sleeper: NpcDefinition = NpcDefinition.new()
+		sleeper.definition_id = str(entry[0])
+		sleeper.display_name = str(entry[1])
+		sleeper.bedtime_hour = float(entry[2])
+		config.npc_definitions.add(sleeper)
 	config.npc_needs = _needs
 	config.npc_schedule = _schedule
 	config.npc_decision = _settings
@@ -352,7 +366,7 @@ func test_the_shipped_actions_and_settings_are_valid_and_bad_data_is_refused() -
 	var actions: NpcActionCatalog = NpcActionCatalog.load_directory()
 	assert_eq(shipped.validate().size(), 0, ", ".join(shipped.validate()))
 	assert_eq(shipped.validate_against(actions).size(), 0, ", ".join(shipped.validate_against(actions)))
-	assert_eq(actions.action_ids(), PackedStringArray([DRINK, EAT, FLEE, REST, WANDER, WORK]), "the six actions, sorted")
+	assert_eq(actions.action_ids(), PackedStringArray([DRINK, EAT, FLEE, REST, SLEEP, WANDER, WORK]), "the seven actions, sorted")
 	assert_false(actions.get_action(FLEE).selectable, "only the hard interrupt starts the flee action")
 	assert_eq(shipped.fallback_action_id, WANDER)
 	assert_eq(shipped.flee_action_id, FLEE)
@@ -504,7 +518,7 @@ func test_a_decision_component_saves_what_it_holds_and_refuses_a_broken_document
 	assert_eq(restored.decision_count, 12)
 	# Broken documents change nothing.
 	var breakers: Array[Callable] = [
-		func(d: Dictionary) -> void: d[NpcComponent.KEY_SCHEMA_VERSION] = 2,
+		func(d: Dictionary) -> void: d[NpcComponent.KEY_SCHEMA_VERSION] = NpcDecisionComponent.SCHEMA_VERSION + 1,
 		func(d: Dictionary) -> void: d["state"] = "evaluate",
 		func(d: Dictionary) -> void: d["state"] = "idle",
 		func(d: Dictionary) -> void: d["action_id"] = "",
@@ -566,7 +580,7 @@ func test_a_hungry_npc_chooses_to_eat_and_the_record_says_why() -> void:
 	var world: ServerWorld = started["world"]
 	var npc_id: String = started["id"]
 	var npc: NpcState = _npcs(world).get_npc(npc_id)
-	_set_needs(world, npc_id, 0.7, 0.1, 0.1)
+	_set_needs(world, npc_id, 0.7, 0.1, 0.05)
 	var record: Dictionary = _decide_now(world, npc_id)
 	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], EAT)
 	assert_eq(record[NpcUtilityDecider.KEY_OUTCOME], NpcUtilityDecider.OUTCOME_STARTED)
@@ -595,6 +609,7 @@ func test_a_hungry_npc_chooses_to_eat_and_the_record_says_why() -> void:
 	# Why the others are no candidates.
 	assert_eq(_rejection(record, DRINK), NpcUtilityDecider.REJECT_NEED_LOW)
 	assert_eq(_rejection(record, REST), NpcUtilityDecider.REJECT_NEED_LOW)
+	assert_eq(_rejection(record, SLEEP), NpcUtilityDecider.REJECT_NEED_LOW, "it is night, but it is not tired at all")
 	assert_eq(_rejection(record, WORK), NpcUtilityDecider.REJECT_NO_JOB)
 	assert_eq(_rejection(record, FLEE), NpcUtilityDecider.REJECT_NOT_SELECTABLE)
 	# On the way it "walks"; where the food is it "eats".
@@ -833,10 +848,10 @@ func test_an_action_that_runs_until_done_outlives_its_own_precondition() -> void
 	_run(world, 12)
 	assert_eq(state.action_id, FLEE, "a visible zombie ends the nap")
 	assert_eq(state.last_record()[NpcUtilityDecider.KEY_HARD_INTERRUPT], NpcUtilityDecider.HARD_THREAT)
-	# The shipped rest is such an action; nothing else is.
+	# The shipped nap (rest) and night sleep are such actions; nothing else is.
 	var shipped: NpcActionCatalog = NpcActionCatalog.load_directory()
 	for action_id: String in shipped.action_ids():
-		assert_eq(shipped.get_action(action_id).runs_until_done, action_id == REST, "shipped %s" % action_id)
+		assert_eq(shipped.get_action(action_id).runs_until_done, action_id == REST or action_id == SLEEP, "shipped %s" % action_id)
 
 
 func test_an_npc_without_a_candidate_falls_back_or_stands_idle() -> void:
@@ -1364,3 +1379,335 @@ func test_measure_the_decisions_of_25_npcs() -> void:
 		sensor.size(), _decider.threat_sensor().check_count, float(sensor[sensor.size() / 2]) / 1000.0, float(sensor[sensor.size() - 1]) / 1000.0])
 	assert_time_bound(median_ms, 1.0, "NPC stages with decisions, median")
 	assert_time_bound(worst_ms, 2.0, "NPC stages with decisions, worst")
+
+
+# ------------------------------------------------------------ F-6: the night sleep and naps
+
+## The shipped night sleep, nap (rest), eat and drink without their minimum
+## durations, the shipped flee action, and "chores": what an NPC does when
+## nothing else calls.
+func _use_sleep_rules() -> void:
+	var shipped: NpcActionCatalog = NpcActionCatalog.load_directory()
+	for action_id: String in [SLEEP, REST, EAT, DRINK, FLEE]:
+		var action: NpcActionDefinition = shipped.get_action(action_id).duplicate() as NpcActionDefinition
+		action.min_duration_sec = 0.0
+		_add(action)
+	_add(_action(CHORES, 0.2))
+
+
+## Puts the calendar at `hour` (hours since the world began; forward only).
+func _set_hour(world: ServerWorld, hour: float) -> void:
+	assert_true(hour * HOUR_SEC >= world.clock.world_time_sec, "test setup: the calendar only goes forward")
+	assert_eq(world.clock.restore(hour * HOUR_SEC), OK)
+
+
+## A world whose calendar says `hour`, with a player and one NPC of
+## `definition_id` whose fatigue is `fatigue` (0..1): {world, id}.
+func _start_at(hour: float, definition_id: String, fatigue: float = 0.5) -> Dictionary:
+	var world: ServerWorld = _world()
+	_set_hour(world, hour)
+	world.join("alice")
+	world.step_systems(TICK)
+	var npc_id: String = _spawn(world, definition_id, NPC_SPOT)
+	_set_needs(world, npc_id, 0.0, 0.0, fatigue)
+	return {"world": world, "id": npc_id}
+
+
+func test_nights_are_counted_from_bedtime_to_bedtime() -> void:
+	var day: float = 86400.0
+	# Bedtime 21:00, window 8 h: bedtime until 05:00.
+	for entry: Array in [[20.99, false, 0], [21.0, true, 1], [23.5, true, 1], [24.0 + 4.99, true, 1], [24.0 + 5.0, false, 1], [24.0 + 20.99, false, 1], [24.0 + 21.0, true, 2], [10.0 * 24.0 + 22.0, true, 11]]:
+		var time: float = float(entry[0]) * HOUR_SEC
+		assert_eq(NpcBedtime.is_bedtime(time, day, 21.0, 8.0), bool(entry[1]), "bedtime 21 at hour %.2f" % float(entry[0]))
+		assert_eq(NpcBedtime.night_of(time, day, 21.0), int(entry[2]), "night of hour %.2f for bedtime 21" % float(entry[0]))
+	# Bedtime 00:30 (an evening type): the window is inside one calendar day.
+	for entry: Array in [[0.0, false, 0], [0.49, false, 0], [0.5, true, 1], [8.49, true, 1], [8.5, false, 1], [23.99, false, 1], [24.5, true, 2]]:
+		var time: float = float(entry[0]) * HOUR_SEC
+		assert_eq(NpcBedtime.is_bedtime(time, day, 0.5, 8.0), bool(entry[1]), "bedtime 0.5 at hour %.2f" % float(entry[0]))
+		assert_eq(NpcBedtime.night_of(time, day, 0.5), int(entry[2]), "night of hour %.2f for bedtime 0.5" % float(entry[0]))
+	# A save rounds the calendar time: a hair before the bedtime is the bedtime.
+	assert_true(NpcBedtime.is_bedtime(21.0 * HOUR_SEC - 0.000001, day, 21.0, 8.0))
+	assert_eq(NpcBedtime.night_of(21.0 * HOUR_SEC - 0.000001, day, 21.0), 1)
+	# A window of the whole day, no window, and nonsense.
+	assert_true(NpcBedtime.is_bedtime(15.0 * HOUR_SEC, day, 21.0, 24.0))
+	assert_false(NpcBedtime.is_bedtime(22.0 * HOUR_SEC, day, 21.0, 0.0))
+	assert_false(NpcBedtime.is_bedtime(22.0 * HOUR_SEC, day, NAN, 8.0))
+	assert_eq(NpcBedtime.night_of(NAN, day, 21.0), 0)
+	assert_eq(NpcBedtime.night_of(1000.0, 0.0, 21.0), 0)
+
+
+func test_the_shipped_sleep_data_is_valid_and_bad_bedtimes_are_refused() -> void:
+	var actions: NpcActionCatalog = NpcActionCatalog.load_directory()
+	var sleep: NpcActionDefinition = actions.get_action(SLEEP)
+	var nap: NpcActionDefinition = actions.get_action(REST)
+	assert_true(sleep.requires_bedtime and sleep.runs_until_done and sleep.yields_to_danger_need, "the night sleep")
+	assert_eq(sleep.need_kind, NpcNeedKind.FATIGUE)
+	assert_eq(sleep.observable_label, "sleep")
+	assert_false(sleep.has_window(), "the bedtime is the NPC's, not the action's")
+	assert_true(not nap.requires_bedtime and nap.runs_until_done and nap.yields_to_danger_need, "the nap")
+	assert_eq(nap.observable_label, "sleep")
+	assert_false(nap.has_window())
+	# The nap threshold (docs/15 F6-003): fatigue 70 of 100, between caution and danger.
+	var needs: NpcNeedSettings = NpcNeedSettings.load_or_default()
+	assert_eq(nap.min_need_urgency, 0.7)
+	assert_true(nap.min_need_urgency * needs.need_max > needs.caution_threshold and nap.min_need_urgency * needs.need_max < needs.danger_threshold)
+	assert_true(sleep.min_need_urgency < nap.min_need_urgency)
+	# At its bedtime a tired NPC prefers the night sleep to a nap, whatever
+	# the jitter says.
+	var settings: NpcDecisionSettings = NpcDecisionSettings.load_or_default()
+	for fatigue: float in [0.7, 0.85, 1.0]:
+		var slept: float = float(NpcUtilityScorer.score(sleep, settings, fatigue, 0.0, 0.0, 0.0, 0.0, false, 0.0)[NpcUtilityScorer.KEY_SCORE])
+		var napped: float = float(NpcUtilityScorer.score(nap, settings, fatigue, 0.0, 0.0, 0.0, 0.0, false, 1.0)[NpcUtilityScorer.KEY_SCORE])
+		assert_true(slept > napped, "fatigue %.2f: sleep %f, nap %f" % [fatigue, slept, napped])
+	assert_true(settings.night_sleep_window_hours > 0.0 and settings.night_sleep_window_hours <= 24.0)
+	assert_eq(NpcBehaviourSettings.load_or_default().sleep_until_fatigue, 0.0, "FD-11: until fatigue is 0")
+	assert_eq(NpcBehaviourSettings.load_or_default().validate().size(), 0)
+	# Every dev NPC has a bedtime; there are morning and evening types.
+	var definitions: NpcCatalog = CompositionConfig.from_defaults().npc_definitions
+	var bedtimes: Dictionary = {}
+	for definition_id: String in definitions.definition_ids():
+		var definition: NpcDefinition = definitions.get_definition(definition_id)
+		assert_eq(definition.validate().size(), 0, ", ".join(definition.validate()))
+		bedtimes[definition.bedtime_hour] = true
+	assert_true(bedtimes.size() >= 3, "the dev NPCs go to bed at different hours: %s" % str(bedtimes.keys()))
+	assert_true(bedtimes.keys().min() < 12.0 and bedtimes.keys().max() >= 21.0, "one of them goes to bed after midnight")
+	# Bad values.
+	for bad_hour: float in [-0.5, 24.0, 30.0, NAN, INF]:
+		var broken: NpcDefinition = NpcDefinition.new()
+		broken.definition_id = "t44_broken"
+		broken.display_name = "고장"
+		assert_eq(broken.validate().size(), 0)
+		broken.bedtime_hour = bad_hour
+		assert_eq(broken.validate().size(), 1, "bedtime %f is refused" % bad_hour)
+	for bad_window: float in [0.0, -1.0, 24.5, NAN]:
+		var bad: NpcDecisionSettings = NpcDecisionSettings.new()
+		bad.night_sleep_window_hours = bad_window
+		assert_true(bad.validate().size() >= 1, "window %f is refused" % bad_window)
+	var bad_behaviour: NpcBehaviourSettings = NpcBehaviourSettings.new()
+	bad_behaviour.sleep_until_fatigue = -1.0
+	assert_eq(bad_behaviour.validate().size(), 1)
+
+
+func test_an_npc_goes_to_bed_at_its_own_bedtime_a_morning_type_before_an_evening_type() -> void:
+	_use_sleep_rules()
+	var world: ServerWorld = _world()
+	_set_hour(world, 20.5)
+	world.join("alice")
+	world.step_systems(TICK)
+	var lark: String = _spawn(world, LARK, NPC_SPOT)
+	var owl: String = _spawn(world, OWL, NPC_SPOT + Vector3(0.0, 0.0, 1.0))
+	# 20:30, both half tired: nobody's bedtime, and not tired enough for a nap.
+	for npc_id: String in [lark, owl]:
+		_set_needs(world, npc_id, 0.0, 0.0, 0.5)
+		var early: Dictionary = _decide_now(world, npc_id)
+		assert_eq(early[NpcUtilityDecider.KEY_CHOSEN], CHORES)
+		assert_eq(_rejection(early, SLEEP), NpcUtilityDecider.REJECT_NOT_BEDTIME)
+		assert_eq(_rejection(early, REST), NpcUtilityDecider.REJECT_NEED_LOW)
+	# 21:00: the morning type goes to bed, the evening type does not.
+	_set_hour(world, LARK_BEDTIME)
+	var record: Dictionary = _decide_now(world, lark)
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], SLEEP)
+	assert_eq(record[NpcUtilityDecider.KEY_OUTCOME], NpcUtilityDecider.OUTCOME_SWITCHED)
+	assert_true(absf(float(_candidate(record, SLEEP)[NpcUtilityScorer.KEY_VALUES]["need"]) - 0.5) < 0.001)
+	assert_eq(NpcDecisionComponent.label_of(_npcs(world).get_npc(lark)), "walk", "on its way to bed")
+	_report(world, lark, NpcActionExecutor.REPORT_ARRIVED)
+	assert_eq(NpcDecisionComponent.label_of(_npcs(world).get_npc(lark)), "sleep", "what other players see")
+	record = _decide_now(world, owl)
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], CHORES)
+	assert_eq(_rejection(record, SLEEP), NpcUtilityDecider.REJECT_NOT_BEDTIME)
+	# 00:29 and 00:30 of the next day: the evening type's bedtime.
+	_set_hour(world, 24.0 + OWL_BEDTIME - 0.02)
+	assert_eq(_rejection(_decide_now(world, owl), SLEEP), NpcUtilityDecider.REJECT_NOT_BEDTIME)
+	_set_hour(world, 24.0 + OWL_BEDTIME)
+	record = _decide_now(world, owl)
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], SLEEP)
+	assert_eq(_state(world, lark).action_id, SLEEP, "the morning type sleeps on")
+	assert_eq(_stub.begun, PackedStringArray(["%s %s" % [lark, CHORES], "%s %s" % [owl, CHORES], "%s %s" % [lark, SLEEP], "%s %s" % [owl, SLEEP]]))
+	# Very tired at its bedtime: the night sleep, not a nap.
+	var tired: Dictionary = _start_at(LARK_BEDTIME + 1.0, LARK, 0.95)
+	record = _decide_now(tired["world"], tired["id"])
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], SLEEP)
+	assert_eq(_rejection(record, REST), NpcUtilityDecider.REJECT_BEDTIME_NOW)
+	# A nap that still runs when the bedtime comes gives way to the night sleep.
+	var napper: Dictionary = _start_at(LARK_BEDTIME - 0.5, LARK, 0.8)
+	assert_eq(_decide_now(napper["world"], napper["id"])[NpcUtilityDecider.KEY_CHOSEN], REST, "20:30 and very tired: a nap")
+	_report(napper["world"], napper["id"], NpcActionExecutor.REPORT_ARRIVED)
+	assert_eq(_decide_now(napper["world"], napper["id"])[NpcUtilityDecider.KEY_OUTCOME], NpcUtilityDecider.OUTCOME_UNTIL_DONE)
+	_set_hour(napper["world"], LARK_BEDTIME)
+	record = _decide_now(napper["world"], napper["id"])
+	assert_eq(record[NpcUtilityDecider.KEY_OUTCOME], NpcUtilityDecider.OUTCOME_SWITCHED)
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], SLEEP)
+	assert_eq(_rejection(record, REST), NpcUtilityDecider.REJECT_BEDTIME_NOW)
+	# An NPC that was kept up: it may still go to bed until the window ends
+	# (21:00 + 8 h = 05:00), not after.
+	var late: Dictionary = _start_at(24.0 + 4.9, LARK)
+	assert_eq(_decide_now(late["world"], late["id"])[NpcUtilityDecider.KEY_CHOSEN], SLEEP, "04:54: still its night")
+	var missed: Dictionary = _start_at(24.0 + 5.1, LARK)
+	record = _decide_now(missed["world"], missed["id"])
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], CHORES, "05:06: it has missed the night")
+	assert_eq(_rejection(record, SLEEP), NpcUtilityDecider.REJECT_NOT_BEDTIME)
+	# A rested NPC does not lie down just because it is its bedtime.
+	var rested: Dictionary = _start_at(22.0, LARK, 0.05)
+	record = _decide_now(rested["world"], rested["id"])
+	assert_eq(_rejection(record, SLEEP), NpcUtilityDecider.REJECT_NEED_LOW)
+
+
+func test_the_night_sleep_runs_until_it_is_done_once_a_night_and_a_nap_needs_high_fatigue() -> void:
+	_use_sleep_rules()
+	var started: Dictionary = _start_at(LARK_BEDTIME, LARK)
+	var world: ServerWorld = started["world"]
+	var npc_id: String = started["id"]
+	var state: NpcDecisionComponent = _state(world, npc_id)
+	assert_eq(_decide_now(world, npc_id)[NpcUtilityDecider.KEY_CHOSEN], SLEEP)
+	_report(world, npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	assert_eq(state.last_sleep_night, NpcBedtime.NO_NIGHT, "the night is not over yet")
+	# Almost rested: it sleeps on (the executor ends it at fatigue 0), though
+	# its fatigue is below what would make it lie down.
+	_set_needs(world, npc_id, 0.0, 0.0, 0.02)
+	var record: Dictionary = _decide_now(world, npc_id)
+	assert_eq(record[NpcUtilityDecider.KEY_OUTCOME], NpcUtilityDecider.OUTCOME_UNTIL_DONE)
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], SLEEP)
+	_run(world, 100)
+	assert_eq(state.action_id, SLEEP, "five seconds of turns later it still sleeps")
+	assert_eq(_stub.cancelled.size(), 0)
+	# 23:00, fatigue 0: the executor reports the sleep done.
+	_set_hour(world, 23.0)
+	_set_needs(world, npc_id, 0.0, 0.0, 0.0)
+	record = _report(world, npc_id, NpcActionExecutor.REPORT_DONE)
+	assert_eq(record[NpcUtilityDecider.KEY_COMPLETED], SLEEP)
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], CHORES)
+	assert_eq(state.last_sleep_night, 1, "the first night of the world for a 21:00 bedtime")
+	# Still its bedtime window, and it is tired again: not a second night
+	# sleep, and no nap below the nap threshold.
+	for fatigue: float in [0.5, 0.69]:
+		_set_needs(world, npc_id, 0.0, 0.0, fatigue)
+		record = _decide_now(world, npc_id)
+		assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], CHORES, "fatigue %.2f" % fatigue)
+		assert_eq(_rejection(record, SLEEP), NpcUtilityDecider.REJECT_SLEPT)
+		assert_eq(_rejection(record, REST), NpcUtilityDecider.REJECT_NEED_LOW)
+	# Fatigue 70: a nap.
+	_set_needs(world, npc_id, 0.0, 0.0, 0.7)
+	record = _decide_now(world, npc_id)
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], REST)
+	assert_eq(_rejection(record, SLEEP), NpcUtilityDecider.REJECT_SLEPT)
+	_report(world, npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	assert_eq(NpcDecisionComponent.label_of(_npcs(world).get_npc(npc_id)), "sleep")
+	_set_needs(world, npc_id, 0.0, 0.0, 0.05)
+	record = _report(world, npc_id, NpcActionExecutor.REPORT_DONE)
+	assert_eq(record[NpcUtilityDecider.KEY_COMPLETED], REST)
+	assert_eq(state.last_sleep_night, 1, "a nap is not a night")
+	# The same in the afternoon of the next day: tired but not very: no sleep.
+	_set_hour(world, 24.0 + 15.0)
+	_set_needs(world, npc_id, 0.0, 0.0, 0.5)
+	record = _decide_now(world, npc_id)
+	assert_eq(_rejection(record, SLEEP), NpcUtilityDecider.REJECT_NOT_BEDTIME)
+	assert_eq(_rejection(record, REST), NpcUtilityDecider.REJECT_NEED_LOW)
+	# The next evening is a new night.
+	_set_hour(world, 24.0 + LARK_BEDTIME)
+	record = _decide_now(world, npc_id)
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], SLEEP)
+	_report(world, npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	_report(world, npc_id, NpcActionExecutor.REPORT_DONE)
+	assert_eq(state.last_sleep_night, 2)
+	assert_eq(state.illegal_transition_count, 0)
+
+
+func test_a_sleeper_wakes_on_danger_and_goes_back_to_bed() -> void:
+	_use_sleep_rules()
+	var started: Dictionary = _start_at(LARK_BEDTIME, LARK)
+	var world: ServerWorld = started["world"]
+	var npc_id: String = started["id"]
+	var state: NpcDecisionComponent = _state(world, npc_id)
+	assert_eq(_decide_now(world, npc_id)[NpcUtilityDecider.KEY_CHOSEN], SLEEP)
+	_report(world, npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	# Thirst below the danger category: it sleeps on.
+	_set_needs(world, npc_id, 0.0, 0.74, 0.4)
+	assert_eq(_decide_now(world, npc_id)[NpcUtilityDecider.KEY_OUTCOME], NpcUtilityDecider.OUTCOME_UNTIL_DONE)
+	# Thirst in danger: it gets up and drinks.
+	_set_needs(world, npc_id, 0.0, 0.76, 0.4)
+	var record: Dictionary = _decide_now(world, npc_id)
+	assert_eq(record[NpcUtilityDecider.KEY_OUTCOME], NpcUtilityDecider.OUTCOME_SWITCHED)
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], DRINK)
+	assert_eq(_rejection(record, SLEEP), NpcUtilityDecider.REJECT_NEED_DANGER)
+	assert_eq(_stub.cancelled, PackedStringArray([npc_id]), "the sleep was cut")
+	assert_eq(state.last_sleep_night, NpcBedtime.NO_NIGHT, "a sleep that was cut is not the night's sleep")
+	# In danger it does not lie down for a nap either.
+	_set_needs(world, npc_id, 0.0, 0.76, 0.9)
+	assert_eq(_rejection(_decide_now(world, npc_id), REST), NpcUtilityDecider.REJECT_NEED_DANGER)
+	# It has drunk: back to bed, in the same night.
+	_report(world, npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	_set_needs(world, npc_id, 0.0, 0.1, 0.4)
+	record = _report(world, npc_id, NpcActionExecutor.REPORT_DONE)
+	assert_eq(record[NpcUtilityDecider.KEY_COMPLETED], DRINK)
+	assert_eq(record[NpcUtilityDecider.KEY_CHOSEN], SLEEP)
+	_report(world, npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	# Hunger in danger and nothing to eat: eating fails, and then it may lie
+	# down all the same (nothing can be done about the hunger now).
+	_stub.refuse[EAT] = NpcActionExecutor.FAIL_NO_RESOURCE
+	_set_needs(world, npc_id, 0.8, 0.1, 0.4)
+	record = _decide_now(world, npc_id)
+	assert_eq(str((record[NpcUtilityDecider.KEY_FAILURE] as Dictionary).get(NpcUtilityDecider.KEY_ACTION_ID, "")), EAT)
+	assert_eq(state.state, NpcDecisionState.RECOVER)
+	_run(world, 30)
+	assert_eq(state.action_id, SLEEP, "it went back to bed hungry")
+	assert_eq(_rejection(state.last_record(), EAT), NpcUtilityDecider.REJECT_COOLDOWN)
+	_report(world, npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	assert_eq(NpcDecisionComponent.label_of(_npcs(world).get_npc(npc_id)), "sleep")
+	# A zombie it can see: it flees, whatever its turn is.
+	_spawn_zombie(world, Vector3(2.5, 0.0, 12.5))
+	_run(world, 12)
+	assert_eq(state.action_id, FLEE, "a visible zombie wakes the sleeper")
+	assert_eq(state.last_record()[NpcUtilityDecider.KEY_HARD_INTERRUPT], NpcUtilityDecider.HARD_THREAT)
+	assert_eq(state.last_sleep_night, NpcBedtime.NO_NIGHT)
+	assert_eq(state.illegal_transition_count, 0)
+
+
+func test_the_night_an_npc_slept_is_saved_and_an_older_save_has_none() -> void:
+	var state: NpcDecisionComponent = NpcDecisionComponent.new(_catalog)
+	state.last_sleep_night = 3
+	state.decision_count = 5
+	var document: Dictionary = _json(state.to_document())
+	document[NpcComponent.KEY_SCHEMA_VERSION] = NpcDecisionComponent.SCHEMA_VERSION
+	assert_eq(int(document[NpcDecisionComponent.KEY_LAST_SLEEP_NIGHT]), 3)
+	var restored: NpcDecisionComponent = NpcDecisionComponent.new(_catalog)
+	assert_eq(restored.restore_document(document).size(), 0, ", ".join(restored.restore_document(document)))
+	assert_eq(restored.last_sleep_night, 3)
+	assert_eq(_json(restored.to_document()), _json(state.to_document()))
+	# A document of before F-6 (schema 1, no night): read, nothing slept.
+	var old: Dictionary = document.duplicate(true)
+	old.erase(NpcDecisionComponent.KEY_LAST_SLEEP_NIGHT)
+	old[NpcComponent.KEY_SCHEMA_VERSION] = 1
+	var from_old: NpcDecisionComponent = NpcDecisionComponent.new(_catalog)
+	assert_eq(from_old.restore_document(old).size(), 0, ", ".join(from_old.restore_document(old)))
+	assert_eq(from_old.last_sleep_night, NpcBedtime.NO_NIGHT)
+	assert_eq(from_old.decision_count, 5)
+	assert_eq(int(from_old.to_document()[NpcDecisionComponent.KEY_LAST_SLEEP_NIGHT]), NpcBedtime.NO_NIGHT)
+	# Broken nights are refused.
+	for bad: Variant in [-2, 1.5, "tonight", null]:
+		var broken: Dictionary = document.duplicate(true)
+		if bad == null:
+			broken.erase(NpcDecisionComponent.KEY_LAST_SLEEP_NIGHT)
+		else:
+			broken[NpcDecisionComponent.KEY_LAST_SLEEP_NIGHT] = bad
+		var fresh: NpcDecisionComponent = NpcDecisionComponent.new(_catalog)
+		assert_true(fresh.restore_document(broken).size() > 0, "night %s is refused" % str(bad))
+		assert_eq(fresh.decision_count, 0)
+	# An NPC that slept and was saved and restored does not sleep again in
+	# that night.
+	_use_sleep_rules()
+	var started: Dictionary = _start_at(LARK_BEDTIME, LARK)
+	var world: ServerWorld = started["world"]
+	var npc_id: String = started["id"]
+	var live: NpcDecisionComponent = _state(world, npc_id)
+	assert_eq(_decide_now(world, npc_id)[NpcUtilityDecider.KEY_CHOSEN], SLEEP)
+	_report(world, npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	_report(world, npc_id, NpcActionExecutor.REPORT_DONE)
+	assert_eq(live.last_sleep_night, 1)
+	assert_true(JSON.stringify(_npcs(world).npc_document(npc_id)).contains("\"last_sleep_night\":1"), "the NPC's save data has the night")
+	var component_document: Dictionary = _json(live.to_document())
+	component_document[NpcComponent.KEY_SCHEMA_VERSION] = NpcDecisionComponent.SCHEMA_VERSION
+	live.last_sleep_night = NpcBedtime.NO_NIGHT
+	assert_eq(live.restore_document(component_document).size(), 0)
+	assert_eq(live.last_sleep_night, 1)
+	var record: Dictionary = _decide_now(world, npc_id)
+	assert_eq(_rejection(record, SLEEP), NpcUtilityDecider.REJECT_SLEPT)

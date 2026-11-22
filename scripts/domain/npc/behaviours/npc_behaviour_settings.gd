@@ -26,6 +26,9 @@ const USEC_PER_SEC: int = 1000000
 @export_group("Resting")
 ## A resting NPC gets up by itself once its fatigue is at most this.
 @export_range(0.0, 10000.0, 0.5) var rest_until_fatigue: float = 5.0
+## An NPC in its night sleep (the action "sleep", F-6) gets up by itself
+## once its fatigue is at most this (FD-11: it sleeps until fatigue is 0).
+@export_range(0.0, 10000.0, 0.5) var sleep_until_fatigue: float = 0.0
 ## How often a resting NPC's fatigue is looked at.
 @export_range(0.1, 3600.0, 0.1, "suffix:s") var rest_check_period_sec: float = 2.0
 
@@ -48,7 +51,7 @@ func validate() -> PackedStringArray:
 	var errors: PackedStringArray = []
 	if inventory_slots < 1:
 		errors.append("npc behaviour inventory_slots must be >= 1")
-	for entry: Array in [["eat_duration_sec", eat_duration_sec], ["drink_duration_sec", drink_duration_sec], ["drink_thirst_reduction", drink_thirst_reduction], ["rest_until_fatigue", rest_until_fatigue], ["wander_linger_sec", wander_linger_sec]]:
+	for entry: Array in [["eat_duration_sec", eat_duration_sec], ["drink_duration_sec", drink_duration_sec], ["drink_thirst_reduction", drink_thirst_reduction], ["rest_until_fatigue", rest_until_fatigue], ["sleep_until_fatigue", sleep_until_fatigue], ["wander_linger_sec", wander_linger_sec]]:
 		if not is_finite(float(entry[1])) or float(entry[1]) < 0.0:
 			errors.append("npc behaviour %s must be >= 0" % str(entry[0]))
 	for entry: Array in [["rest_check_period_sec", rest_check_period_sec], ["work_shift_sec", work_shift_sec], ["wander_radius_m", wander_radius_m], ["flee_distance_m", flee_distance_m]]:

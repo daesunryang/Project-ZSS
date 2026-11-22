@@ -9,6 +9,7 @@ eat_duration_sec = 6.0
 drink_duration_sec = 4.0
 drink_thirst_reduction = 60.0
 rest_until_fatigue = 5.0
+sleep_until_fatigue = 0.0
 rest_check_period_sec = 2.0
 work_shift_sec = 120.0
 wander_radius_m = 8.0

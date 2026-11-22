@@ -10,7 +10,9 @@ extends NpcDecider
 ##   1. The NPC's needs are brought up to now (NpcNeeds.advance_to).
 ##   2. The executor's reports among the reasons: "action_arrived"
 ##      (Navigate -> Perform), "action_done" (-> Idle), "action_failed_<code>"
-##      (-> Interrupt -> Recover, the action gets a retry cooldown).
+##      (-> Interrupt -> Recover, the action gets a retry cooldown). A
+##      night sleep (`requires_bedtime`) that is done is written down as
+##      this night's (F-6): the NPC does not begin another one in it.
 ##   3. Hard interrupt: a visible zombie (NpcThreatSense) starts the flee
 ##      action whatever the NPC does, unless it already flees or the flee
 ##      action is on its retry cooldown.
@@ -20,6 +22,11 @@ extends NpcDecider
 ##      for as long as it runs, an action with `runs_until_done` (the
 ##      rest): only the executor's report, a hard interrupt, or another
 ##      need of the NPC in the DANGER category ends it (docs/15 P4-172).
+##      That is how a sleeper wakes on danger (F-6): a visible zombie is
+##      step 3, a need in danger sends it to step 6, where an action with
+##      `yields_to_danger_need` is no candidate while the NPC can eat or
+##      drink. And a nap that still runs when the NPC's night sleep can
+##      begin gives way to it (the nap is then no candidate: "bedtime_now").
 ##   6. Utility choice (NpcUtilityScorer): every action whose preconditions
 ##      hold is scored; the best one at or above `min_action_score` is
 ##      started, or kept when it is the running one (which has the
@@ -48,6 +55,11 @@ const REJECT_COOLDOWN: String = "cooldown"
 const REJECT_NO_JOB: String = "no_job"
 const REJECT_NEED_LOW: String = "need_too_low"
 const REJECT_NEED_DANGER: String = "need_in_danger"
+## F-6: it is not the NPC's bedtime / it has slept this night already.
+const REJECT_NOT_BEDTIME: String = "not_bedtime"
+const REJECT_SLEPT: String = "slept_tonight"
+## F-6: the NPC's night sleep can begin now, so it does not nap instead.
+const REJECT_BEDTIME_NOW: String = "bedtime_now"
 ## A failure code the executor returned that is not a snake_case id.
 const FAIL_BAD_CODE: String = "bad_failure_code"
 
@@ -64,6 +76,8 @@ const NEED_BOUNDARY_IMMINENT_WORLD_SEC: float = 0.00001
 ## (need units / urgency).
 const NEED_VALUE_EPSILON: float = 0.000001
 const URGENCY_EPSILON: float = 0.000000001
+## The bedtime of an NPC whose definition is not in the data any more.
+const DEFAULT_BEDTIME_HOUR: float = 22.0
 
 ## Record "hard_interrupt".
 const HARD_THREAT: String = "threat_visible"
@@ -223,7 +237,7 @@ func decide(world: ServerWorld, npcs: NpcService, npc: NpcState, reasons: Packed
 		KEY_FAILURE: {},
 		KEY_TARGET: {},
 	}
-	_take_reports(npc, state, reasons, now, record, scheduler)
+	_take_reports(world, npcs, npc, state, reasons, now, record, scheduler)
 	if not _hard_interrupt(world, npcs, npc, state, now, record, scheduler):
 		_choose(world, npcs, npc, state, needs, now, record, scheduler)
 	record[KEY_STATE_AFTER] = state.state
@@ -237,7 +251,7 @@ func decide(world: ServerWorld, npcs: NpcService, npc: NpcState, reasons: Packed
 # ------------------------------------------------------------ steps
 
 ## Step 2: what the executor reported about the running action.
-func _take_reports(npc: NpcState, state: NpcDecisionComponent, reasons: PackedStringArray, now: int, record: Dictionary, scheduler: NpcScheduler) -> void:
+func _take_reports(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcDecisionComponent, reasons: PackedStringArray, now: int, record: Dictionary, scheduler: NpcScheduler) -> void:
 	for reason: String in reasons:
 		if not state.is_running():
 			break
@@ -247,6 +261,10 @@ func _take_reports(npc: NpcState, state: NpcDecisionComponent, reasons: PackedSt
 		elif reason == NpcActionExecutor.REPORT_DONE:
 			record[KEY_COMPLETED] = state.action_id
 			state.failures.erase(state.action_id)
+			var done: NpcActionDefinition = _catalog.get_action(state.action_id)
+			if done != null and done.requires_bedtime:
+				# The night sleep of this night is over (F-6).
+				state.last_sleep_night = maxi(state.last_sleep_night, NpcBedtime.night_of(world.clock.world_time_sec, _settings.day_length_world_sec, _bedtime_hour(npcs.definition_of(npc.npc_id))))
 			_move(state, NpcDecisionState.IDLE, record)
 			state.clear_action()
 		else:
@@ -313,7 +331,7 @@ func _choose(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcDeci
 		record[KEY_CHOSEN] = current.action_id
 		record[KEY_OUTCOME] = OUTCOME_MIN_DURATION
 		return
-	if current != null and current.runs_until_done and not _other_need_in_danger(needs, current.need_kind):
+	if current != null and current.runs_until_done and not _other_need_in_danger(needs, current.need_kind) and not _night_sleep_calls(current, state, needs, npcs.definition_of(npc.npc_id), now, world.clock.world_time_sec):
 		# It goes on until the executor says it is over: its own preconditions
 		# (the need that started it has dropped) and the other candidates are
 		# not looked at. No number is drawn, as in the minimum duration.
@@ -325,7 +343,7 @@ func _choose(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcDeci
 	var definition: NpcDefinition = npcs.definition_of(npc.npc_id)
 	var best: NpcActionDefinition = _best_candidate(world, npc, state, needs, definition, now, record)
 	if best == null:
-		best = _fallback(state, needs, definition, now)
+		best = _fallback(state, needs, definition, now, world.clock.world_time_sec)
 		record[KEY_FALLBACK] = best != null
 	if best == null:
 		if current != null:
@@ -359,7 +377,7 @@ func _best_candidate(world: ServerWorld, npc: NpcState, state: NpcDecisionCompon
 		# One number per action, candidate or not: what an NPC draws does not
 		# depend on which preconditions hold.
 		var jitter: float = npc.rng.randf() if _settings.score_jitter > 0.0 else 0.0
-		var code: String = _precondition(action, state, needs, definition, now)
+		var code: String = _precondition(action, state, needs, definition, now, world.clock.world_time_sec)
 		if not code.is_empty():
 			(record[KEY_REJECTED] as Array).append({KEY_ACTION_ID: action_id, KEY_CODE: code})
 			continue
@@ -381,7 +399,7 @@ func _best_candidate(world: ServerWorld, npc: NpcState, state: NpcDecisionCompon
 
 
 ## "" when `action` may be a candidate now, or the REJECT_ code.
-func _precondition(action: NpcActionDefinition, state: NpcDecisionComponent, needs: NpcNeeds, definition: NpcDefinition, now: int) -> String:
+func _precondition(action: NpcActionDefinition, state: NpcDecisionComponent, needs: NpcNeeds, definition: NpcDefinition, now: int, world_time_sec: float) -> String:
 	if not action.selectable:
 		return REJECT_NOT_SELECTABLE
 	if state.is_on_cooldown(action.action_id, now):
@@ -394,15 +412,56 @@ func _precondition(action: NpcActionDefinition, state: NpcDecisionComponent, nee
 		for kind: String in NpcNeedKind.SIMULATED_KINDS:
 			if needs.value(kind) + NEED_VALUE_EPSILON >= _need_settings.danger_threshold:
 				return REJECT_NEED_DANGER
+	if action.yields_to_danger_need and needs != null:
+		for kind: String in NpcNeedKind.SIMULATED_KINDS:
+			if kind != action.need_kind and needs.value(kind) + NEED_VALUE_EPSILON >= _need_settings.danger_threshold and _can_answer(kind, state, now):
+				return REJECT_NEED_DANGER
+	if _night_sleep_calls(action, state, needs, definition, now, world_time_sec):
+		return REJECT_BEDTIME_NOW
+	if action.requires_bedtime:
+		var bedtime_hour: float = _bedtime_hour(definition)
+		if not NpcBedtime.is_bedtime(world_time_sec, _settings.day_length_world_sec, bedtime_hour, _settings.night_sleep_window_hours):
+			return REJECT_NOT_BEDTIME
+		if state.last_sleep_night >= NpcBedtime.night_of(world_time_sec, _settings.day_length_world_sec, bedtime_hour):
+			return REJECT_SLEPT
 	return ""
 
 
+## True when a selectable action that answers the need `kind` is not on its
+## retry cooldown: the NPC can do something about that need now.
+func _can_answer(kind: String, state: NpcDecisionComponent, now: int) -> bool:
+	for action_id: String in _catalog.action_ids():
+		var action: NpcActionDefinition = _catalog.get_action(action_id)
+		if action.selectable and action.need_kind == kind and not state.is_on_cooldown(action_id, now):
+			return true
+	return false
+
+
+## True when `action` answers a need that a night sleep (an action with
+## `requires_bedtime` and the same `need_kind`) could answer now: at its
+## bedtime an NPC goes to bed instead of napping, and a nap that still runs
+## at the bedtime gives way to the night sleep (F-6).
+func _night_sleep_calls(action: NpcActionDefinition, state: NpcDecisionComponent, needs: NpcNeeds, definition: NpcDefinition, now: int, world_time_sec: float) -> bool:
+	if action.requires_bedtime or action.need_kind.is_empty():
+		return false
+	for action_id: String in _catalog.action_ids():
+		var other: NpcActionDefinition = _catalog.get_action(action_id)
+		if other.requires_bedtime and other.need_kind == action.need_kind and _precondition(other, state, needs, definition, now, world_time_sec).is_empty():
+			return true
+	return false
+
+
+## The bedtime of an NPC (DEFAULT_BEDTIME_HOUR without a definition).
+static func _bedtime_hour(definition: NpcDefinition) -> float:
+	return definition.bedtime_hour if definition != null else DEFAULT_BEDTIME_HOUR
+
+
 ## The fallback action when it may run now (it need not be selectable).
-func _fallback(state: NpcDecisionComponent, needs: NpcNeeds, definition: NpcDefinition, now: int) -> NpcActionDefinition:
+func _fallback(state: NpcDecisionComponent, needs: NpcNeeds, definition: NpcDefinition, now: int, world_time_sec: float) -> NpcActionDefinition:
 	var action: NpcActionDefinition = _catalog.get_action(_settings.fallback_action_id) if not _settings.fallback_action_id.is_empty() else null
 	if action == null:
 		return null
-	var code: String = _precondition(action, state, needs, definition, now)
+	var code: String = _precondition(action, state, needs, definition, now, world_time_sec)
 	return action if code.is_empty() or code == REJECT_NOT_SELECTABLE else null
 
 
