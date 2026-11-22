@@ -17,6 +17,8 @@ extends RefCounted
 ##   drop_all_items  every item of one inventory -> world (P2-T2)
 ##   remove_item     a quantity leaves the game; at 0 the instance is deleted
 ##                   and its id is retired for good (P2-T2)
+##   set_item_condition  a server rule changes the condition of a carried
+##                   item (F-3: a melee weapon wears down per hit)
 ##   transfer_item   a quantity moves from one inventory into another,
 ##                   merging into the receiver's stacks (P2-T14). Since P3-3
 ##                   it is how a player puts items into a container and takes
@@ -145,6 +147,14 @@ const REASON_SECOND_INVENTORY_FULL: String = "second_inventory_full"
 ## but schedules no save for it: whoever calls take_items decides when the
 ## world is saved (docs/00 ADR-025).
 const EVENT_ITEMS_TAKEN: String = "items_taken"
+## The condition of a carried item changed because a server rule wore it
+## down (set_item_condition, F-3: a melee weapon lost one use):
+## {inventory_id, item_instance_id, definition_id, condition_before,
+##  condition}. InventoryNetModule sends the owner the changed item and
+## schedules no save for it: the next regular save keeps it (docs/15 F3-05).
+const EVENT_ITEM_CONDITION_CHANGED: String = "item_condition_changed"
+## A condition is not a finite number within [0, 1].
+const REASON_BAD_CONDITION: String = "bad_condition"
 ## A request names an item definition the catalog does not have.
 const REASON_UNKNOWN_DEFINITION: String = "unknown_item_definition"
 ## Nothing was asked for (an empty list).
@@ -400,6 +410,36 @@ func remove_item(inventory_id: String, item_instance_id: String, quantity: int) 
 		"removed_quantity": quantity,
 		"remaining_quantity": remaining,
 	})
+
+
+## Sets the condition (0..1) of a carried item as a server rule decides it
+## (F-3: a melee weapon wears down by one use per hit). Only the condition
+## changes: quantity, slot and stacks stay as they are. Setting the value it
+## already has commits nothing and succeeds. Errors: unknown_inventory,
+## unknown_item, item_not_in_inventory, bad_condition.
+func set_item_condition(inventory_id: String, item_instance_id: String, condition: float) -> ActionResult:
+	const OPERATION: String = "set_item_condition"
+	if not _inventories.has(inventory_id):
+		return _reject(REASON_UNKNOWN_INVENTORY, inventory_id, item_instance_id, OPERATION)
+	var item: ItemInstance = _items.get(item_instance_id, null)
+	if item == null:
+		return _reject(REASON_UNKNOWN_ITEM, inventory_id, item_instance_id, OPERATION)
+	if not _is_carried_in(item, inventory_id):
+		return _reject(REASON_NOT_IN_INVENTORY, inventory_id, item_instance_id, OPERATION)
+	if not is_finite(condition) or condition < 0.0 or condition > ItemInstance.MAX_UNIT_VALUE:
+		return _reject(REASON_BAD_CONDITION, inventory_id, item_instance_id, OPERATION)
+	var event: Dictionary = {
+		"event_type": EVENT_ITEM_CONDITION_CHANGED,
+		"inventory_id": inventory_id,
+		"item_instance_id": item_instance_id,
+		"definition_id": item.definition_id,
+		"condition_before": item.condition,
+		"condition": condition,
+	}
+	if item.condition == condition:
+		return ActionResult.success(event)
+	item.condition = condition
+	return _commit(event)
 
 
 ## Moves `quantity` (1..stack size) units of an item carried in

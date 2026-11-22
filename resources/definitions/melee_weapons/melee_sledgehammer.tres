@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="MeleeWeaponDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/combat/melee_weapon_definition.gd" id="1_weapon"]
+
+[resource]
+script = ExtResource("1_weapon")
+weapon_id = "melee_sledgehammer"
+display_name = "슬레지해머"
+category = 1
+item_definition_id = "melee_sledgehammer"
+base_damage = 60.0
+range_m = 2.2
+arc_angle_deg = 120.0
+cooldown_sec = 2.2
+stamina_cost = 25.0
+noise_loudness = 16.0
+noise_frequency_profile = "low"
+max_durability = 180
+rarity = 2

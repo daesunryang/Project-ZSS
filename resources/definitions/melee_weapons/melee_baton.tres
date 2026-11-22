@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="MeleeWeaponDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/combat/melee_weapon_definition.gd" id="1_weapon"]
+
+[resource]
+script = ExtResource("1_weapon")
+weapon_id = "melee_baton"
+display_name = "경찰봉"
+category = 1
+item_definition_id = "melee_baton"
+base_damage = 18.0
+range_m = 1.6
+arc_angle_deg = 90.0
+cooldown_sec = 0.7
+stamina_cost = 7.0
+noise_loudness = 8.0
+noise_frequency_profile = "broadband"
+max_durability = 180
+rarity = 1

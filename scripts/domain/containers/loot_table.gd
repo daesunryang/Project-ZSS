@@ -10,7 +10,17 @@ extends Resource
 ## that entry's minimum and maximum. Every roll that found something is one
 ## stack. The entries are parallel arrays (one index = one entry), like
 ## DevWorldSeed, so a table is easy to write by hand.
-## Every number here is PROVISIONAL (docs/15 P3-066).
+##
+## Sub-tables (F-3): a roll may also land on another table
+## (`subtable_ids`, weighed by `subtable_weights` against the same total).
+## Such a roll picks one entry of that table by its own weights and
+## `nothing_weight` (its rolls are not used) and its quantity. One level
+## only: a table used as a sub-table has no sub-tables itself
+## (LootTableCatalog.validate_against). The weight order of a roll is: the
+## item entries, then the sub-tables, then nothing. A table without
+## sub-tables rolls exactly as before. Pools that several tables share (the
+## melee weapons, `melee_*`) live in their own files this way.
+## Every number here is PROVISIONAL (docs/15 P3-066, F3-03).
 
 ## Stable snake_case id. Saved with every container that was not searched
 ## yet: never rename it.
@@ -23,16 +33,26 @@ extends Resource
 @export var weights: PackedFloat32Array = []
 @export var quantities_min: PackedInt32Array = []
 @export var quantities_max: PackedInt32Array = []
+## Other tables a roll may land on (LootTable.table_id), parallel to
+## `subtable_weights`. Empty = none.
+@export var subtable_ids: PackedStringArray = []
+@export var subtable_weights: PackedFloat32Array = []
 
 
 func entry_count() -> int:
 	return item_definition_ids.size()
 
 
-## Sum of every entry's weight and `nothing_weight`.
+func subtable_count() -> int:
+	return subtable_ids.size()
+
+
+## Sum of every entry's and sub-table's weight and `nothing_weight`.
 func total_weight() -> float:
 	var total: float = nothing_weight
 	for weight: float in weights:
+		total += weight
+	for weight: float in subtable_weights:
 		total += weight
 	return total
 
@@ -56,7 +76,15 @@ func validate() -> PackedStringArray:
 			errors.append("loot table %s: entry %d must have a weight > 0" % [table_id, index])
 		if quantities_min[index] < 1 or quantities_max[index] < quantities_min[index]:
 			errors.append("loot table %s: entry %d must have 1 <= quantity min <= quantity max" % [table_id, index])
-	if rolls_max > 0 and count == 0 and nothing_weight <= 0.0:
+	if subtable_weights.size() != subtable_count():
+		errors.append("loot table %s: subtable_ids and subtable_weights must have the same length" % table_id)
+		return errors
+	for index: int in range(subtable_count()):
+		if not ItemInstance.is_valid_definition_id(subtable_ids[index]) or subtable_ids[index] == table_id:
+			errors.append("loot table %s: sub-table %d must name another table" % [table_id, index])
+		if not is_finite(subtable_weights[index]) or subtable_weights[index] <= 0.0:
+			errors.append("loot table %s: sub-table %d must have a weight > 0" % [table_id, index])
+	if rolls_max > 0 and count == 0 and subtable_count() == 0 and nothing_weight <= 0.0:
 		errors.append("loot table %s: rolls without any entry need a nothing_weight" % table_id)
 	return errors
 

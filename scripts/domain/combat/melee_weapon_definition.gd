@@ -7,11 +7,24 @@ extends Resource
 ## time, docs/09 §14.16).
 
 enum Category { UNARMED, BLUNT, BLADE, AXE }
+## How often the weapon is found (F-3). The weapon loot tables (`melee_*`)
+## weigh each weapon by RARITY_LOOT_WEIGHTS; CRAFTED_ONLY weapons are never
+## found and only come from crafting later (F-8/F-18).
+enum Rarity { COMMON, UNCOMMON, RARE, VERY_RARE, CRAFTED_ONLY }
 
 ## Save/network names, indexed by Category.
 const CATEGORY_NAMES: PackedStringArray = ["unarmed", "blunt", "blade", "axe"]
 const WEAPON_ID_PATTERN: String = "^[a-z][a-z0-9_]*$"
 const FULL_CIRCLE_DEG: float = 360.0
+## Log names, indexed by Rarity.
+const RARITY_NAMES: PackedStringArray = ["common", "uncommon", "rare", "very_rare", "crafted_only"]
+## Loot weight of one weapon entry in a `melee_*` loot table, indexed by
+## Rarity (0 = never in a loot table). PROVISIONAL (docs/15 F3-03).
+const RARITY_LOOT_WEIGHTS: PackedFloat32Array = [4.0, 2.0, 1.0, 0.5, 0.0]
+## FD-3 (user, 2026-11-20): "60~200회". Every weapon that is an item lasts
+## between these many hits; bare hands never wear.
+const MIN_DURABILITY_USES: int = 60
+const MAX_DURABILITY_USES: int = 200
 
 ## Stable snake_case id (sent in combat events).
 @export var weapon_id: String = ""
@@ -34,6 +47,12 @@ const FULL_CIRCLE_DEG: float = 360.0
 @export_range(0.0, 100000.0) var noise_loudness: float = 0.0
 ## NoiseSettings.frequency_profiles entry used for the swing noise.
 @export var noise_frequency_profile: String = "broadband"
+## Hits the weapon lasts when new (FD-3: MIN..MAX_DURABILITY_USES). Each hit
+## on a zombie takes one use (CombatService); at 0 the item breaks and is
+## gone. Kept per item as ItemInstance.condition = uses left / max (see
+## uses_left). Ignored for UNARMED weapons.
+@export_range(1, 10000) var max_durability: int = 100
+@export var rarity: Rarity = Rarity.COMMON
 
 
 func validate() -> PackedStringArray:
@@ -58,7 +77,37 @@ func validate() -> PackedStringArray:
 		errors.append("weapon %s stamina_cost must be >= 0" % weapon_id)
 	if not is_finite(noise_loudness) or noise_loudness < 0.0:
 		errors.append("weapon %s noise_loudness must be >= 0" % weapon_id)
+	if wears() and (max_durability < MIN_DURABILITY_USES or max_durability > MAX_DURABILITY_USES):
+		errors.append("weapon %s max_durability must be within [%d, %d] (FD-3)" % [weapon_id, MIN_DURABILITY_USES, MAX_DURABILITY_USES])
+	if rarity < 0 or rarity >= RARITY_NAMES.size():
+		errors.append("weapon %s has an unknown rarity" % weapon_id)
 	return errors
+
+
+## True when hits wear the weapon down (every weapon but bare hands).
+func wears() -> bool:
+	return category != Category.UNARMED
+
+
+## Uses (hits) left on an item of this weapon whose ItemInstance.condition is
+## `condition` (1 = new). Rounded to the nearest whole use, so a condition
+## that lost its last float digits in a JSON save gives the same count.
+func uses_left(condition: float) -> int:
+	if not is_finite(condition) or max_durability < 1:
+		return 0
+	return clampi(roundi(clampf(condition, 0.0, 1.0) * max_durability), 0, max_durability)
+
+
+## ItemInstance.condition of an item of this weapon with `uses` uses left.
+func condition_for_uses(uses: int) -> float:
+	if max_durability < 1:
+		return 0.0
+	return float(clampi(uses, 0, max_durability)) / float(max_durability)
+
+
+## Loot weight of this weapon in a `melee_*` loot table (0 = never found).
+func loot_weight() -> float:
+	return RARITY_LOOT_WEIGHTS[rarity]
 
 
 static func category_name(value: Category) -> String:

@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="MeleeWeaponDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/combat/melee_weapon_definition.gd" id="1_weapon"]
+
+[resource]
+script = ExtResource("1_weapon")
+weapon_id = "melee_wooden_bat"
+display_name = "나무 방망이"
+category = 1
+item_definition_id = "melee_wooden_bat"
+base_damage = 22.0
+range_m = 2.0
+arc_angle_deg = 110.0
+cooldown_sec = 1.1
+stamina_cost = 11.0
+noise_loudness = 10.0
+noise_frequency_profile = "broadband"
+max_durability = 80
+rarity = 0

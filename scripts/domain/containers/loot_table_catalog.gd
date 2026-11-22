@@ -41,10 +41,19 @@ func size() -> int:
 
 
 ## Errors of every table against the item definitions.
+## Sub-tables (F-3) must be tables of this catalog that have no sub-tables
+## themselves (one level only).
 func validate_against(items: ItemCatalog) -> PackedStringArray:
 	var errors: PackedStringArray = []
 	for table_id: String in table_ids():
-		errors.append_array(_tables[table_id].validate_against(items))
+		var table: LootTable = _tables[table_id]
+		errors.append_array(table.validate_against(items))
+		for sub_id: String in table.subtable_ids:
+			var sub: LootTable = get_table(sub_id)
+			if sub == null:
+				errors.append("loot table %s: unknown sub-table %s" % [table_id, sub_id])
+			elif sub.subtable_count() > 0:
+				errors.append("loot table %s: sub-table %s has sub-tables of its own (one level only)" % [table_id, sub_id])
 	return errors
 
 

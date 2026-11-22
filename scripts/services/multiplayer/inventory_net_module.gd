@@ -90,8 +90,9 @@ extends NetModule
 ## remove_player_item or the InventoryService directly. An item that enters
 ## the world goes to the joined peers that are told about the cell it lies in
 ## (P3-2, NetworkService.peers_interested_in; definition, quantity,
-## position); an item that leaves an inventory or changes its quantity goes
-## to the owner only. Nobody is sent another player's inventory. Late joiners
+## position); an item that leaves an inventory or changes its quantity or
+## its condition (F-3: a melee weapon wears down per hit, and is removed when
+## it breaks) goes to the owner only. Nobody is sent another player's inventory. Late joiners
 ## get the world items of their cells and their own inventory in the join
 ## snapshot (NetworkService).
 ##
@@ -131,7 +132,8 @@ signal world_items_added(item_instance_ids: PackedStringArray)
 signal world_items_removed(item_instance_ids: PackedStringArray)
 ## Client: these items left the local inventory (already out of the mirror).
 signal inventory_items_removed(item_instance_ids: PackedStringArray)
-## Client: an item of the local inventory was added or changed (quantity).
+## Client: an item of the local inventory was added or changed (quantity,
+## condition).
 signal inventory_item_changed(item_instance_id: String)
 
 const MODULE_NAME: String = "InventoryNet"
@@ -516,10 +518,31 @@ func _on_inventory_transaction(event: Dictionary) -> void:
 		# save is scheduled here (whoever took them decides, docs/00 ADR-025).
 		_replicate_taken(event)
 		return
+	elif event_type == InventoryService.EVENT_ITEM_CONDITION_CHANGED:
+		# F-3: a weapon lost one use. The owner gets the changed item; no save
+		# is scheduled per hit, the next regular save keeps it (docs/15 F3-05).
+		_replicate_condition_changed(event)
+		return
 	else:
 		return
 	if not _leave_to_next_save:
 		_save_pending = true
+
+
+## A server rule changed the condition of a carried item (F-3: a melee
+## weapon wore down). Only the owner is told: the item with its new
+## condition, in the existing inventory item message.
+func _replicate_condition_changed(event: Dictionary) -> void:
+	var inventory_id: String = str(event.get("inventory_id", ""))
+	var owner_peer: int = _owner_peer(inventory_id)
+	if owner_peer == 0:
+		return
+	var item: ItemInstance = _world.inventory.get_item(str(event.get("item_instance_id", "")))
+	# Only what is in that inventory now is ever sent to its owner.
+	if item == null or item.location_type != ItemInstance.LOCATION_INVENTORY or item.location_id != inventory_id:
+		GameLogger.error("net", "changed item not replicated", {"entity_id": str(event.get("item_instance_id", "")), "module": MODULE_NAME, "operation": "replicate_condition_changed"})
+		return
+	_send_inventory_item(owner_peer, item)
 
 
 ## Units of carried stacks went into something that is not an item any more

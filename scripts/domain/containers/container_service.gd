@@ -741,7 +741,7 @@ func _roll_loot(world: ServerWorld, container: ContainerInstance) -> void:
 	loot_roll_count += 1
 	var table: LootTable = _loot_tables.get_table(container.loot_table_id)
 	# The seed the container was created with, not the setting now.
-	var stacks: Array[Dictionary] = LootRoller.roll(table, LootRoller.seed_for(container.loot_seed, container.container_id))
+	var stacks: Array[Dictionary] = LootRoller.roll(table, LootRoller.seed_for(container.loot_seed, container.container_id), _loot_tables)
 	var placed: int = 0
 	for stack: Dictionary in stacks:
 		if placed >= container.slot_count:

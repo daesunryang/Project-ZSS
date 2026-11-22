@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="MeleeWeaponDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/combat/melee_weapon_definition.gd" id="1_weapon"]
+
+[resource]
+script = ExtResource("1_weapon")
+weapon_id = "melee_crowbar"
+display_name = "쇠지렛대"
+category = 1
+item_definition_id = "melee_crowbar"
+base_damage = 27.0
+range_m = 1.8
+arc_angle_deg = 90.0
+cooldown_sec = 1.1
+stamina_cost = 11.0
+noise_loudness = 11.0
+noise_frequency_profile = "broadband"
+max_durability = 200
+rarity = 0

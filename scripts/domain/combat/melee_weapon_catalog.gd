@@ -72,8 +72,9 @@ func pick_for_items(item_definition_ids: PackedStringArray, rule: CombatSettings
 
 
 ## Checks the catalog against the data it refers to: the unarmed weapon
-## exists and needs no item, weapon items exist in the item catalog, and the
-## swing noise is accepted by the noise system.
+## exists and needs no item, weapon items exist in the item catalog and do
+## not stack (each carries its own durability), and the swing noise is
+## accepted by the noise system.
 func validate_against(unarmed_weapon_id: String, items: ItemCatalog, noise: NoiseSettings) -> PackedStringArray:
 	var errors: PackedStringArray = []
 	var unarmed: MeleeWeaponDefinition = get_definition(unarmed_weapon_id)
@@ -85,6 +86,9 @@ func validate_against(unarmed_weapon_id: String, items: ItemCatalog, noise: Nois
 		var weapon: MeleeWeaponDefinition = _definitions[weapon_id]
 		if not weapon.item_definition_id.is_empty() and not items.has(weapon.item_definition_id):
 			errors.append("melee weapon %s refers to unknown item %s" % [weapon_id, weapon.item_definition_id])
+		elif weapon.wears() and items.get_definition(weapon.item_definition_id).max_stack != 1:
+			# One item = one weapon with its own uses left (F-3 durability).
+			errors.append("melee weapon %s item %s must not stack (max_stack 1)" % [weapon_id, weapon.item_definition_id])
 		if weapon.noise_loudness > noise.max_loudness:
 			errors.append("melee weapon %s noise_loudness exceeds noise max_loudness" % weapon_id)
 		if weapon.noise_loudness > 0.0 and not noise.is_valid_profile(weapon.noise_frequency_profile):

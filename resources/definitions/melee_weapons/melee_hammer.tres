@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="MeleeWeaponDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/combat/melee_weapon_definition.gd" id="1_weapon"]
+
+[resource]
+script = ExtResource("1_weapon")
+weapon_id = "melee_hammer"
+display_name = "망치"
+category = 1
+item_definition_id = "melee_hammer"
+base_damage = 20.0
+range_m = 1.3
+arc_angle_deg = 70.0
+cooldown_sec = 0.8
+stamina_cost = 7.0
+noise_loudness = 9.0
+noise_frequency_profile = "broadband"
+max_durability = 150
+rarity = 0

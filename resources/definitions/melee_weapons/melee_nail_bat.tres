@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="MeleeWeaponDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/combat/melee_weapon_definition.gd" id="1_weapon"]
+
+[resource]
+script = ExtResource("1_weapon")
+weapon_id = "melee_nail_bat"
+display_name = "못 박힌 방망이"
+category = 1
+item_definition_id = "melee_nail_bat"
+base_damage = 30.0
+range_m = 2.0
+arc_angle_deg = 110.0
+cooldown_sec = 1.15
+stamina_cost = 12.0
+noise_loudness = 10.0
+noise_frequency_profile = "broadband"
+max_durability = 90
+rarity = 4

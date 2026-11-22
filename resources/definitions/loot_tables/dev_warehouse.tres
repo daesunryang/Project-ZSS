@@ -4,6 +4,8 @@
 
 [resource]
 script = ExtResource("1_loot")
+subtable_ids = PackedStringArray("melee_tools")
+subtable_weights = PackedFloat32Array(2)
 table_id = "dev_warehouse"
 rolls_min = 1
 rolls_max = 3

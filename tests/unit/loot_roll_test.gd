@@ -123,3 +123,47 @@ func test_the_shipped_tables_and_container_definitions_are_valid() -> void:
 	for table_id: String in tables.table_ids():
 		contents[", ".join(tables.get_table(table_id).item_definition_ids)] = true
 	assert_true(contents.size() >= 3, "tables differ by building type")
+
+
+## F-3: a roll may land on a sub-table (the shared weapon pools).
+func test_sub_tables_roll_and_validate() -> void:
+	var sub: LootTable = LootTable.new()
+	sub.table_id = "sub"
+	sub.item_definition_ids = PackedStringArray(["dev_bandage"])
+	sub.weights = PackedFloat32Array([1.0])
+	sub.quantities_min = PackedInt32Array([1])
+	sub.quantities_max = PackedInt32Array([1])
+	var parent: LootTable = LootTable.new()
+	parent.table_id = "parent"
+	parent.rolls_min = 3
+	parent.rolls_max = 3
+	parent.subtable_ids = PackedStringArray(["sub"])
+	parent.subtable_weights = PackedFloat32Array([1.0])
+	assert_eq(parent.validate().size(), 0, "; ".join(parent.validate()))
+	var catalog: LootTableCatalog = LootTableCatalog.new()
+	assert_eq(catalog.add(sub), OK)
+	assert_eq(catalog.add(parent), OK)
+	assert_eq(catalog.validate_against(ItemCatalog.load_directory()).size(), 0)
+	var stacks: Array[Dictionary] = LootRoller.roll(parent, 5, catalog)
+	assert_eq(stacks.size(), 3, "every roll lands on the only sub-table")
+	for stack: Dictionary in stacks:
+		assert_eq(stack[LootRoller.KEY_DEFINITION_ID], "dev_bandage")
+	assert_eq(LootRoller.roll(parent, 5).size(), 0, "without the catalog a sub-table finds nothing")
+	# Validation: lengths, self reference, unknown and nested sub-tables.
+	var broken: LootTable = parent.duplicate()
+	broken.subtable_weights = PackedFloat32Array()
+	assert_true(broken.validate().size() > 0)
+	broken = parent.duplicate()
+	broken.subtable_ids = PackedStringArray(["parent"])
+	assert_true(broken.validate().size() > 0, "a table is not its own sub-table")
+	broken = parent.duplicate()
+	broken.subtable_weights = PackedFloat32Array([0.0])
+	assert_true(broken.validate().size() > 0)
+	var unknown: LootTableCatalog = LootTableCatalog.new()
+	unknown.add(parent)
+	assert_true(unknown.validate_against(ItemCatalog.load_directory()).size() > 0, "unknown sub-table")
+	var nested: LootTable = parent.duplicate()
+	nested.table_id = "grandparent"
+	nested.subtable_ids = PackedStringArray(["parent"])
+	catalog.add(nested)
+	assert_true(catalog.validate_against(ItemCatalog.load_directory()).size() > 0, "one level only")

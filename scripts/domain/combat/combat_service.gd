@@ -45,11 +45,25 @@ extends ServerSystem
 ##            x uniform(damage_roll_min, damage_roll_max)   (saved RNG)
 ## applied with ZombieService.apply_damage_to_zombie(target, damage, player).
 ##
+## Durability (F-3, FD-3): every hit that lands takes one use off the
+## carried item that granted the weapon (the lowest slot holding an item of
+## that weapon). Misses cost nothing. Uses left are kept in the item's
+## ItemInstance.condition (uses / max_durability, see
+## MeleeWeaponDefinition.uses_left), so they are saved and replicated with
+## the item as before: InventoryService.set_item_condition announces the
+## change and InventoryNetModule sends the owner the changed item. At 0 uses
+## the item breaks: it is removed (InventoryService.remove_item), the owner
+## is told it is gone, and the next swing uses the next carried weapon or
+## bare hands. Bare hands never wear.
+##
 ## Events (drain_events and ActionResult.event; JSON-safe):
 ##   melee_attack {event_type, attacker_id, weapon_id, aim_yaw (wrapped to
 ##     [-PI, PI]), position: [x, y, z] (attacker), hit: bool,
 ##     target_id ("" on a miss), damage, target_health_after, target_died,
-##     world_time}
+##     world_time, weapon_item_id ("" = bare hands), durability_left (uses
+##     left after this swing; UNBREAKABLE for bare hands), weapon_broke}
+## The last three are server-side only: CombatNetModule.to_public_event does
+## not send them (clients see the item change in their own inventory).
 ## On a miss damage and target_health_after are 0 and target_died is false.
 ##
 ## Save: world_state.json `systems.combat` =
@@ -74,6 +88,9 @@ const REASON_NOT_ENOUGH_STAMINA: String = "not_enough_stamina"
 
 const NO_TARGET: String = ""
 const READY: float = 0.0
+## durability_left of a swing with bare hands (they never wear).
+const UNBREAKABLE: int = -1
+const NO_ITEM: String = ""
 
 ## Diagnostics (tests / profiling).
 var dropped_event_count: int = 0
@@ -152,10 +169,19 @@ func request_melee_attack(world: ServerWorld, player_id: String, aim_yaw: float)
 		"target_health_after": 0.0,
 		"target_died": false,
 		"world_time": _clock.world_time_sec,
+		"weapon_item_id": NO_ITEM,
+		"durability_left": UNBREAKABLE,
+		"weapon_broke": false,
 	}
+	var weapon_item: ItemInstance = _weapon_item(world, player, weapon)
+	if weapon_item != null:
+		event["weapon_item_id"] = weapon_item.item_instance_id
+		event["durability_left"] = weapon.uses_left(weapon_item.condition)
 	var target_id: String = _pick_zombie(zombies, player.position, yaw, weapon)
 	if not target_id.is_empty():
 		_hit(zombies, survival, player_id, weapon, target_id, event)
+	if bool(event["hit"]) and weapon_item != null:
+		_wear(world, player, weapon, weapon_item, event)
 	_make_noise(world, player, weapon)
 	_push_event(event)
 	GameLogger.info("combat", "melee attack", {
@@ -236,6 +262,40 @@ func _carried_definition_ids(world: ServerWorld, player: PlayerState) -> PackedS
 
 static func _slot_index(slot_id: String) -> int:
 	return slot_id.trim_prefix(InventoryService.SLOT_PREFIX).to_int()
+
+
+## The carried item that grants `weapon` and wears when it hits: the one in
+## the lowest slot (numeric order). Null for bare hands or when no carried
+## item grants it.
+func _weapon_item(world: ServerWorld, player: PlayerState, weapon: MeleeWeaponDefinition) -> ItemInstance:
+	if not weapon.wears() or weapon.item_definition_id.is_empty():
+		return null
+	var best: ItemInstance = null
+	for item: ItemInstance in world.inventory.items_in_inventory(player.inventory_id):
+		if item.definition_id != weapon.item_definition_id:
+			continue
+		if best == null or _slot_index(item.slot_id) < _slot_index(best.slot_id):
+			best = item
+	return best
+
+
+## Takes one use off the item of a weapon that hit (FD-3); at 0 uses the
+## item breaks and leaves the game. Fills in durability_left / weapon_broke.
+## A refused inventory change is logged and loses only the wear.
+func _wear(world: ServerWorld, player: PlayerState, weapon: MeleeWeaponDefinition, item: ItemInstance, event: Dictionary) -> void:
+	var uses: int = maxi(weapon.uses_left(item.condition) - 1, 0)
+	event["durability_left"] = uses
+	if uses > 0:
+		var worn: ActionResult = world.inventory.set_item_condition(player.inventory_id, item.item_instance_id, weapon.condition_for_uses(uses))
+		if not worn.ok:
+			GameLogger.error("combat", "weapon wear rejected", {"player_id": player.player_id, "entity_id": item.item_instance_id, "weapon_id": weapon.weapon_id, "reason": worn.reason, "operation": "melee_wear"})
+		return
+	var broken: ActionResult = world.inventory.remove_item(player.inventory_id, item.item_instance_id, 1)
+	if not broken.ok:
+		GameLogger.error("combat", "broken weapon not removed", {"player_id": player.player_id, "entity_id": item.item_instance_id, "weapon_id": weapon.weapon_id, "reason": broken.reason, "operation": "melee_break"})
+		return
+	event["weapon_broke"] = true
+	GameLogger.info("combat", "weapon broke", {"player_id": player.player_id, "entity_id": item.item_instance_id, "weapon_id": weapon.weapon_id, "operation": "melee_break"})
 
 
 ## Nearest living zombie inside the weapon's range and arc ("" = none).

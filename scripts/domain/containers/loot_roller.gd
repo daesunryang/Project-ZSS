@@ -28,8 +28,11 @@ static func seed_for(world_seed: int, container_id: String) -> int:
 ## The stacks one search of `table` finds with `roll_seed`, in roll order:
 ## [{definition_id: String, quantity: int}]. A roll that found nothing adds
 ## no stack. No table or a table without rolls gives nothing. The table is
-## expected to be valid (LootTable.validate).
-static func roll(table: LootTable, roll_seed: int) -> Array[Dictionary]:
+## expected to be valid (LootTable.validate). `tables` resolves the
+## sub-tables (F-3); a roll that lands on a sub-table it does not know finds
+## nothing. A table without sub-tables draws exactly the same numbers as
+## before sub-tables existed.
+static func roll(table: LootTable, roll_seed: int, tables: LootTableCatalog = null) -> Array[Dictionary]:
 	var stacks: Array[Dictionary] = []
 	if table == null:
 		return stacks
@@ -44,19 +47,39 @@ static func roll(table: LootTable, roll_seed: int) -> Array[Dictionary]:
 		var entry: int = _entry_at(table, pick)
 		if entry < 0:
 			continue
-		stacks.append({
-			KEY_DEFINITION_ID: table.item_definition_ids[entry],
-			KEY_QUANTITY: rng.randi_range(table.quantities_min[entry], table.quantities_max[entry]),
-		})
+		if entry < table.entry_count():
+			stacks.append(_stack(table, entry, rng))
+			continue
+		# A sub-table: one more pick inside it, by its own weights.
+		var sub: LootTable = tables.get_table(table.subtable_ids[entry - table.entry_count()]) if tables != null else null
+		if sub == null or sub.total_weight() <= 0.0:
+			continue
+		var sub_entry: int = _entry_at(sub, rng.randf() * sub.total_weight())
+		# One level only: a nested sub-table finds nothing.
+		if sub_entry < 0 or sub_entry >= sub.entry_count():
+			continue
+		stacks.append(_stack(sub, sub_entry, rng))
 	return stacks
 
 
-## Index of the entry the weight position `pick` falls on, -1 for "nothing"
-## (the weights of the entries come first, then `nothing_weight`).
+static func _stack(table: LootTable, entry: int, rng: RandomNumberGenerator) -> Dictionary:
+	return {
+		KEY_DEFINITION_ID: table.item_definition_ids[entry],
+		KEY_QUANTITY: rng.randi_range(table.quantities_min[entry], table.quantities_max[entry]),
+	}
+
+
+## Index the weight position `pick` falls on: an item entry (0 ..
+## entry_count - 1), then a sub-table (entry_count + its index), or -1 for
+## "nothing" (`nothing_weight` comes last).
 static func _entry_at(table: LootTable, pick: float) -> int:
 	var passed: float = 0.0
 	for index: int in range(table.entry_count()):
 		passed += table.weights[index]
 		if pick < passed:
 			return index
+	for index: int in range(table.subtable_count()):
+		passed += table.subtable_weights[index]
+		if pick < passed:
+			return table.entry_count() + index
 	return -1
