@@ -533,6 +533,48 @@ func test_a_world_saved_before_the_roster_gets_it_once() -> void:
 	assert_false(_npcs(old_world).is_seeded())
 
 
+
+func test_a_world_seeded_with_a_smaller_roster_gets_the_new_npcs_at_the_next_start() -> void:
+	# A world seeded when the dev roster had five NPCs (before 2026-11-23).
+	var full: NpcRoster = NpcRoster.load_or_null()
+	var five: NpcRoster = full.duplicate() as NpcRoster
+	five.npc_definition_ids = full.npc_definition_ids.slice(0, 5)
+	five.content_version = full.content_version - 1
+	var old_config: CompositionConfig = _shipped_config()
+	old_config.npc_roster = five
+	var old_world: ServerWorld = _world(WorldCellStore.new(), old_config, false)
+	assert_eq(old_world.seed_new_world(DevWorldSeed.new()), OK)
+	assert_eq(_npcs(old_world).population_count(), 5)
+	var before: PackedStringArray = _npcs(old_world).seeded_npc_ids(ROSTER_ID)
+	var documents: Dictionary = _json(old_world.to_documents())
+	# The same save, started by a server with the ten.
+	var world: ServerWorld = _world(WorldCellStore.new(), _shipped_config(), false)
+	assert_eq(world.restore_documents(documents["world_state"], documents["players"], documents["cells"]).size(), 0)
+	var service: NpcService = _npcs(world)
+	assert_eq(service.ensure_seeded(world), OK)
+	assert_eq(service.population_count(), 10, "the five new NPCs are placed")
+	assert_eq(int(service.last_seed_report[NpcService.REPORT_NPCS]), 5, "only the new ones")
+	var after: PackedStringArray = service.seeded_npc_ids(ROSTER_ID)
+	for npc_id: String in before:
+		assert_true(after.has(npc_id), "%s is still there under the same id" % npc_id)
+	var record: Dictionary = (_npc_part(_json(world.to_documents())["world_state"])[NpcService.KEY_ROSTERS] as Dictionary)[ROSTER_ID]
+	assert_eq(int(record[NpcService.KEY_CONTENT_VERSION]), full.content_version, "the record names the roster it has now")
+	var sequence: int = world.ids.get_next_sequence()
+	assert_eq(service.ensure_seeded(world), OK)
+	assert_eq(world.ids.get_next_sequence(), sequence, "once: the next start places nobody")
+	# A roster that lost a definition takes nobody away.
+	var fewer: NpcRoster = full.duplicate() as NpcRoster
+	fewer.npc_definition_ids = full.npc_definition_ids.slice(0, 9)
+	fewer.content_version = full.content_version + 1
+	var smaller_config: CompositionConfig = _shipped_config()
+	smaller_config.npc_roster = fewer
+	var later: ServerWorld = _world(WorldCellStore.new(), smaller_config, false)
+	var saved: Dictionary = _json(world.to_documents())
+	assert_eq(later.restore_documents(saved["world_state"], saved["players"], saved["cells"]).size(), 0)
+	assert_eq(_npcs(later).ensure_seeded(later), OK)
+	assert_eq(_npcs(later).population_count(), 10, "the world keeps who it has")
+
+
 # ------------------------------------------------------------ real files
 
 func test_seeded_npcs_survive_cell_unloads_and_server_restarts_on_disk() -> void:

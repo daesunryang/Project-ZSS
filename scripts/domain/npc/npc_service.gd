@@ -436,7 +436,7 @@ func seeded_npc_id(roster_id: String, definition_id: String) -> String:
 
 ## Places every NPC of the configured roster that this world does not have
 ## yet on its home spot, and records it. Does nothing without a roster or
-## for a complete one. Returns OK, or an error (logged) when a home spot
+## for a complete one that has every definition of the roster. Returns OK, or an error (logged) when a home spot
 ## cannot be found, its cell cannot be loaded, the spawn is refused or the
 ## cells cannot be saved: the roster is then not marked complete and the
 ## next call goes on where this one stopped.
@@ -446,9 +446,20 @@ func ensure_seeded(world: ServerWorld) -> Error:
 	var roster_id: String = _roster.roster_id
 	var record: Dictionary = _rosters.get(roster_id, {})
 	if bool(record.get(KEY_COMPLETE, false)):
-		if int(record.get(KEY_CONTENT_VERSION, 0)) != _roster.content_version:
-			GameLogger.info("npc", "the roster changed since this world was given it; the world keeps who it has", {"world_id": world.world_id, "roster_id": roster_id, "seeded_version": int(record.get(KEY_CONTENT_VERSION, 0)), "content_version": _roster.content_version})
-		return OK
+		# A roster that grew since this world got it (2026-11-23: five dev
+		# NPCs became ten) places the new definitions now. Who the world has
+		# stays: a definition taken out of the roster keeps its NPC, and a
+		# placed definition is never placed again.
+		var missing: int = 0
+		for definition_id: String in _roster.npc_definition_ids:
+			if not (record[KEY_NPCS] as Dictionary).has(definition_id):
+				missing += 1
+		if missing == 0:
+			if int(record.get(KEY_CONTENT_VERSION, 0)) != _roster.content_version:
+				GameLogger.info("npc", "the roster changed since this world was given it; the world keeps who it has", {"world_id": world.world_id, "roster_id": roster_id, "seeded_version": int(record.get(KEY_CONTENT_VERSION, 0)), "content_version": _roster.content_version})
+			return OK
+		GameLogger.info("npc", "the roster grew since this world was given it; the new NPCs are placed", {"world_id": world.world_id, "roster_id": roster_id, "seeded_version": int(record.get(KEY_CONTENT_VERSION, 0)), "content_version": _roster.content_version, "missing": missing})
+		record[KEY_COMPLETE] = false
 	var cells: WorldCellService = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
 	var started_usec: int = Time.get_ticks_usec()
 	if record.is_empty():
@@ -466,6 +477,7 @@ func ensure_seeded(world: ServerWorld) -> Error:
 			break
 	if error == OK:
 		record[KEY_COMPLETE] = true
+		record[KEY_CONTENT_VERSION] = _roster.content_version
 	var release_error: Error = _release(world, cells, loaded_here, report)
 	if error == OK:
 		error = release_error

@@ -2571,7 +2571,7 @@ Phase 4(docs/13 §6, §16) 티켓의 계약을 티켓마다 한 절씩 적는다
 
 **명단 배치(D5)**: 맵 콘텐츠(§15.3)와 같은 방식이다. `ensure_seeded(world)`가 명단의 정의마다 집 지점(`NpcRoster.spot_position`)의 셀을 `load_cell_now`로 로딩하고 `spawn_npc`로 놓고, 끝나면 로딩한 셀을 `release_cells_now`로 저장·해제한다.
 
-- 한 번만: `seed_new_world`(새 월드, 맵 콘텐츠 뒤)와 `WorldPersistence.load_or_create`(저장된 월드를 복구한 뒤: 명단이 없던 때의 저장, 중간에 멈춘 배치). 기록에 있는 정의는 다시 놓지 않는다. 명단 내용이 바뀌어도(`content_version`) 이미 받은 월드는 그대로 두고 로그만 남긴다. 저장된 월드에 배치하다 실패하면 서버 시작이 실패한다(`fatal`).
+- 한 번만: `seed_new_world`(새 월드, 맵 콘텐츠 뒤)와 `WorldPersistence.load_or_create`(저장된 월드를 복구한 뒤: 명단이 없던 때의 저장, 중간에 멈춘 배치). 기록에 있는 정의는 다시 놓지 않는다. 명단에 **새 정의가 더해졌으면** 이미 받은 월드에도 그 정의만 놓고 기록의 `content_version`을 지금 명단 값으로 바꾼다(2026-11-23, 개발용 명단 5 → 10명, 명단 `content_version` 2). 빠진 정의의 NPC는 남기고, 다른 변경(순서 등)은 로그만 남긴다. 저장된 월드에 배치하다 실패하면 서버 시작이 실패한다(`fatal`).
 - 조립 입력: `CompositionConfig.npc_roster`가 null이면 아무도 놓지 않는다(`from_defaults()`의 기본: 테스트·도구). `GameBootstrap`은 서버를 시작할 때 테스트 맵이 있으면 `NpcRoster.load_or_null()`을 넣는다. 그래서 기존 테스트에는 NPC가 생기지 않는다.
 
 **이 티켓의 소유 영역 밖 파일 변경**: `WorldPersistence.load_or_create`(명단 `ensure_seeded` 호출 여섯 줄), `GameBootstrap`(명단을 넣는 넉 줄), `tests/unit/server_system_seam_test.gd`(시스템 순서 목록에 `npc`). 계획(docs/13 §16.1)에 없던 파일 셋을 `scripts/domain/npc/`에 더했다: `npc_catalog.gd`, `npc_roster.gd`, `npc_stage.gd`.
