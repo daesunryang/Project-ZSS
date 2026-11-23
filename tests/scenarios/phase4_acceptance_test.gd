@@ -174,10 +174,10 @@ func test_five_npcs_live_three_days_and_a_restarted_server_goes_on_the_same() ->
 		for label: String in ["walk", "eat", "sleep", "work"]:
 			assert_true((run.labels[npc_id] as Dictionary).has(label), "%s was seen to %s" % [npc_id, label])
 	assert_true(run.longest_failure_streak() <= FAILURE_STREAK_BOUND, "nobody is stuck in one failure: %d in a row" % run.longest_failure_streak())
-	# The food: 20 units per house, nothing refills them (docs/15 P4-213).
+	# The food: 40 units per house (20 until 2026-11-23), nothing refills them (docs/15 P4-213).
 	var eaten: int = _eaten(run)
 	var left: int = run.units_in_containers(RATION)
-	var stocked: int = run.behaviours.stocked_count * 20
+	var stocked: int = run.behaviours.stocked_count * 40
 	print("[p4-z] food: %d containers stocked (%d units), %d eaten in %d days by 10 NPCs, %d carried, %d left in the containers: at this rate %.1f more days" % [run.behaviours.stocked_count, stocked, eaten, DAYS, _carried(run), left, float(left) / maxf(float(eaten) / float(DAYS), 0.001)])
 	assert_eq(stocked - eaten - _carried(run), left, "every unit is in a container, carried or eaten")
 	assert_eq(int(run.failure_counts().get("eat no_resource", 0)) + int(run.refusal_counts().get("eat", 0)), 0, "the food lasts three days: nobody goes without")
@@ -481,7 +481,7 @@ func test_soak_ten_calendar_days() -> void:
 				for action: String in MIN_PER_DAY:
 					assert_true(_times(day, action) >= int(MIN_PER_DAY[action]), "%s on day %d: %s %d times" % [npc_id, index + 1, action, _times(day, action)])
 			else:
-				# Without food (20 units per house and nothing refills them,
+				# Without food (40 units per house and nothing refills them,
 				# docs/15 P4-213): what the rules say happens, not a stall. The
 				# NPC still drinks and lies down, and it does something else
 				# when it cannot eat. An NPC whose hunger is in the danger
