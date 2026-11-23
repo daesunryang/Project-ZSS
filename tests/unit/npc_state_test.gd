@@ -202,7 +202,7 @@ func _late() -> NpcComponent:
 
 # ------------------------------------------------------------ data
 
-func test_the_shipped_dev_roster_is_five_valid_npcs_in_test_map_buildings() -> void:
+func test_the_shipped_dev_roster_is_ten_valid_npcs_in_test_map_buildings() -> void:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
 	# P4-5b: no behaviour layer here, so the NPCs decide nothing and stand
 	# still (what NPCs do is tested in npc_behaviour_test.gd).
@@ -213,7 +213,7 @@ func test_the_shipped_dev_roster_is_five_valid_npcs_in_test_map_buildings() -> v
 	if roster == null:
 		return
 	assert_eq(roster.validate().size(), 0, "; ".join(roster.validate()))
-	assert_eq(roster.npc_definition_ids.size(), 5, "docs/13 §16.3 D1: five NPCs")
+	assert_eq(roster.npc_definition_ids.size(), 10, "ten dev NPCs (user 2026-11-23: at least 10)")
 	config.map_content = MapContentDefinition.load_or_null()
 	config.npc_roster = roster
 	assert_eq(config.validate().size(), 0, "; ".join(config.validate()))
@@ -240,9 +240,9 @@ func test_the_shipped_dev_roster_is_five_valid_npcs_in_test_map_buildings() -> v
 		assert_true(home is Vector3, "%s has a home spot inside a building of the map" % definition_id)
 		if home is Vector3:
 			homes[home as Vector3] = true
-	assert_eq(names.size(), 5, "five different names")
-	assert_eq(homes.size(), 5, "five different home spots")
-	# The five are not copies of each other.
+	assert_eq(names.size(), 10, "ten different names")
+	assert_eq(homes.size(), 10, "ten different home spots")
+	# The ten are not copies of each other.
 	var first: NpcDefinition = config.npc_definitions.get_definition(roster.npc_definition_ids[0])
 	var second: NpcDefinition = config.npc_definitions.get_definition(roster.npc_definition_ids[1])
 	assert_ne(first.personality(), second.personality())

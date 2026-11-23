@@ -1,0 +1,44 @@
+[gd_resource type="Resource" script_class="NpcDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/npc_definition.gd" id="1_npc"]
+
+[resource]
+script = ExtResource("1_npc")
+definition_id = "dev_npc_bongsu"
+display_name = "최봉수"
+appearance = {
+"body_type": "sturdy",
+"bottom_color": "khaki",
+"hair_color": "white",
+"hair_style": "short",
+"height": "below_average",
+"skin_tone": "tone_6",
+"top_color": "brown"
+}
+age_group = "elder"
+background_tags = PackedStringArray("rancher", "widower")
+extraversion = 0.35
+agreeableness = 0.6
+conscientiousness = 0.65
+openness = 0.4
+neuroticism = 0.3
+impulsivity = 0.25
+self_interest = 0.3
+courage = 0.6
+jealousy_proneness = 0.2
+animal_affinity = 0.9
+risk_tolerance = 0.4
+skill_combat = 0.25
+skill_medical = 0.2
+skill_farming = 0.5
+skill_cooking = 0.35
+skill_construction = 0.3
+skill_maintenance = 0.4
+skill_crafting = 0.35
+skill_social = 0.35
+job_role = "animal_care"
+home_building_id = "house_c"
+home_tile_offset = Vector2i(2, 1)
+work_building_id = "garage"
+work_tile_offset = Vector2i(3, 3)
+bedtime_hour = 21.25

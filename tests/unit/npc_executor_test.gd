@@ -329,10 +329,10 @@ func test_the_shipped_spots_fit_the_test_map_and_bad_spots_are_refused() -> void
 	assert_eq(spots.validate().size(), 0, "; ".join(spots.validate()))
 	assert_eq(spots.validate_against(map, grid, half_extent).size(), 0, "; ".join(spots.validate_against(map, grid, half_extent)))
 	# D7: beds, work places, water and the food container, as map data.
-	assert_eq(spots.spot_ids(NpcSpotDefinition.KIND_BED).size(), 5)
+	assert_eq(spots.spot_ids(NpcSpotDefinition.KIND_BED).size(), 10)
 	assert_eq(spots.spot_ids(NpcSpotDefinition.KIND_WATER).size(), 3)
 	assert_eq(spots.spot_ids(NpcSpotDefinition.KIND_FOOD).size(), 3)
-	assert_eq(spots.spot_ids(NpcSpotDefinition.KIND_WORK).size(), 5)
+	assert_eq(spots.spot_ids(NpcSpotDefinition.KIND_WORK).size(), 10)
 	for house: String in ["house_a", "house_b", "house_c"]:
 		assert_true(spots.spot_ids(NpcSpotDefinition.KIND_BED, house).size() >= 1, "%s has a bed" % house)
 		assert_eq(spots.spot_ids(NpcSpotDefinition.KIND_WATER, house).size(), 1, "%s has water" % house)
@@ -397,8 +397,8 @@ func test_a_world_with_the_test_map_gives_the_executor_the_shipped_spots() -> vo
 	assert_not_null(executor)
 	if executor == null:
 		return
-	assert_eq(executor.free_spot_ids().size(), 16)
-	assert_eq(executor.free_spot_ids(NpcSpotDefinition.KIND_BED).size(), 5)
+	assert_eq(executor.free_spot_ids().size(), 26)
+	assert_eq(executor.free_spot_ids(NpcSpotDefinition.KIND_BED).size(), 10)
 	assert_eq(executor.free_spot_ids(NpcSpotDefinition.KIND_WATER, "house_b"), PackedStringArray(["water_house_b"]))
 	# house_a starts at tile (8, 8); its first bed is the tile (1, 1) inside.
 	assert_eq(executor.spot_position("bed_house_a_1"), Vector3(9.5, 0.0, 9.5))

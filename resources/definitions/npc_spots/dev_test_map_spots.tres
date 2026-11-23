@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="NpcSpotSet" load_steps=19 format=3]
+[gd_resource type="Resource" script_class="NpcSpotSet" load_steps=29 format=3]
 
 [ext_resource type="Script" path="res://scripts/domain/npc/behaviours/npc_spot_set.gd" id="1_set"]
 [ext_resource type="Script" path="res://scripts/domain/npc/behaviours/npc_spot_definition.gd" id="2_spot"]
@@ -137,8 +137,88 @@ building_id = "garage"
 tile_offset = Vector2i(2, 2)
 exclusive = true
 
+[sub_resource type="Resource" id="s_bed_house_a_3"]
+script = ExtResource("2_spot")
+spot_id = "bed_house_a_3"
+kind = "bed"
+building_id = "house_a"
+tile_offset = Vector2i(4, 1)
+exclusive = true
+
+[sub_resource type="Resource" id="s_bed_house_a_4"]
+script = ExtResource("2_spot")
+spot_id = "bed_house_a_4"
+kind = "bed"
+building_id = "house_a"
+tile_offset = Vector2i(4, 2)
+exclusive = true
+
+[sub_resource type="Resource" id="s_bed_house_b_3"]
+script = ExtResource("2_spot")
+spot_id = "bed_house_b_3"
+kind = "bed"
+building_id = "house_b"
+tile_offset = Vector2i(4, 1)
+exclusive = true
+
+[sub_resource type="Resource" id="s_bed_house_b_4"]
+script = ExtResource("2_spot")
+spot_id = "bed_house_b_4"
+kind = "bed"
+building_id = "house_b"
+tile_offset = Vector2i(1, 2)
+exclusive = true
+
+[sub_resource type="Resource" id="s_bed_house_c_2"]
+script = ExtResource("2_spot")
+spot_id = "bed_house_c_2"
+kind = "bed"
+building_id = "house_c"
+tile_offset = Vector2i(2, 1)
+exclusive = true
+
+[sub_resource type="Resource" id="s_work_warehouse_2"]
+script = ExtResource("2_spot")
+spot_id = "work_warehouse_2"
+kind = "work"
+building_id = "warehouse"
+tile_offset = Vector2i(5, 2)
+exclusive = true
+
+[sub_resource type="Resource" id="s_work_shed_2"]
+script = ExtResource("2_spot")
+spot_id = "work_shed_2"
+kind = "work"
+building_id = "shed"
+tile_offset = Vector2i(4, 2)
+exclusive = true
+
+[sub_resource type="Resource" id="s_work_clinic_2"]
+script = ExtResource("2_spot")
+spot_id = "work_clinic_2"
+kind = "work"
+building_id = "clinic"
+tile_offset = Vector2i(1, 1)
+exclusive = true
+
+[sub_resource type="Resource" id="s_work_store_2"]
+script = ExtResource("2_spot")
+spot_id = "work_store_2"
+kind = "work"
+building_id = "store"
+tile_offset = Vector2i(4, 1)
+exclusive = true
+
+[sub_resource type="Resource" id="s_work_garage_2"]
+script = ExtResource("2_spot")
+spot_id = "work_garage_2"
+kind = "work"
+building_id = "garage"
+tile_offset = Vector2i(3, 3)
+exclusive = true
+
 [resource]
 script = ExtResource("1_set")
 spot_set_id = "dev_test_map_spots"
 map_id = "dev_test_map"
-spots = Array[ExtResource("2_spot")]([SubResource("s_bed_house_a_1"), SubResource("s_bed_house_a_2"), SubResource("s_bed_house_b_1"), SubResource("s_bed_house_b_2"), SubResource("s_bed_house_c_1"), SubResource("s_water_house_a"), SubResource("s_water_house_b"), SubResource("s_water_house_c"), SubResource("s_food_house_a"), SubResource("s_food_house_b"), SubResource("s_food_house_c"), SubResource("s_work_clinic"), SubResource("s_work_warehouse"), SubResource("s_work_store"), SubResource("s_work_shed"), SubResource("s_work_garage")])
+spots = Array[ExtResource("2_spot")]([SubResource("s_bed_house_a_1"), SubResource("s_bed_house_a_2"), SubResource("s_bed_house_b_1"), SubResource("s_bed_house_b_2"), SubResource("s_bed_house_c_1"), SubResource("s_bed_house_a_3"), SubResource("s_bed_house_a_4"), SubResource("s_bed_house_b_3"), SubResource("s_bed_house_b_4"), SubResource("s_bed_house_c_2"), SubResource("s_water_house_a"), SubResource("s_water_house_b"), SubResource("s_water_house_c"), SubResource("s_food_house_a"), SubResource("s_food_house_b"), SubResource("s_food_house_c"), SubResource("s_work_clinic"), SubResource("s_work_warehouse"), SubResource("s_work_store"), SubResource("s_work_shed"), SubResource("s_work_garage"), SubResource("s_work_clinic_2"), SubResource("s_work_warehouse_2"), SubResource("s_work_store_2"), SubResource("s_work_shed_2"), SubResource("s_work_garage_2")])

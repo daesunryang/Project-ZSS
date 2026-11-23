@@ -1,10 +1,10 @@
 extends TestCase
-## P4-Z: what the NPC stages cost per server tick with 5, 25 and 50 NPCs
+## P4-Z: what the NPC stages cost per server tick with 10, 25 and 50 NPCs
 ## (100 only with ZSS_NPC_MEASURE_100=1), against the budget of docs/13
 ## §16.4. The composition of a dedicated server (NpcLifeRun), the same map
-## for every count: the five dev NPCs plus copies of them placed in rings
+## for every count: the ten dev NPCs plus copies of them placed in rings
 ## around the spawn point (they share the houses, beds, water and work
-## places of the five, so the larger counts also fight over spots).
+## places of the ten, so the larger counts also fight over spots).
 ##
 ## One long run per count instead of repetitions: the first 5.5 calendar
 ## hours go by in ticks of 1/20 s (nothing is measured), then 3 calendar
@@ -181,12 +181,13 @@ func _measure_once(count: int, least: PackedFloat32Array) -> Dictionary:
 	return result
 
 
-func test_measure_the_npc_stages_with_5_npcs() -> void:
-	var result: Dictionary = _measure(5)
+func test_measure_the_npc_stages_with_the_10_dev_npcs() -> void:
+	var result: Dictionary = _measure(10)
 	if result.is_empty():
 		return
-	# docs/13 §16.4: 5 NPCs, median <= 0.3 ms.
-	assert_time_bound(float(result["median"]), 0.3, "NPC stages, 5 NPCs, median")
+	# docs/13 §16.4 gives 5 NPCs a median <= 0.3 ms. The dev roster is 10
+	# since 2026-11-23 (user: at least 10) and the same bound still holds.
+	assert_time_bound(float(result["median"]), 0.3, "NPC stages, 10 NPCs, median")
 
 
 func test_measure_the_npc_stages_with_25_npcs() -> void:

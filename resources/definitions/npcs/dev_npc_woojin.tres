@@ -1,0 +1,44 @@
+[gd_resource type="Resource" script_class="NpcDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/npc_definition.gd" id="1_npc"]
+
+[resource]
+script = ExtResource("1_npc")
+definition_id = "dev_npc_woojin"
+display_name = "정우진"
+appearance = {
+"body_type": "athletic",
+"bottom_color": "olive",
+"hair_color": "black",
+"hair_style": "short",
+"height": "above_average",
+"skin_tone": "tone_4",
+"top_color": "green"
+}
+age_group = "adult"
+background_tags = PackedStringArray("security_guard", "city_born")
+extraversion = 0.4
+agreeableness = 0.5
+conscientiousness = 0.7
+openness = 0.35
+neuroticism = 0.35
+impulsivity = 0.3
+self_interest = 0.4
+courage = 0.8
+jealousy_proneness = 0.35
+animal_affinity = 0.4
+risk_tolerance = 0.6
+skill_combat = 0.75
+skill_medical = 0.2
+skill_farming = 0.05
+skill_cooking = 0.15
+skill_construction = 0.3
+skill_maintenance = 0.25
+skill_crafting = 0.1
+skill_social = 0.35
+job_role = "guard"
+home_building_id = "house_a"
+home_tile_offset = Vector2i(4, 1)
+work_building_id = "warehouse"
+work_tile_offset = Vector2i(5, 2)
+bedtime_hour = 22.5

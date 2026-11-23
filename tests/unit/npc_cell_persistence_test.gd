@@ -454,12 +454,12 @@ func test_the_dev_roster_is_placed_once_in_buildings_of_the_test_map() -> void:
 	assert_eq(world.seed_new_world(DevWorldSeed.new()), OK)
 	var service: NpcService = _npcs(world)
 	assert_true(service.is_seeded(), "a new world gets the roster")
-	assert_eq(service.population_count(), 5)
-	assert_eq(service.seeded_npc_ids(ROSTER_ID).size(), 5)
-	assert_eq(int(service.last_seed_report[NpcService.REPORT_NPCS]), 5)
+	assert_eq(service.population_count(), 10)
+	assert_eq(service.seeded_npc_ids(ROSTER_ID).size(), 10)
+	assert_eq(int(service.last_seed_report[NpcService.REPORT_NPCS]), 10)
 	assert_eq(service.npc_count(), 0, "the cells the seeding loaded were saved and released again")
 	_enter_town(world)
-	assert_eq(service.npc_count(), 5, "the five are in the middle of the map")
+	assert_eq(service.npc_count(), 10, "the ten are in the middle of the map")
 	var grid: StructureGrid = StructureGrid.new(config.building.grid_module_m)
 	var seen_definitions: Dictionary[String, bool] = {}
 	for npc_id: String in service.npc_ids():
@@ -475,7 +475,7 @@ func test_the_dev_roster_is_placed_once_in_buildings_of_the_test_map() -> void:
 		assert_true(MapBuildingPlan.footprint(building).has_point(grid.tile_of(npc.position)), "inside the building")
 		assert_eq(npc.rng.seed, NpcState.seed_for(config.npc.world_seed, npc_id))
 		assert_eq(service.seeded_npc_id(ROSTER_ID, npc.definition_id), npc_id)
-	assert_eq(seen_definitions.size(), 5, "one NPC per definition of the roster")
+	assert_eq(seen_definitions.size(), 10, "one NPC per definition of the roster")
 	# Asking again places nothing: not now, not after cells came and went,
 	# not after a restart.
 	var sequence: int = world.ids.get_next_sequence()
@@ -490,11 +490,11 @@ func test_the_dev_roster_is_placed_once_in_buildings_of_the_test_map() -> void:
 	assert_true(_npcs(restored).is_seeded())
 	assert_eq(_npcs(restored).ensure_seeded(restored), OK)
 	assert_eq(restored.ids.get_next_sequence(), sequence, "a restart places nobody")
-	assert_eq(_npcs(restored).population_count(), 5)
+	assert_eq(_npcs(restored).population_count(), 10)
 	assert_eq(_npcs(restored).last_seed_report.size(), 0, "the restored world never placed anybody")
 	var alice2: PlayerState = restored.join("alice")
 	_move(restored, alice2, TOWN)
-	assert_true(_same(_saved(restored), before), "the same five after the restart")
+	assert_true(_same(_saved(restored), before), "the same ten after the restart")
 
 
 func test_a_world_saved_before_the_roster_gets_it_once() -> void:
@@ -512,7 +512,7 @@ func test_a_world_saved_before_the_roster_gets_it_once() -> void:
 	assert_false(service.is_seeded())
 	assert_eq(service.ensure_seeded(world), OK)
 	assert_true(service.is_seeded())
-	assert_eq(service.population_count(), 5)
+	assert_eq(service.population_count(), 10)
 	var sequence: int = world.ids.get_next_sequence()
 	assert_eq(service.ensure_seeded(world), OK)
 	assert_eq(world.ids.get_next_sequence(), sequence, "once: the second start places nobody")
@@ -526,7 +526,7 @@ func test_a_world_saved_before_the_roster_gets_it_once() -> void:
 	assert_eq(_npcs(resumed).ensure_seeded(resumed), OK)
 	assert_true(_npcs(resumed).is_seeded())
 	assert_eq(int(_npcs(resumed).last_seed_report[NpcService.REPORT_NPCS]), 0, "everybody the record lists is there already")
-	assert_eq(_npcs(resumed).population_count(), 5)
+	assert_eq(_npcs(resumed).population_count(), 10)
 	# A world without a roster places nobody and says so.
 	assert_eq(_npcs(old_world).ensure_seeded(old_world), OK)
 	assert_eq(_npcs(old_world).population_count(), 0)
@@ -542,38 +542,38 @@ func test_seeded_npcs_survive_cell_unloads_and_server_restarts_on_disk() -> void
 	if world == null:
 		return
 	assert_eq(_npcs(world).npc_count(), 0, "a server start brings no cell into memory")
-	assert_eq(_npcs(world).population_count(), 5)
+	assert_eq(_npcs(world).population_count(), 10)
 	var on_disk: Dictionary = _npcs_on_disk()
-	assert_eq(on_disk.size(), 5, "the new world was saved with its five NPCs, each once")
+	assert_eq(on_disk.size(), 10, "the new world was saved with its ten NPCs, each once")
 	var alice: PlayerState = _enter_town(world)
 	var sequence: int = world.ids.get_next_sequence()
 	var before: Dictionary = _saved(world)
-	assert_eq(before.size(), 5)
+	assert_eq(before.size(), 10)
 	var ids: PackedStringArray = _npcs(world).npc_ids()
 
 	# 1. A save with the cells in memory, then a restart.
 	assert_eq(WorldPersistence.new(_save_service(), config).save(world), OK)
 	var world_file: Dictionary = _read_json(_save_service().world_dir(WORLD).path_join(SaveService.WORLD_STATE_FILE))
 	assert_false(_npc_part(world_file).has(NpcService.KEY_NPCS), "NPCs of cells in memory are saved in their cell files, not in the world file")
-	assert_eq((_npc_part(world_file)[NpcService.KEY_POPULATION] as Dictionary).size(), 5)
-	assert_eq(_npcs_on_disk().size(), 5)
+	assert_eq((_npc_part(world_file)[NpcService.KEY_POPULATION] as Dictionary).size(), 10)
+	assert_eq(_npcs_on_disk().size(), 10)
 	var second: ServerWorld = _boot(config)
 	assert_not_null(second, "the save loads")
 	if second == null:
 		return
 	assert_eq(_npcs(second).npc_count(), 0)
-	assert_eq(_npcs(second).population_count(), 5)
+	assert_eq(_npcs(second).population_count(), 10)
 	assert_true(_npcs(second).is_seeded())
 	assert_eq(second.ids.get_next_sequence(), sequence, "the restart placed nobody and no saved id can be handed out again")
 	var alice2: PlayerState = second.join("alice")
 	_move(second, alice2, TOWN)
 	assert_eq(_npcs(second).npc_ids(), ids)
-	assert_true(_same(_saved(second), before), "the same five NPCs after a restart")
+	assert_true(_same(_saved(second), before), "the same ten NPCs after a restart")
 
 	# 2. The cells are released (the unload saves the world), then a restart.
 	_move(second, alice2, CORNER, SHIPPED_RELEASE_SEC)
 	assert_eq(_npcs(second).npc_count(), 0, "the town cells were released")
-	assert_eq(_npcs_on_disk().size(), 5, "every NPC is on disk once, whichever cells are in memory")
+	assert_eq(_npcs_on_disk().size(), 10, "every NPC is on disk once, whichever cells are in memory")
 	var third: ServerWorld = _boot(config)
 	assert_not_null(third)
 	if third == null:
@@ -581,10 +581,10 @@ func test_seeded_npcs_survive_cell_unloads_and_server_restarts_on_disk() -> void
 	assert_eq(third.ids.get_next_sequence(), sequence)
 	var alice3: PlayerState = third.join("alice")
 	_move(third, alice3, TOWN)
-	assert_true(_same(_saved(third), before), "the same five NPCs after an unload and a restart")
+	assert_true(_same(_saved(third), before), "the same ten NPCs after an unload and a restart")
 	for npc_id: String in ids:
 		assert_eq(third.registry.kind_of(npc_id), KIND)
-	assert_eq(_npcs(third).population_count(), 5, "no NPC was placed a second time")
+	assert_eq(_npcs(third).population_count(), 10, "no NPC was placed a second time")
 	assert_false(_log_text().contains("[ERROR]"), "no errors on the way")
 	assert_true(alice.player_id == alice3.player_id)
 
@@ -604,10 +604,10 @@ func test_a_save_on_disk_from_before_the_roster_gets_its_npcs_at_the_next_start(
 	if world == null:
 		return
 	assert_true(_npcs(world).is_seeded())
-	assert_eq(_npcs(world).population_count(), 5)
+	assert_eq(_npcs(world).population_count(), 10)
 	assert_eq(_npcs(world).npc_count(), 0, "the cells the seeding loaded were saved and released")
 	var on_disk: Dictionary = _npcs_on_disk()
-	assert_eq(on_disk.size(), 5, "what was placed is on disk before anybody joins")
+	assert_eq(on_disk.size(), 10, "what was placed is on disk before anybody joins")
 	var sequence: int = world.ids.get_next_sequence()
 	# And never again.
 	var again: ServerWorld = _boot(config)
@@ -615,5 +615,5 @@ func test_a_save_on_disk_from_before_the_roster_gets_its_npcs_at_the_next_start(
 	if again == null:
 		return
 	assert_eq(again.ids.get_next_sequence(), sequence, "the second start places nobody")
-	assert_eq(_npcs(again).population_count(), 5)
+	assert_eq(_npcs(again).population_count(), 10)
 	assert_true(_same(_npcs_on_disk(), on_disk), "and changes nothing on disk")

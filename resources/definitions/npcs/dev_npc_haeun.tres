@@ -1,0 +1,44 @@
+[gd_resource type="Resource" script_class="NpcDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/npc_definition.gd" id="1_npc"]
+
+[resource]
+script = ExtResource("1_npc")
+definition_id = "dev_npc_haeun"
+display_name = "이하은"
+appearance = {
+"body_type": "lean",
+"bottom_color": "black",
+"hair_color": "auburn",
+"hair_style": "bob",
+"height": "short",
+"skin_tone": "tone_1",
+"top_color": "white"
+}
+age_group = "young_adult"
+background_tags = PackedStringArray("graduate_student", "bookworm")
+extraversion = 0.3
+agreeableness = 0.55
+conscientiousness = 0.8
+openness = 0.9
+neuroticism = 0.5
+impulsivity = 0.3
+self_interest = 0.45
+courage = 0.4
+jealousy_proneness = 0.25
+animal_affinity = 0.45
+risk_tolerance = 0.45
+skill_combat = 0.05
+skill_medical = 0.45
+skill_farming = 0.2
+skill_cooking = 0.2
+skill_construction = 0.1
+skill_maintenance = 0.3
+skill_crafting = 0.4
+skill_social = 0.3
+job_role = "research"
+home_building_id = "house_b"
+home_tile_offset = Vector2i(1, 2)
+work_building_id = "store"
+work_tile_offset = Vector2i(4, 1)
+bedtime_hour = 1.5

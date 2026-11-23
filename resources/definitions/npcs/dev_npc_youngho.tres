@@ -1,0 +1,44 @@
+[gd_resource type="Resource" script_class="NpcDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/npc_definition.gd" id="1_npc"]
+
+[resource]
+script = ExtResource("1_npc")
+definition_id = "dev_npc_youngho"
+display_name = "김영호"
+appearance = {
+"body_type": "heavy",
+"bottom_color": "brown",
+"hair_color": "dark_brown",
+"hair_style": "bald",
+"height": "average",
+"skin_tone": "tone_5",
+"top_color": "blue"
+}
+age_group = "middle_aged"
+background_tags = PackedStringArray("janitor", "father")
+extraversion = 0.45
+agreeableness = 0.7
+conscientiousness = 0.75
+openness = 0.3
+neuroticism = 0.4
+impulsivity = 0.25
+self_interest = 0.35
+courage = 0.5
+jealousy_proneness = 0.3
+animal_affinity = 0.5
+risk_tolerance = 0.3
+skill_combat = 0.2
+skill_medical = 0.2
+skill_farming = 0.15
+skill_cooking = 0.3
+skill_construction = 0.25
+skill_maintenance = 0.6
+skill_crafting = 0.15
+skill_social = 0.4
+job_role = "cleaning"
+home_building_id = "house_b"
+home_tile_offset = Vector2i(4, 1)
+work_building_id = "clinic"
+work_tile_offset = Vector2i(1, 1)
+bedtime_hour = 23.5

@@ -1,7 +1,7 @@
 extends TestCase
 ## P4-Z: the Phase 4 acceptance scenario (docs/13 §16.1, completion
 ## criterion §16 / §6): in the composition of a dedicated server (the test
-## map, the five dev NPCs, a fixed seed; NpcLifeRun says what differs) the
+## map, the ten dev NPCs, a fixed seed; NpcLifeRun says what differs) the
 ## NPCs live by themselves.
 ##   1. Three calendar days without anybody telling them anything: they eat,
 ##      drink, rest (to the end) and work every day, no need stays in the
@@ -137,7 +137,7 @@ func test_five_npcs_live_three_days_and_a_restarted_server_goes_on_the_same() ->
 	var ids: PackedStringArray = run.npcs().npc_ids()
 	run.step()
 	ids = run.npcs().npc_ids()
-	assert_eq(ids.size(), 5, "the dev roster is in memory around the spawn point")
+	assert_eq(ids.size(), 10, "the dev roster is in memory around the spawn point")
 	var saved: bool = false
 	var twin_documents: Dictionary = {}
 	for day: int in range(DAYS):
@@ -178,7 +178,7 @@ func test_five_npcs_live_three_days_and_a_restarted_server_goes_on_the_same() ->
 	var eaten: int = _eaten(run)
 	var left: int = run.units_in_containers(RATION)
 	var stocked: int = run.behaviours.stocked_count * 20
-	print("[p4-z] food: %d containers stocked (%d units), %d eaten in %d days by 5 NPCs, %d carried, %d left in the containers: at this rate %.1f more days" % [run.behaviours.stocked_count, stocked, eaten, DAYS, _carried(run), left, float(left) / maxf(float(eaten) / float(DAYS), 0.001)])
+	print("[p4-z] food: %d containers stocked (%d units), %d eaten in %d days by 10 NPCs, %d carried, %d left in the containers: at this rate %.1f more days" % [run.behaviours.stocked_count, stocked, eaten, DAYS, _carried(run), left, float(left) / maxf(float(eaten) / float(DAYS), 0.001)])
 	assert_eq(stocked - eaten - _carried(run), left, "every unit is in a container, carried or eaten")
 	assert_eq(int(run.failure_counts().get("eat no_resource", 0)) + int(run.refusal_counts().get("eat", 0)), 0, "the food lasts three days: nobody goes without")
 	assert_true(run.behaviours.movement_executor().doors_opened_count > 0, "they went through doors")
@@ -299,13 +299,13 @@ func test_npc_cells_released_in_the_middle_of_a_day_come_back_and_the_npcs_go_on
 	run.run_ticks(10 * TICKS_PER_HOUR, 0)
 	var npcs: NpcService = run.npcs()
 	var ids: PackedStringArray = npcs.npc_ids()
-	assert_eq(ids.size(), 5)
+	assert_eq(ids.size(), 10)
 	var busy: int = 0
 	var counts_before: Dictionary = {}
 	for npc_id: String in ids:
 		busy += 1 if run.behaviour_of(npc_id).is_running() else 0
 		counts_before[npc_id] = run.counts_of(npc_id)
-	assert_true(busy >= 3, "they are in the middle of things: %d of 5 act" % busy)
+	assert_true(busy >= 3, "they are in the middle of things: %d of 10 act" % busy)
 	var home: Vector3 = run.observer.position
 	# The player leaves: the cells go to sleep, then out of memory (into
 	# their files). What every NPC was when it stopped is kept.
@@ -320,8 +320,8 @@ func test_npc_cells_released_in_the_middle_of_a_day_come_back_and_the_npcs_go_on
 		if gone_tick < 0 and npcs.npc_count() == 0:
 			gone_tick = tick
 	assert_eq(npcs.npc_count(), 0, "the NPCs left memory with their cells")
-	assert_eq(asleep.size(), 5, "every NPC slept before it left")
-	assert_eq(npcs.population_count(), 5, "the world still knows its five")
+	assert_eq(asleep.size(), 10, "every NPC slept before it left")
+	assert_eq(npcs.population_count(), 10, "the world still knows its ten")
 	var on_disk: PackedStringArray = SaveService.new(_root.path_join("cells")).saved_cell_ids(WORLD)
 	assert_true(on_disk.size() > 0, "the cells are in files")
 	var decisions_away: int = run.decisions.size()
@@ -333,8 +333,8 @@ func test_npc_cells_released_in_the_middle_of_a_day_come_back_and_the_npcs_go_on
 	var back_tick: int = run.tick
 	run.step()
 	npcs.npc_entered.disconnect(on_entered)
-	assert_eq(npcs.npc_ids(), ids, "the same five are back")
-	assert_eq(entered.size(), 5)
+	assert_eq(npcs.npc_ids(), ids, "the same ten are back")
+	assert_eq(entered.size(), 10)
 	for npc_id: String in ids:
 		assert_eq(NpcLifeRun.first_difference(entered.get(npc_id, {}), asleep.get(npc_id, {}), npc_id), "", "%s comes back as it left, to the last bit" % npc_id)
 	# And they go on: three more calendar hours.
@@ -405,7 +405,7 @@ func test_two_clients_see_the_same_npcs_and_nothing_private_is_sent() -> void:
 	if a == null or b == null:
 		return
 	var npcs: NpcService = world.get_system(NpcService.SYSTEM_ID) as NpcService
-	assert_true(await _cluster.wait_ticks_until(func() -> bool: return _mirror(a).npc_count() == 5 and _mirror(b).npc_count() == 5, NET_WAIT_TICKS), "both clients know the five NPCs")
+	assert_true(await _cluster.wait_ticks_until(func() -> bool: return _mirror(a).npc_count() == 10 and _mirror(b).npc_count() == 10, NET_WAIT_TICKS), "both clients know the ten NPCs")
 	# They start to act by themselves (their first decision comes within 2 s
 	# or 10 s): both clients see a label that is not "idle".
 	var acting: Callable = func() -> bool:
@@ -416,7 +416,7 @@ func test_two_clients_see_the_same_npcs_and_nothing_private_is_sent() -> void:
 		return false
 	assert_true(await _cluster.wait_ticks_until(acting, NET_WAIT_TICKS), "both clients see an NPC do something")
 	# The same rows on both, and they are the server's public state.
-	var same: Callable = func() -> bool: return _rows(a) == _rows(b) and _rows(a).size() == 5
+	var same: Callable = func() -> bool: return _rows(a) == _rows(b) and _rows(a).size() == 10
 	assert_true(await _cluster.wait_ticks_until(same, NET_WAIT_TICKS), "both clients hold the same NPC rows")
 	var rows: Dictionary = _rows(a)
 	var public_keys: Array = [NpcNetProtocol.KEY_NPC_ID, NpcNetProtocol.KEY_NAME, NpcNetProtocol.KEY_APPEARANCE, NpcNetProtocol.KEY_POSITION, NpcNetProtocol.KEY_YAW, NpcNetProtocol.KEY_ACTION_LABEL, NpcNetProtocol.KEY_POSTURE]
@@ -443,7 +443,7 @@ func test_two_clients_see_the_same_npcs_and_nothing_private_is_sent() -> void:
 			assert_not_contains(wire_text, word, "nothing private on the wire: " + word)
 		assert_eq(_mirror(client).rejected_payload_count, 0)
 		assert_eq(_mirror(client).event_gap_count, 0)
-	print("[p4-z net] two clients, the same 5 rows: %s" % ", ".join(labels_seen))
+	print("[p4-z net] two clients, the same %d rows: %s" % [labels_seen.size(), ", ".join(labels_seen)])
 
 
 # ------------------------------------------------------------ 7

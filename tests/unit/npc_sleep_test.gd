@@ -1,5 +1,5 @@
 extends TestCase
-## F-6: the night sleep and the naps of the five dev NPCs, in the
+## F-6: the night sleep and the naps of the ten dev NPCs, in the
 ## composition of a dedicated server (NpcLifeRun: the shipped settings, map,
 ## roster, spots and actions; docs/09 §17.11). Nobody tells the NPCs
 ## anything. Over the first day and the night after it every NPC goes to bed
@@ -51,7 +51,7 @@ func test_over_a_day_every_dev_npc_sleeps_once_from_its_own_bedtime_until_fatigu
 			(napped.get_or_add(npc_id, []) as Array).append([run.tick, needs.value(NpcNeedKind.FATIGUE)]))
 	run.run_ticks(RUN_HOURS * TICKS_PER_HOUR)
 	var ids: PackedStringArray = run.npcs().npc_ids()
-	assert_eq(ids.size(), 5, "the five dev NPCs")
+	assert_eq(ids.size(), 10, "the ten dev NPCs")
 	# [bedtime counted from midnight of day 1, hour it went to bed]
 	var nights: Array[Array] = []
 	for npc_id: String in ids:

@@ -1,7 +1,7 @@
 extends TestCase
 ## P4-5b: the decision layer and the behaviours joined, in the composition
 ## of a dedicated server (docs/09 §17.8): the shipped settings, the test
-## map with its buildings, doors and containers, the five dev NPCs, the
+## map with its buildings, doors and containers, the ten dev NPCs, the
 ## shipped NPC spots. Nobody tells the NPCs anything: over a day of the
 ## calendar they eat, drink, rest and work; they run from a zombie they
 ## see; two runs with the same seed decide the same; a run that is saved,
@@ -169,10 +169,10 @@ func _npc_documents(run: Run) -> Dictionary:
 
 # ------------------------------------------------------------ a day
 
-func test_five_npcs_eat_drink_rest_and_work_through_a_calendar_day_by_themselves() -> void:
+func test_ten_npcs_eat_drink_rest_and_work_through_a_calendar_day_by_themselves() -> void:
 	var run: Run = _begin()
 	var ids: PackedStringArray = run.npcs().npc_ids()
-	assert_eq(ids.size(), 5, "the dev roster")
+	assert_eq(ids.size(), 10, "the dev roster")
 	var started_msec: int = Time.get_ticks_msec()
 	var stage_msec: PackedFloat32Array = []
 	for tick: int in range(DAY_TICKS):
@@ -181,7 +181,7 @@ func test_five_npcs_eat_drink_rest_and_work_through_a_calendar_day_by_themselves
 		if tick % 20 == 0:
 			run.see_labels()
 	stage_msec.sort()
-	print("[npc day] NPC stages per tick with 5 NPCs: median %.4f ms, 99%% %.4f ms, worst %.4f ms" % [stage_msec[stage_msec.size() / 2], stage_msec[stage_msec.size() * 99 / 100], stage_msec[stage_msec.size() - 1]])
+	print("[npc day] NPC stages per tick with 10 NPCs: median %.4f ms, 99%% %.4f ms, worst %.4f ms" % [stage_msec[stage_msec.size() / 2], stage_msec[stage_msec.size() * 99 / 100], stage_msec[stage_msec.size() - 1]])
 	var elapsed_msec: int = Time.get_ticks_msec() - started_msec
 	assert_true(run.world.clock.world_time_sec >= 86400.0 - 1.0, "a calendar day passed: %f" % run.world.clock.world_time_sec)
 	print("[npc day] %d ticks in %d ms; %d decisions, %d behaviour events" % [DAY_TICKS, elapsed_msec, run.decisions.size(), run.events.size()])
@@ -368,9 +368,10 @@ func test_the_same_seed_decides_the_same_and_a_restored_run_goes_on_as_one_that_
 func test_measure_the_npc_stages_with_25_npcs() -> void:
 	var run: Run = _begin()
 	var definitions: PackedStringArray = NpcRoster.load_or_null().npc_definition_ids
-	# Twenty more, in a ring around the middle of the map (outdoors).
-	for index: int in range(20):
-		var angle: float = TAU * float(index) / 20.0
+	# More copies up to 25, in a ring around the middle of the map (outdoors).
+	var extra: int = 25 - run.npcs().npc_count()
+	for index: int in range(extra):
+		var angle: float = TAU * float(index) / float(extra)
 		var spawned: ActionResult = run.npcs().spawn_npc(run.world, definitions[index % definitions.size()], Vector3(cos(angle) * 4.0, 0.0, sin(angle) * 4.0))
 		assert_true(spawned.ok, spawned.reason)
 	assert_eq(run.npcs().npc_count(), 25)
