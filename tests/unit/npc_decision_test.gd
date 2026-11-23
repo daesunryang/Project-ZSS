@@ -1447,15 +1447,15 @@ func test_the_shipped_sleep_data_is_valid_and_bad_bedtimes_are_refused() -> void
 	assert_true(not nap.requires_bedtime and nap.runs_until_done and nap.yields_to_danger_need, "the nap")
 	assert_eq(nap.observable_label, "sleep")
 	assert_false(nap.has_window())
-	# The nap threshold (docs/15 F6-003): fatigue 70 of 100, between caution and danger.
+	# The nap threshold (docs/15 F6-003): fatigue 85 of 100 (user, 2026-11-23: "3번", raise the nap threshold), above danger.
 	var needs: NpcNeedSettings = NpcNeedSettings.load_or_default()
-	assert_eq(nap.min_need_urgency, 0.7)
-	assert_true(nap.min_need_urgency * needs.need_max > needs.caution_threshold and nap.min_need_urgency * needs.need_max < needs.danger_threshold)
+	assert_eq(nap.min_need_urgency, 0.85)
+	assert_true(nap.min_need_urgency * needs.need_max > needs.danger_threshold and nap.min_need_urgency < 1.0)
 	assert_true(sleep.min_need_urgency < nap.min_need_urgency)
 	# At its bedtime a tired NPC prefers the night sleep to a nap, whatever
 	# the jitter says.
 	var settings: NpcDecisionSettings = NpcDecisionSettings.load_or_default()
-	for fatigue: float in [0.7, 0.85, 1.0]:
+	for fatigue: float in [0.85, 0.9, 1.0]:
 		var slept: float = float(NpcUtilityScorer.score(sleep, settings, fatigue, 0.0, 0.0, 0.0, 0.0, false, 0.0)[NpcUtilityScorer.KEY_SCORE])
 		var napped: float = float(NpcUtilityScorer.score(nap, settings, fatigue, 0.0, 0.0, 0.0, 0.0, false, 1.0)[NpcUtilityScorer.KEY_SCORE])
 		assert_true(slept > napped, "fatigue %.2f: sleep %f, nap %f" % [fatigue, slept, napped])
