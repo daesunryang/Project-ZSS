@@ -24,6 +24,10 @@ const MAX_RATE_MODIFIER: float = 100.0
 @export_group("Activities")
 ## Calendar hours of rest that lower fatigue from max to 0.
 @export_range(0.01, 100000.0) var rest_fatigue_hours_from_max: float = 3.2
+## Calendar hours of night sleep (the action "sleep", F-6) that lower
+## fatigue from max to 0. Slower than a nap so the night sleep lasts longer
+## (user choice 2026-11-23, "3"). PROVISIONAL.
+@export_range(0.01, 100000.0) var sleep_fatigue_hours_from_max: float = 3.2
 ## Hunger and thirst retain their idle rates while resting. Work only
 ## accelerates fatigue for now; the final values are deliberately deferred.
 @export_range(1.0, 100.0) var working_fatigue_rate_multiplier: float = 1.5
@@ -40,7 +44,7 @@ func validate() -> PackedStringArray:
 		errors.append("npc needs need_max must be finite and > 0")
 	if not is_finite(caution_threshold) or not is_finite(danger_threshold) or caution_threshold < 0.0 or caution_threshold >= danger_threshold or danger_threshold > need_max:
 		errors.append("npc need thresholds must satisfy 0 <= caution < danger <= need_max")
-	for hours: float in [hunger_hours_to_max, thirst_hours_to_max, fatigue_hours_to_max, rest_fatigue_hours_from_max]:
+	for hours: float in [hunger_hours_to_max, thirst_hours_to_max, fatigue_hours_to_max, rest_fatigue_hours_from_max, sleep_fatigue_hours_from_max]:
 		if not is_finite(hours) or hours <= 0.0:
 			errors.append("npc need hour durations must be finite and > 0")
 			break
@@ -67,6 +71,8 @@ func rate_per_world_sec(kind: String, activity: String) -> float:
 		return need_max / (thirst_hours_to_max * SECONDS_PER_HOUR)
 	if activity == NpcNeedKind.RESTING:
 		return -need_max / (rest_fatigue_hours_from_max * SECONDS_PER_HOUR)
+	if activity == NpcNeedKind.SLEEPING:
+		return -need_max / (sleep_fatigue_hours_from_max * SECONDS_PER_HOUR)
 	var fatigue_rate: float = need_max / (fatigue_hours_to_max * SECONDS_PER_HOUR)
 	return fatigue_rate * working_fatigue_rate_multiplier if activity == NpcNeedKind.WORKING else fatigue_rate
 

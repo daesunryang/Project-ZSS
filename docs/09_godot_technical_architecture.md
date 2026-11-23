@@ -2591,7 +2591,7 @@ Phase 4(docs/13 §6, §16) 티켓의 계약을 티켓마다 한 절씩 적는다
 
 **정의와 설정**
 
-- `NpcNeedKind`: 변화하는 욕구 `hunger`·`thirst`·`fatigue`, 활동 `idle`·`resting`·`working`, 범주 `normal`·`caution`·`danger`의 안정적인 ID를 정의한다. `warmth`·`hygiene`와 사회 욕구(`companionship`·`belonging`·`intimacy`·`family_contact`), 자율·성취 욕구(`autonomy`·`competence`·`purpose`·`recreation`)도 정의 ID는 있지만 Phase 4 변화율은 0이다(D13). 안전은 저장 욕구가 아니라 보이는 위협에서 얻는 파생 값이고, 의료 욕구는 건강 시스템이 정해지기 전에는 넣지 않는다.
+- `NpcNeedKind`: 변화하는 욕구 `hunger`·`thirst`·`fatigue`, 활동 `idle`·`resting`·`sleeping`(밤잠, F-6)·`working`, 범주 `normal`·`caution`·`danger`의 안정적인 ID를 정의한다. `warmth`·`hygiene`와 사회 욕구(`companionship`·`belonging`·`intimacy`·`family_contact`), 자율·성취 욕구(`autonomy`·`competence`·`purpose`·`recreation`)도 정의 ID는 있지만 Phase 4 변화율은 0이다(D13). 안전은 저장 욕구가 아니라 보이는 위협에서 얻는 파생 값이고, 의료 욕구는 건강 시스템이 정해지기 전에는 넣지 않는다.
 - `NpcNeedSettings`(`data/tuning/npc_need_settings.tres`): 최대값, 범주 경계, 세 욕구의 달력 시간 변화율, 휴식 회복률, 업무 중 피로 배율, 기본 성격·능력 modifier를 가진다. `CompositionConfig.npc_needs`가 조립에 주입한다. 모든 수치는 docs/15 §17.2의 PROVISIONAL이다.
 - 값의 방향은 플레이어 생존 욕구와 같다: 0이 충족, `need_max`가 최악이다. 새 NPC의 세 값은 모두 0이다.
 
@@ -3066,7 +3066,7 @@ FD-11("NPC마다 정해진 시각", 피로 0까지 잠)의 구현이다. 잠 빨
 
 **밤잠(`sleep`)**: `requires_bedtime` 행동은 (1) 지금이 그 NPC의 `is_bedtime`이고 (2) `NpcDecisionComponent.last_sleep_night`가 지금의 `night_of`보다 작을 때만 후보다. 아니면 결정 기록의 거부 사유가 `not_bedtime` / `slept_tonight`이다. 실행기가 밤잠의 완료(`action_done`)를 보고하면 결정 함수가 `last_sleep_night`에 그 밤 번호를 적는다. 그래서 **하룻밤에 한 번**이고, 중간에 끊긴 밤잠(도주, 목마름)은 적히지 않아 같은 밤 창 안에서 다시 잠자리로 돌아간다. 잠드는 시각에 맞춘 타이머는 따로 없다: 평소 결정 주기(가까운 NPC 2초, 먼 NPC 10초 = 달력 48초~4분)에 후보가 된다. `runs_until_done`이라 한번 잠들면 자기 선행조건(긴급도 0.1)과 다른 후보를 다시 보지 않고, 실행 계층이 `rest_check_period_sec`마다 보다가 fatigue ≤ `sleep_until_fatigue`(0)일 때 끝낸다. 점수는 잠드는 시각에 fatigue 0.7 이상이어도 낮잠보다 밤잠이 높게 잡았다(0.55 + 0.5f > f + 흔들림 0.02).
 
-**자는 곳**(`NpcBehaviours`, §17.8): 쉬기와 같이 비어 있는 bed 지점(자기 집 건물 먼저, 집 타일에 가까운 것)으로 걸어가 눕는다. 빈 침대가 없으면 낮잠은 전처럼 제자리에서 자고, **밤잠은 집 타일(`home_building_id` + `home_tile_offset`)까지 걸어가서** 잔다(이미 그 타일이거나 이 맵에 집이 없으면 제자리). 걷는 동안은 `walk`, 누우면 `sleep` 라벨이고 `NpcNeeds` 활동이 `resting`이 된다. 횟수는 `counts.sleep` / `counts.sleep_cut`으로 따로 센다.
+**자는 곳**(`NpcBehaviours`, §17.8): 쉬기와 같이 비어 있는 bed 지점(자기 집 건물 먼저, 집 타일에 가까운 것)으로 걸어가 눕는다. 빈 침대가 없으면 낮잠은 전처럼 제자리에서 자고, **밤잠은 집 타일(`home_building_id` + `home_tile_offset`)까지 걸어가서** 잔다(이미 그 타일이거나 이 맵에 집이 없으면 제자리). 걷는 동안은 `walk`, 누우면 `sleep` 라벨이고 `NpcNeeds` 활동이 `sleeping`이 된다(2026-11-23부터. fatigue가 `sleep_fatigue_hours_from_max` 속도로 내려가 낮잠 `resting`보다 느리다). 횟수는 `counts.sleep` / `counts.sleep_cut`으로 따로 센다.
 
 **낮잠(`rest`)**: 밤잠과 상관없이 fatigue 긴급도 0.7(= 70, 주의 40과 위험 75 사이) 이상일 때만 후보다. 시간대 항은 없앴다. 일어나는 기준은 전과 같다(fatigue ≤ 5). **밤잠을 시작할 수 있는 동안에는 낮잠이 후보가 아니다**(거부 사유 `bedtime_now`): 잠드는 시각에 많이 피곤해도 낮잠이 아니라 밤잠을 자고, 자고 있던 낮잠은 잠드는 시각이 되면 `runs_until_done` 보호가 풀려 밤잠으로 바뀐다(침대에서 일어났다가 다시 눕는다). 이게 없으면 잠드는 시각 직전에 시작한 낮잠이 끝날 때까지(달력 2시간쯤) 잠드는 시각이 밀린다.
 

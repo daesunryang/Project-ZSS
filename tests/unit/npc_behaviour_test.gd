@@ -632,7 +632,7 @@ func test_a_world_without_spots_has_nowhere_to_go_but_rest_and_wander_still_work
 	# Neither does the night sleep of an NPC without a home on this map.
 	var stood: Vector3 = _position(world, npc_id)
 	assert_eq(_begin(started, npc_id, NpcBehaviours.ACTION_SLEEP), "", "sleeping needs no bed")
-	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.RESTING)
+	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.SLEEPING)
 	assert_eq(_position(world, npc_id), stood)
 	_cancel(started, npc_id)
 	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.IDLE)
@@ -818,7 +818,7 @@ func test_the_night_sleep_lasts_until_fatigue_is_zero() -> void:
 	assert_eq(_needs(world, sleeper).activity(), NpcNeedKind.IDLE, "not resting before it lies down")
 	_until_told(world, sleeper, ARRIVED)
 	assert_eq(_position(world, sleeper), _tile_centre(BED_TILE), "it sleeps in the bed")
-	assert_eq(_needs(world, sleeper).activity(), NpcNeedKind.RESTING)
+	assert_eq(_needs(world, sleeper).activity(), NpcNeedKind.SLEEPING)
 	assert_eq(executor.holder_of(BED), sleeper)
 	# A nap beside it, for comparison: that one gets up at fatigue 5.
 	assert_eq(_begin(started, napper, NpcBehaviours.ACTION_REST), "")
@@ -876,11 +876,11 @@ func test_without_a_free_bed_the_night_sleep_is_on_the_home_tile() -> void:
 	_until_told(world, npc_id, ARRIVED, 400)
 	assert_true(_recorder.told(npc_id).has(ARRIVED), "it arrived")
 	assert_true(_position(world, npc_id).distance_to(home as Vector3) < 0.01, "it sleeps on its home tile: %s" % str(_position(world, npc_id)))
-	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.RESTING)
+	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.SLEEPING)
 	assert_eq(_state(world, npc_id).step, NpcBehaviourState.STEP_PERFORMING)
 	assert_false(_recorder.told(npc_id).has(DONE))
 	# Already at home: it lies down where it stands.
 	_cancel(started, npc_id)
 	assert_eq(_begin(started, npc_id, NpcBehaviours.ACTION_SLEEP), "")
-	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.RESTING, "no walk: it is at home")
+	assert_eq(_needs(world, npc_id).activity(), NpcNeedKind.SLEEPING, "no walk: it is at home")
 	_cancel(started, npc_id)

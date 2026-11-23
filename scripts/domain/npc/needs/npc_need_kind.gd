@@ -35,8 +35,11 @@ const DEFINED_KINDS: PackedStringArray = [
 
 const IDLE: String = "idle"
 const RESTING: String = "resting"
+## The night sleep (the action "sleep", F-6): fatigue falls at its own,
+## slower rate (NpcNeedSettings.sleep_fatigue_hours_from_max).
+const SLEEPING: String = "sleeping"
 const WORKING: String = "working"
-const ACTIVITIES: PackedStringArray = [IDLE, RESTING, WORKING]
+const ACTIVITIES: PackedStringArray = [IDLE, RESTING, SLEEPING, WORKING]
 const CATEGORY_NAMES: PackedStringArray = ["normal", "caution", "danger"]
 
 

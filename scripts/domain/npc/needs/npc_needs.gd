@@ -123,7 +123,7 @@ func restore_document(document: Dictionary) -> PackedStringArray:
 	var parsed_segment_rates: Dictionary[String, float] = _parse_rates(document.get(KEY_SEGMENT_RATES, null), saved_version, errors)
 	var activity_value: Variant = document.get(KEY_ACTIVITY, null)
 	if typeof(activity_value) != TYPE_STRING or not NpcNeedKind.is_valid_activity(str(activity_value)):
-		errors.append("activity must be idle, resting or working")
+		errors.append("activity must be idle, resting, sleeping or working")
 	var personality_value: float = _parse_saved_float(document.get(KEY_PERSONALITY_MODIFIER, null), KEY_PERSONALITY_MODIFIER, saved_version, errors)
 	var ability_value: float = _parse_saved_float(document.get(KEY_ABILITY_MODIFIER, null), KEY_ABILITY_MODIFIER, saved_version, errors)
 	if not _is_valid_modifier(personality_value):

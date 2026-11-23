@@ -105,6 +105,11 @@ func test_shipped_settings_define_only_three_changing_needs() -> void:
 		for activity: String in NpcNeedKind.ACTIVITIES:
 			assert_eq(shipped.rate_per_world_sec(kind, activity), 0.0, "%s exists as definition data but does not change" % kind)
 	assert_true(shipped.rate_per_world_sec(NpcNeedKind.FATIGUE, NpcNeedKind.RESTING) < 0.0)
+	# The night sleep (F-6) recovers more slowly than a nap, so it lasts
+	# longer (user choice 2026-11-23, "3").
+	assert_true(shipped.rate_per_world_sec(NpcNeedKind.FATIGUE, NpcNeedKind.SLEEPING) < 0.0)
+	assert_true(shipped.sleep_fatigue_hours_from_max > shipped.rest_fatigue_hours_from_max, "a night sleep is slower than a nap")
+	assert_eq(shipped.rate_per_world_sec(NpcNeedKind.HUNGER, NpcNeedKind.SLEEPING), shipped.rate_per_world_sec(NpcNeedKind.HUNGER, NpcNeedKind.IDLE), "hunger keeps its idle rate in sleep")
 	assert_true(shipped.rate_per_world_sec(NpcNeedKind.FATIGUE, NpcNeedKind.WORKING) > shipped.rate_per_world_sec(NpcNeedKind.FATIGUE, NpcNeedKind.IDLE))
 	assert_eq(shipped.default_personality_modifier, 1.0)
 	assert_eq(shipped.default_ability_modifier, 1.0)
@@ -158,6 +163,10 @@ func test_rest_lowers_fatigue_and_work_accelerates_it() -> void:
 	resting.advance_to(9.0 * NpcNeedSettings.SECONDS_PER_HOUR)
 	assert_true(_near(resting.value(NpcNeedKind.FATIGUE), 55.0), "one rest hour removes 25 fatigue")
 	assert_true(resting.value(NpcNeedKind.HUNGER) > 0.0 and resting.value(NpcNeedKind.THIRST) > 0.0, "hunger and thirst still rise while resting")
+	_settings.sleep_fatigue_hours_from_max = 10.0
+	assert_true(resting.set_activity(NpcNeedKind.SLEEPING, 9.0 * NpcNeedSettings.SECONDS_PER_HOUR).ok)
+	resting.advance_to(10.0 * NpcNeedSettings.SECONDS_PER_HOUR)
+	assert_true(_near(resting.value(NpcNeedKind.FATIGUE), 45.0), "one hour of night sleep removes 10 fatigue: %f" % resting.value(NpcNeedKind.FATIGUE))
 
 	var idle: NpcNeeds = _fresh_needs()
 	idle.advance_to(NpcNeedSettings.SECONDS_PER_HOUR)

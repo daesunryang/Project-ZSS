@@ -398,8 +398,9 @@ func _begin_rest(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, de
 		var home: Vector3 = _place_of(definition, true, npc.position)
 		if _grid.tile_of(home) != _grid.tile_of(npc.position) and _move(npc.npc_id, state, home, false).is_empty():
 			return ""
-	# No bed for it: it rests where it stands.
-	_start_resting(world, npc, state)
+	# No bed for it: it rests where it stands. (state.action_id is set only
+	# after begin returns, so the kind of sleep comes from go_home.)
+	_start_resting(world, npc, state, go_home)
 	_report(npc.npc_id, NpcActionExecutor.REPORT_ARRIVED)
 	return ""
 
@@ -527,7 +528,7 @@ func _on_arrived(world: ServerWorld, npcs: NpcService, npc: NpcState, state: Npc
 				return
 			state.step = NpcBehaviourState.STEP_PERFORMING
 		ACTION_REST, ACTION_SLEEP:
-			_start_resting(world, npc, state)
+			_start_resting(world, npc, state, state.action_id == ACTION_SLEEP)
 		ACTION_WORK:
 			state.step = NpcBehaviourState.STEP_PERFORMING
 			_set_activity(world, npc, NpcNeedKind.WORKING)
@@ -552,7 +553,7 @@ func _on_done(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBeh
 		ACTION_SLEEP:
 			if state.step == NpcBehaviourState.STEP_GOING and state.spot_id.is_empty():
 				# The walk home is over (no bed was free): it lies down there.
-				_start_resting(world, npc, state)
+				_start_resting(world, npc, state, true)
 				npcs.mark_npc_dirty(npc.npc_id)
 				_report(npc.npc_id, NpcActionExecutor.REPORT_ARRIVED)
 			else:
@@ -568,10 +569,11 @@ func _on_done(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBeh
 			_finish(world, npcs, npc, state, {})
 
 
-func _start_resting(world: ServerWorld, npc: NpcState, state: NpcBehaviourState) -> void:
+## `night`: the night sleep (activity sleeping, slower recovery), else a nap.
+func _start_resting(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, night: bool) -> void:
 	state.step = NpcBehaviourState.STEP_PERFORMING
 	state.timer_usec = NpcBehaviourSettings.to_usec(_settings.rest_check_period_sec)
-	_set_activity(world, npc, NpcNeedKind.RESTING)
+	_set_activity(world, npc, NpcNeedKind.SLEEPING if night else NpcNeedKind.RESTING)
 
 
 ## The unit of food the NPC carries is used up and lowers its needs.
