@@ -72,6 +72,12 @@ var container_net: ContainerNetSettings
 ## the world gets no map content. A dedicated server sets the test map
 ## (MapContentDefinition.DEFAULT_PATH, GameBootstrap).
 var map_content: MapContentDefinition = null
+## F-33 (docs/09 §15.3.1): the generated map around the hand-made one
+## (ProceduralMapService: towns and farms placed cell by cell, the first
+## time a cell is loaded). null (the default of from_defaults(): tests,
+## tools) = nothing is generated. A dedicated server sets the shipped
+## settings (ProceduralMapSettings.DEFAULT_PATH, GameBootstrap).
+var procedural_map: ProceduralMapSettings = null
 ## P4-1 (NPCs, docs/09 §17.1): the NPC rules and the NPC definitions.
 var npc: NpcSettings
 var npc_definitions: NpcCatalog
@@ -288,4 +294,7 @@ func _validate_containers() -> PackedStringArray:
 	if map_content != null:
 		errors.append_array(map_content.validate())
 		errors.append_array(map_content.validate_against(structures, container_definitions, loot_tables, StructureGrid.new(building.grid_module_m), gameplay.world_half_extent_m))
+	if procedural_map != null:
+		errors.append_array(procedural_map.validate())
+		errors.append_array(procedural_map.validate_against(structures, container_definitions, loot_tables, StructureGrid.new(building.grid_module_m), world_cells.cell_size_m, map_content))
 	return errors

@@ -27,7 +27,7 @@ func test_registration_validation() -> void:
 	assert_eq(world.register_system(TestCounterSystem.new()), OK)
 	assert_eq(world.register_system(TestCounterSystem.new()), ERR_ALREADY_EXISTS)
 	assert_eq(world.register_system(ServerSystem.new()), ERR_INVALID_PARAMETER, "base class has no id")
-	assert_eq(world.system_ids(), PackedStringArray([WorldCellService.SYSTEM_ID, SurvivalService.SYSTEM_ID, PostureService.SYSTEM_ID, NoiseService.SYSTEM_ID, PlayerNoiseService.SYSTEM_ID, ZombieService.SYSTEM_ID, SkillService.SYSTEM_ID, BuildingService.SYSTEM_ID, NavigationService.SYSTEM_ID, CombatService.SYSTEM_ID, ContainerService.SYSTEM_ID, MapContentService.SYSTEM_ID, NpcService.SYSTEM_ID, TradeService.SYSTEM_ID, TestCounterSystem.SYSTEM_ID]), "composition systems first, then registration order")
+	assert_eq(world.system_ids(), PackedStringArray([WorldCellService.SYSTEM_ID, SurvivalService.SYSTEM_ID, PostureService.SYSTEM_ID, NoiseService.SYSTEM_ID, PlayerNoiseService.SYSTEM_ID, ZombieService.SYSTEM_ID, SkillService.SYSTEM_ID, BuildingService.SYSTEM_ID, NavigationService.SYSTEM_ID, CombatService.SYSTEM_ID, ContainerService.SYSTEM_ID, MapContentService.SYSTEM_ID, ProceduralMapService.SYSTEM_ID, NpcService.SYSTEM_ID, TradeService.SYSTEM_ID, TestCounterSystem.SYSTEM_ID]), "composition systems first, then registration order")
 	assert_not_null(world.get_system(TestCounterSystem.SYSTEM_ID))
 	assert_null(world.get_system("missing"))
 

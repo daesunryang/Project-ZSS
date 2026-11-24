@@ -321,6 +321,12 @@ func apply_damage_to_zombie(zombie_id: String, amount: float, source_id: String)
 	return ActionResult.success(event)
 
 
+## True while spawn_zombie() would not be refused for `max_active_zombies`
+## (F-33: the generated map asks before it gives a cell its zombies).
+func has_spawn_room() -> bool:
+	return _zombies.size() < _settings.max_active_zombies
+
+
 func has_zombie(zombie_id: String) -> bool:
 	return _zombies.has(zombie_id)
 

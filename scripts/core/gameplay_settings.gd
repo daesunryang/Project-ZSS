@@ -10,9 +10,9 @@ const DEFAULT_PATH: String = "res://data/tuning/gameplay_settings.tres"
 @export_range(0.1, 20.0) var move_speed_mps: float = 4.0
 ## Server-side running speed while the validated run bit is accepted.
 @export_range(0.1, 20.0) var run_speed_mps: float = 6.0
-## Half size of the square play area around the origin, metres
-## (docs/00: initial test map 500 m x 500 m -> 250).
-@export_range(1.0, 10000.0) var world_half_extent_m: float = 250.0
+## Half size of the square play area around the origin, metres. F-33: the
+## 4 km x 4 km map (2000); the hand-made 500 m test map is its middle.
+@export_range(1.0, 10000.0) var world_half_extent_m: float = 2000.0
 ## Maximum distance between player and world item for pickup, metres.
 @export_range(0.1, 50.0) var pickup_range_m: float = 2.5
 ## Maximum distance between two players for one to use a treatment item on

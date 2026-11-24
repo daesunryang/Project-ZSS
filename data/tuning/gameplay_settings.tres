@@ -6,7 +6,7 @@
 script = ExtResource("1_gameplay")
 move_speed_mps = 4.0
 run_speed_mps = 6.0
-world_half_extent_m = 250.0
+world_half_extent_m = 2000.0
 pickup_range_m = 2.5
 treat_range_m = 2.5
 allow_feeding_others = true

@@ -96,6 +96,9 @@ func _start_network(config: LaunchConfig, settings: AppSettings, world_id: Strin
 		# and containers), once. Compositions built elsewhere (tests, tools)
 		# get none unless they ask for it (docs/09 §15.3).
 		composition.map_content = MapContentDefinition.load_or_null()
+		# F-33: and the generated map around it (towns and farms, placed cell by
+		# cell the first time a cell is loaded, docs/09 §15.3.1).
+		composition.procedural_map = ProceduralMapSettings.load_or_null()
 		# P4-1: and the dev NPCs, placed in buildings of that map, once
 		# (docs/09 §17.1). Without the map there is nowhere to place them.
 		if composition.map_content != null:

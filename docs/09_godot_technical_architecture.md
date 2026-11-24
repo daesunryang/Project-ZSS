@@ -2238,6 +2238,52 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 
 **구조물 표시 티켓(P3-4b)이 알아야 할 것**: 테스트 맵 건물(구조물 370개)은 서버에 있고 `StructureNet`으로 복제되지만 아직 화면에 그려지지 않는다: 지금 클라이언트에서는 보관함 상자만 허공에 보이고 벽은 보이지 않는데 서버는 막는다(플레이어가 보이지 않는 벽에 부딪힌다). 보관함 위치는 타일 중심(`StructureGrid.tile_center`)이므로 바닥 메시 위에 그대로 놓인다.
 
+### 15.3.1 넓은 맵과 생성 건물(F-33, docs/00 ADR-029, system id `procedural_map`)
+
+사용자 지시(2026-11-23): "맵에 크기를 광활하게 해야해 집이 엄청 많아야해 프로젝트 좀보이드 처럼". 규모와 느낌만 따른다. 배치는 이 프로젝트가 새로 만든 규칙이고 다른 게임의 맵·지명·배치를 옮기지 않는다. 서버 규칙·셀·저장까지다. **프로토콜 변경 없음**: 생성된 건물은 보통 구조물·보관함·좀비이고 기존 `StructureNet`·`ContainerNet`·`ZombieNet`이 관심 셀 단위로 보낸다. 클라이언트는 맵 정의를 읽지 않으므로 고칠 것이 없었다(묶음 그리기 갱신만 프레임당 한 번으로 모았다, 아래 "클라이언트"). `BuildInfo.PROTOCOL_VERSION`은 그대로다. 수치는 전부 임시다(docs/15 §23).
+
+**월드 크기**: 기본 월드가 500m × 500m에서 **4km × 4km**가 됐다(`GameplaySettings.world_half_extent_m` 2000, `WorldCellSettings.bounds_*_m` ±2000). 셀은 50m 그대로라 격자는 80 × 80 = 6400칸이다. 셀마다 미리 잡는 메모리는 없다(메모리에 있는 셀만 사전에 있다, §15.1). 손으로 만든 테스트 맵(건물 8채, §15.3)은 월드 가운데 그대로 있고 시작 마을이 된다.
+
+**정의와 설정**
+
+| 구성 요소 | 계약 |
+|---|---|
+| `ProceduralMapSettings` (`data/tuning/procedural_map_settings.tres`) | `world_seed`(새 월드의 시드, 0 = 월드마다 무작위), `reserved_half_extent_m`(250: 원점 둘레 이 정사각형에 닿는 셀에는 아무것도 만들지 않는다), 마을(`home_town_radius_m` 500, `town_count` 12, 반지름 120~450m, 마을 사이 빈 땅 250m, 자리 찾기 64번, 블록·필지가 채워질 확률은 중심 95·90% → 가장자리 60·60%, 중심 35% 안쪽 블록의 50%는 상업 블록), 시골(`roadside_farm_percent` 22, `wild_building_per_10000` 120, `farm_extra_building_percent` 35), 블록(`road_half_width_m` 3, `yard_margin_tiles` 2, `place_floors` 꺼짐), 좀비(마을 셀당 최대 2마리 각 35%, 길가 8%, 그 밖 3%), 배치(`max_pieces_per_tick` 24), `archetypes`. `validate()`, `validate_against(구조물, 보관함 정의, 루팅 테이블, 격자, 셀 크기, 맵 콘텐츠)`: 건물 종류가 가리키는 정의가 있고 종류가 맞는지, 셀 크기가 타일의 정수배인지, 블록에 건물이 들어갈 자리가 있는지, 손으로 만든 맵이 예약 구역 안에 있는지. `CompositionConfig.validate()`가 부른다 |
+| `ProceduralBuildingArchetype` | 건물 종류 하나: `archetype_id`, `building_type`, `zone`(주거·상업·시골), `weight`, 크기 범위(긴 변, 짧은 변), `room_span_tiles`·`max_partitions`(안벽), `loot_table_id`, 보관함 정의 목록과 개수 범위, 바닥·벽·문 정의. 기본 12종: 작은 집, 가족 집, 큰 집, 마당 창고, 상점, 진료소, 창고, 철물점, 농가, 헛간, 연장 창고, 오두막. 루팅 테이블은 기존 일곱 개를 쓴다 |
+
+**생성기(`ProceduralMapGenerator`, 순수)**: 월드·노드·시계를 모른다. `(설정, 시드, 셀 크기, 맵 경계, 플레이 영역, 타일 크기)`로 만들고, 같은 입력이면 어느 셀을 언제 먼저 묻든 같은 결과다. 난수는 `sha256("f33|버전|시드|라벨")` 앞 60비트를 시드로 한 `RandomNumberGenerator`이고 확률은 정수 주사위다.
+- 맵 전체에 대해 미리 하는 일은 마을 목록과 길가 셀 표뿐이다(0.4ms).
+- 마을: 셀 모서리(네거리)를 중심으로 한 원. "집 마을" 하나가 원점에 있고(예약 구역 바깥 고리가 시작 마을의 변두리가 된다), 나머지는 반지름을 굴린 뒤(작은 마을이 더 많다) 다른 마을과 겹치지 않는 자리를 찾는다. 못 찾으면 그 마을은 없다.
+- 길: 모든 셀 경계가 길이다. 경계 양쪽 `road_half_width_m`은 비워 두므로 셀 하나가 블록 하나이고, **건물은 셀 경계를 넘지 않는다**(셀 하나를 이웃 없이 만들 수 있는 이유). 마을 사이 길은 앞서 만든 가장 가까운 마을까지 셀 경계를 따라 ㄱ자로 잇고, 그 길 양쪽 셀이 "길가"다. 길의 포장 표면은 아직 없다(땅이 비어 있을 뿐이다).
+- 셀 종류 `CellKind`: OUTSIDE(플레이 영역에 온전히 들어가지 않음), RESERVED, TOWN, ROADSIDE, WILD.
+- 블록: 필지 격자로 자른다(주거 2×2·3×2·2×3·3×3, 상업 2×1·1×2·2×2, 농장 2×2, 외딴 건물 1×1). 필지마다 그 구역의 건물 종류 중 들어가는 것을 가중치로 고르고, 마당을 두고 놓는다. 문은 길 쪽 변의 모서리가 아닌 칸. 긴 변을 `room_span_tiles`마다 안벽으로 자르고 안벽마다 문 하나. 보관함은 바깥벽에 붙은 타일(바깥문 안쪽 타일 제외).
+- 좀비: 셀이 처음 만들어질 때 한 번, 길 띠 위(건물이 설 수 없는 타일)에 둔다.
+- `plan_cell(cell) -> ProceduralCellPlan`(건물 `ProceduralBuilding` 배열 + 좀비 위치), `cell_kind`, `town_of`, `towns()`, `roads()`, `min_cell()`·`max_cell()`, `count_summary()`(맵 전체를 세는 도구용), `building_id_of(cell, index)`(`gen_n12_p3_0` = 셀 (-12, 3)의 0번 건물).
+- `ProceduralBuilding`: 바깥 껍데기와 보관함은 `MapBuildingDefinition` 그대로(`MapBuildingPlan`이 조각으로 바꾼다), 안벽·안문은 `interior_pieces`. `pieces(place_floors)`, `footprint()`, `summary()`.
+- `GENERATOR_VERSION`(1): 같은 시드가 다른 배치를 내게 되면 올린다.
+
+기본 설정·기본 시드의 맵: 마을 12개(집 마을 포함, 반지름 136~500m), 마을 셀 1384, 길가 셀 322, 건물이 있는 셀 1130, **건물 4361채**(집 3677, 창고류 452+98, 상점 105, 진료소 29), 보관함 9940개, 구조물 조각 143,102개(바닥을 깔면 383,449개), 처음 놓이는 좀비 1122마리. 한 셀의 최대 조각 수 327(상한 `max_structures_per_cell` 4000).
+
+**배치(`ProceduralMapService`, 서버 시스템, 맵 콘텐츠 뒤·NPC 앞에 등록)**
+- **월드를 만들 때는 아무것도 놓지 않는다.** 시드만 정한다. `WorldCellService`가 셀을 메모리로 올리면(LOADING → PRELOADED, `cell_state_changed`) 그 셀의 계획을 묻는다. 계획이 비면 아무 흔적도 남기지 않는다(기록도, 저장 파일도 없다). 아니면 줄에 세운다.
+- 줄은 `step()`에서 틱마다 `max_pieces_per_tick` 조각씩 짓는다(건물 하나의 조각 → 그 건물의 보관함 → 다음 건물 … → 좀비 → 완료). 셀이 ACTIVE가 될 때 플레이어가 그 셀이나 이웃 셀에 있으면 그 자리에서 끝까지 짓고(사람 둘레에 벽이 솟지 않게), 아니면 줄 맨 앞으로 보낸다. 미리 올리는 고리(반경 3)가 활성 영역(반경 2)보다 한 칸 넓어서, 걸어서 닿는 셀은 닿기 훨씬 전에 끝나 있다.
+- 놓는 길은 각 시스템의 서버 규칙이다: `BuildingService.place_completed_structure`(새 진입점, 아래), `ContainerService.create_container`(출처 키 `procedural/<건물 id>/<번호>`), `ZombieService.spawn_zombie`(`has_spawn_room()`으로 먼저 묻는다). 자리가 찼거나 변에 누가 서 있는 조각, 좀비 상한에 걸린 좀비는 빼고 센다(`skipped_structures`, `skipped_zombies`).
+- **셀마다 한 번**: 셀 문서 `systems.procedural_map` = `{schema_version: 1, generator_version, buildings_done, pieces_done, complete}`. 구조물과 같은 세대에 저장되므로 재시작이나 셀 재로딩이 같은 조각을 두 번 놓지 않고, 플레이어가 바꾼 것(철거한 벽, 비운 보관함)은 그대로 남는다. 반쯤 짓다 내려간 셀은 다시 올라올 때 다음 조각부터 잇는다. 완료된 셀은 생성기나 설정이 바뀌어도 가진 것을 지킨다. 다른 생성기 버전으로 반쯤 지어진 셀은 그대로 완료로 친다(경고 로그).
+- **월드 문서** `systems.procedural_map` = `{schema_version: 1, world_seed: "<정수 문자열>", generator_version}`. 월드는 만들어질 때의 시드를 지킨다(설정의 시드가 바뀌어도). 설정이 없는 조립(테스트·도구의 기본)은 아무것도 만들지 않고 아무것도 저장하지 않는다.
+- 다른 시스템용 조회: `generator()`(셀을 올리지 않고 어디에 어떤 건물이 있는지 묻는다. F-28이 NPC가 살 집을 고를 때 쓴다), `world_seed()`, `pending_cell_count()`, `is_cell_complete(cell_id)`, `finish_pending(world)`(테스트·도구), 진단 카운터.
+- 조립: `CompositionConfig.procedural_map`(기본 null). 전용 서버만 `GameBootstrap`에서 기본 설정을 넣는다(맵 콘텐츠와 같은 방식).
+
+**이전 월드(500m로 저장된 월드)**: 그대로 읽힌다. 셀 격자 서명(경계)이 달라져 첫 시작에 한 번 다시 나누지만(§15.1), 셀 id는 경계와 무관해서 내용은 같은 셀에 남는다. 옛 영역(±250m)은 예약 구역이라 생성기가 건드리지 않는다: 시작 마을과 플레이어가 지은 것은 그대로다. 월드 문서에 시드가 없으므로 첫 시작에 설정의 시드를 받아 그때부터 지킨다. 옛 경계 너머의 셀은 처음 올라올 때 생성된다. 저장 스키마 버전은 바꾸지 않았다(새 시스템 문서가 더해질 뿐이다). F-33 이전 빌드는 이 저장의 `procedural_map` 문서를 "등록되지 않은 시스템"으로 무시하지만 월드 크기가 달라 권하지 않는다.
+
+**같이 고친 것**
+- `BuildingService.place_completed_structure(world, definition_id, tile, rotation)`: 완공된 채로 놓는 서버 규칙. 검사는 `place_structure`와 같고 변을 막는 조각은 `blocked_by_entity`도 본다. 이벤트는 완공된 행을 실은 `structure_placed` 하나, 로그는 debug. (테스트 맵 배치는 전처럼 놓기 + `complete_structure`다.)
+- `ZombieService.has_spawn_room()`.
+- `WorldCellIndex`: 셀 안의 엔티티를 종류별로도 들고 있다. `count_in_cell(cell, kind)`와 `entities_in_cell(cell, kind)`가 그 셀의 모든 엔티티를 훑던 것을 그 종류만 보게 했다(구조물이 수백 개인 셀에서 조각을 놓을 때마다 전부 세던 비용: 조각당 280~600µs → 57~78µs). 결과는 같다.
+- `WorldCellSettings.max_preload_loads_per_refresh` 4 → 2: 탐험한 마을 셀 하나를 파일에서 올리는 데 중앙값 약 13ms가 들어, 한 번의 확인에 올리는 바깥 고리 셀 수를 줄였다.
+- 클라이언트 `StructureVisuals`: 미러의 `changed`마다 모든 묶음을 다시 만들던 것을, 표시만 해 두고 다음 `update_focus()`(매 프레임)나 조회 때 한 번 만든다(`flush()`). 마을 하나가 한 프레임에 행 메시지 수십 개로 들어온다. 진행률 라벨도 미완성 구조물만 훑는다.
+
+**테스트**: `tests/unit/procedural_map_generator_test.gd`(설정 검증, 같은 시드 = 같은 맵(순서 무관), 다른 시드 = 다른 맵, 마을 여러 개·건물 1500채 이상, 시작 마을과 맵 밖은 비어 있음, 모든 건물이 자기 블록 안·서로 떨어짐·문 수), `procedural_map_service_test.gd`(월드 생성 때 0개, 플레이어 둘레 셀의 즉시·틱 배치, 벽이 실제로 막음, 내렸다 올려도 한 번만(철거한 벽 유지), 반쯤 지은 셀 이어 짓기, 빈 셀은 흔적 없음, 두 월드 같은 시드 = 같은 조각, 시드 유지, 설정 없으면 없음, 좀비 한 번·상한), `tests/integration/procedural_map_persistence_test.gd`(실제 파일·재시작: 생성된 셀과 시드 유지, 500m로 저장된 월드가 4km 설정에서 읽히고 자람), `procedural_map_measure_test.gd`(측정, docs/15 §23).
+
 ### 15.4 격자 구조물: 바닥·벽·문(P3-4a, docs/00 ADR-024, system id `building`, 모듈 `StructureNet`)
 
 서버·네트워크·클라이언트 미러까지다. 구조물을 화면에 그리는 것과 건축 모드 입력은 P3-4b, 청사진·자재·작업 진행은 P3-5, 길찾기와 시야 차단은 P3-6이다. **프로토콜 변경 있음**: RPC 여섯 개와 접속 스냅샷의 `modules.StructureNet` 조각이 새로 생겨 `BuildInfo.PROTOCOL_VERSION`을 12로 올렸다(11은 P2-T16의 거래, §14.30). 기존 RPC와 메시지 형식은 그대로다.

@@ -508,6 +508,22 @@ func place_structure(world: ServerWorld, definition_id: String, tile: Vector2i, 
 	return _place(world, definition, tile, rotation, StructureGrid.slot_of(definition.placement, tile, rotation), placed_by)
 
 
+## Places a structure that stands completed at once, as a server rule: no
+## actor, no range, no materials and no work (F-33: the generated map places
+## thousands of pieces, docs/09 §15.3.1). The same checks as
+## place_structure(), plus blocked_by_entity for a piece that blocks an edge
+## somebody stands in. One structure_placed event carries the completed row;
+## it is logged at debug level only.
+func place_completed_structure(world: ServerWorld, definition_id: String, tile: Vector2i, rotation: int) -> ActionResult:
+	if world == null:
+		return ActionResult.failure(REASON_UNAVAILABLE)
+	var reason: String = _request_reason(world, definition_id, tile, rotation)
+	if not reason.is_empty():
+		return ActionResult.failure(reason)
+	var definition: StructureDefinition = _catalog.get_definition(definition_id)
+	return _place(world, definition, tile, rotation, StructureGrid.slot_of(definition.placement, tile, rotation), "", true)
+
+
 ## Completes an unfinished structure as a server rule, whatever materials
 ## and work it has (seeded buildings, tests). All or nothing: a blocking
 ## piece with somebody in its edge stays as it is. Its workers stop.
@@ -844,14 +860,15 @@ func _slot_of(structure: StructureInstance) -> Vector3i:
 
 
 ## The world-state checks of a placement and the placement itself.
-func _place(world: ServerWorld, definition: StructureDefinition, tile: Vector2i, rotation: int, slot: Vector3i, placed_by: String) -> ActionResult:
+func _place(world: ServerWorld, definition: StructureDefinition, tile: Vector2i, rotation: int, slot: Vector3i, placed_by: String, completed: bool = false) -> ActionResult:
+	var instant: bool = _settings.instant_completion or completed
 	var cell_id: String = world.cell_id_at(grid.slot_home(slot))
 	if not world.is_cell_loaded(cell_id):
 		return ActionResult.failure(REASON_CELL_NOT_LOADED)
 	if _slots.has(StructureGrid.slot_key(slot)):
 		return ActionResult.failure(REASON_SLOT_OCCUPIED)
 	var door_open: bool = definition.is_door and _settings.door_starts_open
-	var will_block: bool = _settings.instant_completion and definition.blocks_movement and not door_open
+	var will_block: bool = instant and definition.blocks_movement and not door_open
 	if will_block and _is_entity_in_the_way(world, slot):
 		return ActionResult.failure(REASON_BLOCKED_BY_ENTITY)
 	if world.cell_index.count_in_cell(cell_id, ENTITY_KIND_STRUCTURE) >= _settings.max_structures_per_cell:
@@ -865,9 +882,9 @@ func _place(world: ServerWorld, definition: StructureDefinition, tile: Vector2i,
 	structure.definition_id = definition.definition_id
 	structure.tile = tile
 	structure.rotation = rotation
-	structure.construction_state = StructureInstance.State.COMPLETED if _settings.instant_completion else StructureInstance.State.BLUEPRINT
-	structure.health = definition.max_health if _settings.instant_completion else 0.0
-	structure.construction_progress = StructureInstance.FULL_PROGRESS if _settings.instant_completion else StructureInstance.NO_PROGRESS
+	structure.construction_state = StructureInstance.State.COMPLETED if instant else StructureInstance.State.BLUEPRINT
+	structure.health = definition.max_health if instant else 0.0
+	structure.construction_progress = StructureInstance.FULL_PROGRESS if instant else StructureInstance.NO_PROGRESS
 	structure.material_quality = _settings.default_material_quality
 	var costs: Dictionary[String, int] = definition.build_costs
 	var skills: SkillService = world.get_system(SkillService.SYSTEM_ID) as SkillService
@@ -880,14 +897,18 @@ func _place(world: ServerWorld, definition: StructureDefinition, tile: Vector2i,
 	structure.door_open = door_open
 	_structures[structure_id] = structure
 	_index(world, structure, definition)
-	if _settings.instant_completion:
+	if instant:
 		var linked: ActionResult = _create_linked_container(world, structure, definition)
 		if not linked.ok:
 			_forget(structure)
 			world.cell_index.remove(structure_id)
 			_registry.remove(structure_id)
 			return ActionResult.failure(linked.reason)
-	GameLogger.info("building", "structure placed", {"entity_id": structure_id, "definition_id": definition.definition_id, "player_id": placed_by, "cell_id": structure.cell_id, "x": tile.x, "z": tile.y, "rotation": rotation})
+	var placed_context: Dictionary = {"entity_id": structure_id, "definition_id": definition.definition_id, "player_id": placed_by, "cell_id": structure.cell_id, "x": tile.x, "z": tile.y, "rotation": rotation}
+	if completed:
+		GameLogger.debug("building", "structure placed completed", placed_context)
+	else:
+		GameLogger.info("building", "structure placed", placed_context)
 	return ActionResult.success(_push_event(EVENT_PLACED, structure, placed_by, {}))
 
 

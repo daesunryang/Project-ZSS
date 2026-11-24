@@ -27,10 +27,10 @@ func _ids(cells: Array[Vector2i]) -> PackedStringArray:
 
 # ------------------------------------------------------------ settings
 
-func test_default_settings_are_valid_and_cover_the_test_map() -> void:
+func test_default_settings_are_valid_and_cover_the_map() -> void:
 	var settings: WorldCellSettings = WorldCellSettings.new()
 	assert_eq(settings.validate().size(), 0)
-	assert_eq(settings.bounds_max_m - settings.bounds_min_m, Vector2(500.0, 500.0), "500 m x 500 m test map")
+	assert_eq(settings.bounds_max_m - settings.bounds_min_m, Vector2(4000.0, 4000.0), "the 4 km x 4 km map (F-33)")
 	assert_true(settings.preload_radius_cells > settings.active_radius_cells)
 	assert_eq(settings.validate_play_area(GameplaySettings.new().world_half_extent_m).size(), 0)
 	var grid: WorldCellGrid = WorldCellGrid.new(settings)

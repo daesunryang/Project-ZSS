@@ -14,6 +14,10 @@ extends RefCounted
 var _entries: Dictionary[String, Array] = {}
 ## cell_id -> {entity_id: kind}
 var _cells: Dictionary[String, Dictionary] = {}
+## cell_id -> {kind: {entity_id: true}}: the same entities by kind, so a
+## question about one kind does not walk every entity of the cell (F-33: a
+## town cell holds hundreds of structures and a handful of zombies).
+var _by_kind: Dictionary[String, Dictionary] = {}
 
 ## Membership changes dirty both the old and new cell save documents.
 signal cells_changed(previous_cell_id: String, cell_id: String)
@@ -35,6 +39,11 @@ func put(entity_id: String, kind: String, cell_id: String) -> String:
 	if not _cells.has(cell_id):
 		_cells[cell_id] = {}
 	_cells[cell_id][entity_id] = kind
+	if not _by_kind.has(cell_id):
+		_by_kind[cell_id] = {}
+	if not _by_kind[cell_id].has(kind):
+		_by_kind[cell_id][kind] = {}
+	_by_kind[cell_id][kind][entity_id] = true
 	cells_changed.emit(previous, cell_id)
 	return previous
 
@@ -77,11 +86,8 @@ func kind_of(entity_id: String) -> String:
 
 ## Ids of the entities in a cell, sorted. `kind` "" = every kind.
 func entities_in_cell(cell_id: String, kind: String = "") -> PackedStringArray:
-	var ids: PackedStringArray = []
-	var members: Dictionary = _cells.get(cell_id, {})
-	for entity_id: String in members:
-		if kind.is_empty() or members[entity_id] == kind:
-			ids.append(entity_id)
+	var members: Dictionary = _cells.get(cell_id, {}) if kind.is_empty() else (_by_kind.get(cell_id, {}) as Dictionary).get(kind, {})
+	var ids: PackedStringArray = PackedStringArray(members.keys())
 	ids.sort()
 	return ids
 
@@ -90,11 +96,7 @@ func count_in_cell(cell_id: String, kind: String = "") -> int:
 	var members: Dictionary = _cells.get(cell_id, {})
 	if kind.is_empty():
 		return members.size()
-	var count: int = 0
-	for entity_id: String in members:
-		if members[entity_id] == kind:
-			count += 1
-	return count
+	return ((_by_kind.get(cell_id, {}) as Dictionary).get(kind, {}) as Dictionary).size()
 
 
 ## Ids of the cells that hold at least one entity, sorted.
@@ -111,6 +113,14 @@ func size() -> int:
 
 func _remove_from_cell(entity_id: String, cell_id: String) -> void:
 	var members: Dictionary = _cells.get(cell_id, {})
+	var kind: String = str(members.get(entity_id, ""))
 	members.erase(entity_id)
 	if members.is_empty():
 		_cells.erase(cell_id)
+	var kinds: Dictionary = _by_kind.get(cell_id, {})
+	var of_kind: Dictionary = kinds.get(kind, {})
+	of_kind.erase(entity_id)
+	if of_kind.is_empty():
+		kinds.erase(kind)
+	if kinds.is_empty():
+		_by_kind.erase(cell_id)

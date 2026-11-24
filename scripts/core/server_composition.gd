@@ -86,6 +86,13 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# Without content (config.map_content null: tests, tools) it places nothing.
 	if world.register_system(MapContentService.new(config.map_content, config.structures)) != OK:
 		return null
+	# F-33 (docs/09 §15.3.1): the generated map, placed cell by cell the first
+	# time a cell is loaded, through the building, container and zombie
+	# systems. After the hand-made map content, whose area it leaves alone.
+	# Without settings (config.procedural_map null: tests, tools) it places
+	# nothing and saves nothing.
+	if world.register_system(ProceduralMapService.new(config.procedural_map, config.building.grid_module_m)) != OK:
+		return null
 	# P4-1 (docs/09 §17.1): NPCs. After the map content, in whose buildings
 	# the roster places them (once per world; without a roster nobody).
 	# Components and stages of later tickets are registered here, before the

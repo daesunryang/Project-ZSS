@@ -214,7 +214,7 @@ func test_map_validation_refuses_content_that_cannot_be_placed() -> void:
 	unknown_table.loot_table_id = "no_such_table"
 	unknown_table.containers = [_container_placement("dev_crate", Vector2i(1, 1))]
 	assert_true(_config(_content([unknown_table])).validate().size() > 0)
-	var off_map: MapBuildingDefinition = _building_definition("o", Vector2i(248, 10), Vector2i(3, 3))
+	var off_map: MapBuildingDefinition = _building_definition("o", Vector2i(1998, 10), Vector2i(3, 3))
 	assert_true(_config(_content([off_map])).validate().size() > 0, "a building lies inside the play area")
 
 

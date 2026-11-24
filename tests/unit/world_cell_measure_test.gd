@@ -140,8 +140,9 @@ func test_measure_cell_cycle_with_a_world_save_on_disk() -> void:
 
 
 func test_measure_a_full_save_with_many_cell_files() -> void:
-	# The default grid (10 x 10 cells of 50 m): 60 cells with 5 items and 2
-	# zombies each, everything in memory, then saved a few times.
+	# The default grid (50 m cells; since F-33 80 x 80 of them): the first 60
+	# cells from its corner with 5 items and 2 zombies each, everything in
+	# memory, then saved a few times.
 	var config: CompositionConfig = _config()
 	config.gameplay = GameplaySettings.new()
 	config.world_cells = WorldCellSettings.new()

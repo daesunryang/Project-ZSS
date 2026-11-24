@@ -1,6 +1,12 @@
 class_name StructureVisuals
 extends RefCounted
 ## Batched floors/walls/props; animated doors remain individual nodes.
+##
+## The batches are rebuilt from the whole mirror, so the rebuild is put off
+## until somebody looks (F-33: a town comes in as dozens of row messages a
+## frame, and each used to rebuild every batch). The mirror's `changed` only
+## marks the visuals stale; flush() rebuilds them once. update_focus(), which
+## the client calls every frame, and every reading function flush first.
 
 const BATCH_PREFIX: String = "StructureBatch_"
 const DOOR_PREFIX: String = "StructureDoor_"
@@ -19,6 +25,11 @@ var _doors: Dictionary[String, Node3D] = {}
 var _labels: Dictionary[String, Node3D] = {}
 var _transforms: Dictionary[String, Transform3D] = {}
 var _focus: Vector3 = Vector3.ZERO
+## The mirror changed since the batches were built.
+var _stale: bool = false
+## Ids of the mirror's structures that are not complete (the only ones that
+## can have a progress label), as of the last rebuild.
+var _unfinished: PackedStringArray = []
 
 
 func _init(root: Node3D, mirror: ClientStructureState, catalog: StructureCatalog, items: ItemCatalog, grid: StructureGrid, settings: ClientPresentationSettings) -> void:
@@ -29,33 +40,51 @@ func _init(root: Node3D, mirror: ClientStructureState, catalog: StructureCatalog
 	_grid = grid
 	_settings = settings
 	# Every accepted payload emits `changed` once after its per-row signals.
-	# Listening only here coalesces a 370-row join into one batch rebuild.
-	_mirror.changed.connect(_rebuild)
+	# It only marks the visuals stale: all payloads of a frame become one
+	# batch rebuild.
+	_mirror.changed.connect(_mark_stale)
 	_rebuild()
 
 
+## Rebuilds the batches when the mirror changed since they were built.
+func flush() -> void:
+	if _stale:
+		_stale = false
+		_rebuild()
+
+
+func _mark_stale() -> void:
+	_stale = true
+
+
 func visual_of(structure_id: String) -> Node3D:
+	flush()
 	return _doors.get(structure_id, _labels.get(structure_id, null))
 
 
 func label_of(structure_id: String) -> Label3D:
+	flush()
 	var anchor: Node3D = _labels.get(structure_id, null)
 	return anchor.get_node(LABEL_NAME) as Label3D if anchor != null else null
 
 
 func transform_of(structure_id: String) -> Transform3D:
+	flush()
 	return _transforms.get(structure_id, Transform3D())
 
 
 func has_visual(structure_id: String) -> bool:
+	flush()
 	return _transforms.has(structure_id)
 
 
 func count() -> int:
+	flush()
 	return _transforms.size()
 
 
 func batch_instance_count() -> int:
+	flush()
 	var total: int = 0
 	for batch: MultiMeshInstance3D in _batches.values():
 		total += batch.multimesh.instance_count
@@ -63,14 +92,17 @@ func batch_instance_count() -> int:
 
 
 func door_count() -> int:
+	flush()
 	return _doors.size()
 
 
 func label_count() -> int:
+	flush()
 	return _labels.size()
 
 
 func update_focus(focus: Vector3) -> void:
+	flush()
 	if focus.distance_squared_to(_focus) < 0.0625:
 		return
 	_focus = focus
@@ -85,16 +117,19 @@ func _rebuild() -> void:
 		door.free()
 	_doors.clear()
 	_transforms.clear()
+	_unfinished.clear()
 	var ids_by_batch: Dictionary[String, PackedStringArray] = {}
 	for structure_id: String in _mirror.structure_ids():
 		var entry: Dictionary = _mirror.get_structure(structure_id)
 		var definition: StructureDefinition = _catalog.get_definition(str(entry.get(ClientStructureState.KEY_DEFINITION_ID, "")))
 		if definition == null:
 			continue
+		var complete: bool = _is_complete(entry)
+		if not complete:
+			_unfinished.append(structure_id)
 		if definition.is_door:
 			_make_door(structure_id, entry, definition)
 			continue
-		var complete: bool = _is_complete(entry)
 		var key: String = "%s|%s" % [definition.definition_id, "solid" if complete else "blueprint"]
 		if not ids_by_batch.has(key):
 			ids_by_batch[key] = PackedStringArray()
@@ -183,9 +218,9 @@ func _update_labels() -> void:
 		if entry.is_empty() or _is_complete(entry) or position.distance_squared_to(_focus) > max_distance_sq:
 			_labels[structure_id].free()
 			_labels.erase(structure_id)
-	for structure_id: String in _mirror.structure_ids():
+	for structure_id: String in _unfinished:
 		var entry: Dictionary = _mirror.get_structure(structure_id)
-		if _is_complete(entry):
+		if entry.is_empty() or _is_complete(entry):
 			continue
 		var definition: StructureDefinition = _catalog.get_definition(str(entry.get(ClientStructureState.KEY_DEFINITION_ID, "")))
 		if definition == null:

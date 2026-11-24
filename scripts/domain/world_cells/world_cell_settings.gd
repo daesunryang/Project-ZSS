@@ -4,11 +4,13 @@ extends Resource
 ## ADR-023). Defaults in `res://data/tuning/world_cell_settings.tres`.
 ## Every value is PROVISIONAL (docs/15 §15.1 P3-001..) until play-tested.
 ##
-## The defaults are for the 500 m x 500 m test map (docs/13 §5), not for the
-## 4 km world of docs/03 (256 m or 512 m cells are the candidates there, to
-## be decided by testing): 50 m cells give a 10 x 10 grid, so a walking
-## player crosses a cell border every ~12 s and cells really load and unload
-## in play. With an active radius of 2 everything within 100 m of a player
+## The defaults are the 4 km x 4 km map of F-33 (docs/09 §15.3.1) with the
+## 50 m cells the 500 m test map was built with: an 80 x 80 grid, so a
+## walking player crosses a cell border every ~12 s and cells really load
+## and unload in play. Nothing is kept per cell of the grid, only per cell
+## in memory. (docs/03 names 256 m or 512 m cells as candidates for a large
+## world; a generated block is one 50 m cell, so the size stayed.)
+## With an active radius of 2 everything within 100 m of a player
 ## is simulated, which covers zombie sight (25 m) and the farthest audible
 ## noise (99 m) of the Phase 2 defaults.
 ## All durations are action time (real seconds, docs/09 §14.16).
@@ -22,8 +24,8 @@ const DEFAULT_PATH: String = "res://data/tuning/world_cell_settings.tres"
 @export_range(1.0, 10000.0) var cell_size_m: float = 50.0
 ## Map rectangle (x, z), metres. Cells exist only inside it; a position on
 ## or beyond its far edge belongs to the last cell.
-@export var bounds_min_m: Vector2 = Vector2(-250.0, -250.0)
-@export var bounds_max_m: Vector2 = Vector2(250.0, 250.0)
+@export var bounds_min_m: Vector2 = Vector2(-2000.0, -2000.0)
+@export var bounds_max_m: Vector2 = Vector2(2000.0, 2000.0)
 
 @export_group("Interest")
 ## Cells within this many cells of an online player's cell (a square) are
@@ -50,7 +52,7 @@ const DEFAULT_PATH: String = "res://data/tuning/world_cell_settings.tres"
 @export_range(0.0, 60.0) var refresh_period_sec: float = 0.25
 ## Cells of the outer preload ring loaded per look. Cells a player needs now
 ## (the active area and the ring next to it) are never held back.
-@export_range(1, 10000) var max_preload_loads_per_refresh: int = 4
+@export_range(1, 10000) var max_preload_loads_per_refresh: int = 2
 ## A cell whose load or save failed is tried again after this long.
 @export_range(0.0, 3600.0) var retry_delay_sec: float = 5.0
 

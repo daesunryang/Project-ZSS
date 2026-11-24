@@ -1,0 +1,249 @@
+[gd_resource type="Resource" script_class="ProceduralMapSettings" load_steps=15 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/map_content/procedural_map_settings.gd" id="1_settings"]
+[ext_resource type="Script" path="res://scripts/domain/map_content/procedural_building_archetype.gd" id="2_archetype"]
+
+[sub_resource type="Resource" id="a_cottage"]
+script = ExtResource("2_archetype")
+archetype_id = "cottage"
+building_type = "house"
+zone = 0
+weight = 30
+min_size_tiles = Vector2i(5,4)
+max_size_tiles = Vector2i(7,6)
+room_span_tiles = 4
+max_partitions = 1
+loot_table_id = "dev_house"
+container_definition_ids = PackedStringArray("dev_cabinet")
+min_containers = 1
+max_containers = 2
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[sub_resource type="Resource" id="a_family_house"]
+script = ExtResource("2_archetype")
+archetype_id = "family_house"
+building_type = "house"
+zone = 0
+weight = 45
+min_size_tiles = Vector2i(7,6)
+max_size_tiles = Vector2i(10,8)
+room_span_tiles = 4
+max_partitions = 2
+loot_table_id = "dev_house"
+container_definition_ids = PackedStringArray("dev_cabinet", "dev_cabinet", "dev_crate")
+min_containers = 2
+max_containers = 3
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[sub_resource type="Resource" id="a_large_house"]
+script = ExtResource("2_archetype")
+archetype_id = "large_house"
+building_type = "house"
+zone = 0
+weight = 15
+min_size_tiles = Vector2i(10,8)
+max_size_tiles = Vector2i(13,10)
+room_span_tiles = 4
+max_partitions = 2
+loot_table_id = "dev_house"
+container_definition_ids = PackedStringArray("dev_cabinet", "dev_cabinet", "dev_crate")
+min_containers = 3
+max_containers = 4
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[sub_resource type="Resource" id="a_garden_shed"]
+script = ExtResource("2_archetype")
+archetype_id = "garden_shed"
+building_type = "shed"
+zone = 0
+weight = 10
+min_size_tiles = Vector2i(4,3)
+max_size_tiles = Vector2i(5,4)
+room_span_tiles = 0
+max_partitions = 0
+loot_table_id = "melee_tools"
+container_definition_ids = PackedStringArray("dev_crate")
+min_containers = 1
+max_containers = 1
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[sub_resource type="Resource" id="a_corner_store"]
+script = ExtResource("2_archetype")
+archetype_id = "corner_store"
+building_type = "store"
+zone = 1
+weight = 40
+min_size_tiles = Vector2i(8,7)
+max_size_tiles = Vector2i(12,9)
+room_span_tiles = 6
+max_partitions = 1
+loot_table_id = "dev_store"
+container_definition_ids = PackedStringArray("dev_crate", "dev_cabinet")
+min_containers = 3
+max_containers = 5
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[sub_resource type="Resource" id="a_clinic"]
+script = ExtResource("2_archetype")
+archetype_id = "clinic"
+building_type = "clinic"
+zone = 1
+weight = 20
+min_size_tiles = Vector2i(9,8)
+max_size_tiles = Vector2i(12,10)
+room_span_tiles = 4
+max_partitions = 2
+loot_table_id = "dev_clinic"
+container_definition_ids = PackedStringArray("dev_cabinet")
+min_containers = 3
+max_containers = 4
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[sub_resource type="Resource" id="a_warehouse"]
+script = ExtResource("2_archetype")
+archetype_id = "warehouse"
+building_type = "warehouse"
+zone = 1
+weight = 25
+min_size_tiles = Vector2i(12,10)
+max_size_tiles = Vector2i(16,14)
+room_span_tiles = 0
+max_partitions = 0
+loot_table_id = "dev_warehouse"
+container_definition_ids = PackedStringArray("dev_crate")
+min_containers = 4
+max_containers = 6
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[sub_resource type="Resource" id="a_hardware_store"]
+script = ExtResource("2_archetype")
+archetype_id = "hardware_store"
+building_type = "store"
+zone = 1
+weight = 15
+min_size_tiles = Vector2i(8,6)
+max_size_tiles = Vector2i(11,8)
+room_span_tiles = 6
+max_partitions = 1
+loot_table_id = "melee_store"
+container_definition_ids = PackedStringArray("dev_crate", "dev_cabinet")
+min_containers = 2
+max_containers = 4
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[sub_resource type="Resource" id="a_farmhouse"]
+script = ExtResource("2_archetype")
+archetype_id = "farmhouse"
+building_type = "house"
+zone = 2
+weight = 45
+min_size_tiles = Vector2i(8,7)
+max_size_tiles = Vector2i(11,9)
+room_span_tiles = 4
+max_partitions = 2
+loot_table_id = "dev_house"
+container_definition_ids = PackedStringArray("dev_cabinet", "dev_cabinet", "dev_crate")
+min_containers = 2
+max_containers = 3
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[sub_resource type="Resource" id="a_barn"]
+script = ExtResource("2_archetype")
+archetype_id = "barn"
+building_type = "warehouse"
+zone = 2
+weight = 25
+min_size_tiles = Vector2i(10,8)
+max_size_tiles = Vector2i(14,10)
+room_span_tiles = 0
+max_partitions = 0
+loot_table_id = "dev_warehouse"
+container_definition_ids = PackedStringArray("dev_crate")
+min_containers = 2
+max_containers = 3
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[sub_resource type="Resource" id="a_tool_shed"]
+script = ExtResource("2_archetype")
+archetype_id = "tool_shed"
+building_type = "shed"
+zone = 2
+weight = 20
+min_size_tiles = Vector2i(4,4)
+max_size_tiles = Vector2i(5,5)
+room_span_tiles = 0
+max_partitions = 0
+loot_table_id = "melee_tools"
+container_definition_ids = PackedStringArray("dev_crate")
+min_containers = 1
+max_containers = 1
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[sub_resource type="Resource" id="a_cabin"]
+script = ExtResource("2_archetype")
+archetype_id = "cabin"
+building_type = "house"
+zone = 2
+weight = 10
+min_size_tiles = Vector2i(5,4)
+max_size_tiles = Vector2i(6,5)
+room_span_tiles = 0
+max_partitions = 0
+loot_table_id = "melee_household"
+container_definition_ids = PackedStringArray("dev_cabinet")
+min_containers = 1
+max_containers = 2
+floor_definition_id = "dev_floor"
+wall_definition_id = "dev_wall"
+door_definition_id = "dev_door"
+
+[resource]
+script = ExtResource("1_settings")
+world_seed = 20261123
+reserved_half_extent_m = 250.0
+home_town_radius_m = 500.0
+town_count = 12
+town_min_radius_m = 120.0
+town_max_radius_m = 450.0
+town_spacing_m = 250.0
+town_placement_attempts = 64
+town_center_block_percent = 95
+town_edge_block_percent = 60
+town_center_lot_percent = 90
+town_edge_lot_percent = 60
+commercial_core_percent = 35
+commercial_block_percent = 50
+roadside_farm_percent = 22
+wild_building_per_10000 = 120
+farm_extra_building_percent = 35
+road_half_width_m = 3.0
+yard_margin_tiles = 2
+place_floors = false
+town_zombies_per_cell_max = 2
+town_zombie_percent = 35
+roadside_zombie_percent = 8
+wild_zombie_per_10000 = 300
+max_pieces_per_tick = 24
+archetypes = Array[ExtResource("2_archetype")]([SubResource("a_cottage"), SubResource("a_family_house"), SubResource("a_large_house"), SubResource("a_garden_shed"), SubResource("a_corner_store"), SubResource("a_clinic"), SubResource("a_warehouse"), SubResource("a_hardware_store"), SubResource("a_farmhouse"), SubResource("a_barn"), SubResource("a_tool_shed"), SubResource("a_cabin")])

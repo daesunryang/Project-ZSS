@@ -5,13 +5,13 @@
 [resource]
 script = ExtResource("1_cells")
 cell_size_m = 50.0
-bounds_min_m = Vector2(-250, -250)
-bounds_max_m = Vector2(250, 250)
+bounds_min_m = Vector2(-2000, -2000)
+bounds_max_m = Vector2(2000, 2000)
 active_radius_cells = 2
 preload_radius_cells = 3
 preload_lookahead_sec = 4.0
 deactivate_delay_sec = 5.0
 unload_delay_sec = 20.0
 refresh_period_sec = 0.25
-max_preload_loads_per_refresh = 4
+max_preload_loads_per_refresh = 2
 retry_delay_sec = 5.0

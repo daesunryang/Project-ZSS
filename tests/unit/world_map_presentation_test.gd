@@ -63,12 +63,12 @@ func test_the_client_takes_the_map_layout_the_server_describes() -> void:
 	assert_eq(map.grid.max_cell, server_grid.max_cell)
 
 
-func test_the_shipped_test_map_is_five_hundred_metres_of_fifty_metre_cells() -> void:
+func test_the_shipped_map_is_four_kilometres_of_fifty_metre_cells() -> void:
 	var map: ClientWorldMap = ClientWorldMap.new()
 	assert_eq(map.apply(ClientWorldMap.describe(WorldCellGrid.new(WorldCellSettings.load_or_default()))), "")
-	assert_eq(map.extent(), Vector2(500.0, 500.0))
+	assert_eq(map.extent(), Vector2(4000.0, 4000.0), "F-33: the map grew from 500 m to 4 km")
 	assert_eq(map.cell_size_m, 50.0)
-	assert_eq(map.grid.cell_count(), 100)
+	assert_eq(map.grid.cell_count(), 6400)
 
 
 func test_a_layout_that_cannot_be_drawn_is_refused_and_the_map_stays_unknown() -> void:
