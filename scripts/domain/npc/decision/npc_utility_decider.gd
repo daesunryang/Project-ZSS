@@ -331,7 +331,7 @@ func _choose(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcDeci
 		record[KEY_CHOSEN] = current.action_id
 		record[KEY_OUTCOME] = OUTCOME_MIN_DURATION
 		return
-	if current != null and current.runs_until_done and not _other_need_in_danger(needs, current.need_kind) and not _night_sleep_calls(current, state, needs, npcs.definition_of(npc.npc_id), now, world.clock.world_time_sec):
+	if current != null and current.runs_until_done and not _other_need_in_danger(needs, current.need_kind) and not _night_sleep_calls(npc, current, state, needs, npcs.definition_of(npc.npc_id), now, world.clock.world_time_sec):
 		# It goes on until the executor says it is over: its own preconditions
 		# (the need that started it has dropped) and the other candidates are
 		# not looked at. No number is drawn, as in the minimum duration.
@@ -343,7 +343,7 @@ func _choose(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcDeci
 	var definition: NpcDefinition = npcs.definition_of(npc.npc_id)
 	var best: NpcActionDefinition = _best_candidate(world, npc, state, needs, definition, now, record)
 	if best == null:
-		best = _fallback(state, needs, definition, now, world.clock.world_time_sec)
+		best = _fallback(npc, state, needs, definition, now, world.clock.world_time_sec)
 		record[KEY_FALLBACK] = best != null
 	if best == null:
 		if current != null:
@@ -377,7 +377,7 @@ func _best_candidate(world: ServerWorld, npc: NpcState, state: NpcDecisionCompon
 		# One number per action, candidate or not: what an NPC draws does not
 		# depend on which preconditions hold.
 		var jitter: float = npc.rng.randf() if _settings.score_jitter > 0.0 else 0.0
-		var code: String = _precondition(action, state, needs, definition, now, world.clock.world_time_sec)
+		var code: String = _precondition(npc, action, state, needs, definition, now, world.clock.world_time_sec)
 		if not code.is_empty():
 			(record[KEY_REJECTED] as Array).append({KEY_ACTION_ID: action_id, KEY_CODE: code})
 			continue
@@ -399,12 +399,12 @@ func _best_candidate(world: ServerWorld, npc: NpcState, state: NpcDecisionCompon
 
 
 ## "" when `action` may be a candidate now, or the REJECT_ code.
-func _precondition(action: NpcActionDefinition, state: NpcDecisionComponent, needs: NpcNeeds, definition: NpcDefinition, now: int, world_time_sec: float) -> String:
+func _precondition(npc: NpcState, action: NpcActionDefinition, state: NpcDecisionComponent, needs: NpcNeeds, definition: NpcDefinition, now: int, world_time_sec: float) -> String:
 	if not action.selectable:
 		return REJECT_NOT_SELECTABLE
 	if state.is_on_cooldown(action.action_id, now):
 		return REJECT_COOLDOWN
-	if action.requires_job and (definition == null or definition.job_role.is_empty() or definition.work_building_id.is_empty()):
+	if action.requires_job and (definition == null or definition.job_role.is_empty() or not _has_work_place(npc, definition)):
 		return REJECT_NO_JOB
 	if action.min_need_urgency > 0.0 and _need_urgency(needs, action.need_kind) + URGENCY_EPSILON < action.min_need_urgency:
 		return REJECT_NEED_LOW
@@ -416,7 +416,7 @@ func _precondition(action: NpcActionDefinition, state: NpcDecisionComponent, nee
 		for kind: String in NpcNeedKind.SIMULATED_KINDS:
 			if kind != action.need_kind and needs.value(kind) + NEED_VALUE_EPSILON >= _need_settings.danger_threshold and _can_answer(kind, state, now):
 				return REJECT_NEED_DANGER
-	if _night_sleep_calls(action, state, needs, definition, now, world_time_sec):
+	if _night_sleep_calls(npc, action, state, needs, definition, now, world_time_sec):
 		return REJECT_BEDTIME_NOW
 	if action.requires_bedtime:
 		var bedtime_hour: float = _bedtime_hour(definition)
@@ -437,16 +437,23 @@ func _can_answer(kind: String, state: NpcDecisionComponent, now: int) -> bool:
 	return false
 
 
+## True when the NPC has a place to work at. An NPC that lives alone in a
+## generated building (F-28) has none: nothing sends it to work.
+static func _has_work_place(npc: NpcState, definition: NpcDefinition) -> bool:
+	var home: NpcHome = NpcHome.of(npc)
+	return home.has_work_place(definition) if home != null else not definition.work_building_id.is_empty()
+
+
 ## True when `action` answers a need that a night sleep (an action with
 ## `requires_bedtime` and the same `need_kind`) could answer now: at its
 ## bedtime an NPC goes to bed instead of napping, and a nap that still runs
 ## at the bedtime gives way to the night sleep (F-6).
-func _night_sleep_calls(action: NpcActionDefinition, state: NpcDecisionComponent, needs: NpcNeeds, definition: NpcDefinition, now: int, world_time_sec: float) -> bool:
+func _night_sleep_calls(npc: NpcState, action: NpcActionDefinition, state: NpcDecisionComponent, needs: NpcNeeds, definition: NpcDefinition, now: int, world_time_sec: float) -> bool:
 	if action.requires_bedtime or action.need_kind.is_empty():
 		return false
 	for action_id: String in _catalog.action_ids():
 		var other: NpcActionDefinition = _catalog.get_action(action_id)
-		if other.requires_bedtime and other.need_kind == action.need_kind and _precondition(other, state, needs, definition, now, world_time_sec).is_empty():
+		if other.requires_bedtime and other.need_kind == action.need_kind and _precondition(npc, other, state, needs, definition, now, world_time_sec).is_empty():
 			return true
 	return false
 
@@ -457,11 +464,11 @@ static func _bedtime_hour(definition: NpcDefinition) -> float:
 
 
 ## The fallback action when it may run now (it need not be selectable).
-func _fallback(state: NpcDecisionComponent, needs: NpcNeeds, definition: NpcDefinition, now: int, world_time_sec: float) -> NpcActionDefinition:
+func _fallback(npc: NpcState, state: NpcDecisionComponent, needs: NpcNeeds, definition: NpcDefinition, now: int, world_time_sec: float) -> NpcActionDefinition:
 	var action: NpcActionDefinition = _catalog.get_action(_settings.fallback_action_id) if not _settings.fallback_action_id.is_empty() else null
 	if action == null:
 		return null
-	var code: String = _precondition(action, state, needs, definition, now, world_time_sec)
+	var code: String = _precondition(npc, action, state, needs, definition, now, world_time_sec)
 	return action if code.is_empty() or code == REJECT_NOT_SELECTABLE else null
 
 

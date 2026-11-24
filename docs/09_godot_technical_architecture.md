@@ -2616,7 +2616,7 @@ Phase 4(docs/13 §6, §16) 티켓의 계약을 티켓마다 한 절씩 적는다
 
 **저장 배치**: 셀 문서 `systems.npc = {schema_version: 1, npcs: [NpcState.to_dict()]}`. world_state `systems.npc = {schema_version: 1, population: {npc_id: definition_id}, rosters: {roster_id: {content_version, npcs: {definition_id: npc_id}, complete}}, npcs: [...], stages: {stage_id: 문서}}`. `population`은 월드의 모든 NPC(메모리에 없는 셀의 NPC 포함: 인원 상한과 `definition_of`의 근거), `npcs`는 셀 문서에 저장되지 않는 NPC뿐이고(저장소 없는 월드·메모리 저장소의 로딩된 셀. 전용 서버에서는 보통 없어서 키가 없다), `stages`는 문서가 있을 때만 있다. NPC·명단·단계 문서가 하나도 없던 월드는 `systems.npc` 키 자체가 없다: 이 티켓 전의 저장과 같은 모양이고 그대로 읽힌다. NPC 한 명의 문서: `{schema_version: 1, npc_id, definition_id, position: [x, y, z], yaw, created_at, last_simulated_world_time, rng_seed: "<정수>", rng_state: "<정수>", components: {component_id: {schema_version, ...}}}`. world_state 스키마(4)와 셀 문서 스키마(1)는 바꾸지 않았다. 셀 문서에 있는데 `population`에 없는 NPC는 로딩할 때 `population`에 더한다(스스로 고친다).
 
-**명단 배치(D5)**: 맵 콘텐츠(§15.3)와 같은 방식이다. `ensure_seeded(world)`가 명단의 정의마다 집 지점(`NpcRoster.spot_position`)의 셀을 `load_cell_now`로 로딩하고 `spawn_npc`로 놓고, 끝나면 로딩한 셀을 `release_cells_now`로 저장·해제한다.
+**명단 배치(D5)**: (F-28: 생성 맵이 있는 월드에서는 정의의 집 지점이 아니라 월드 시드로 고른 생성 건물에 놓는다, §17.13. 아래는 생성 맵이 없는 월드의 규칙이고 한 번만 놓는 기록 방식은 같다.) 맵 콘텐츠(§15.3)와 같은 방식이다. `ensure_seeded(world)`가 명단의 정의마다 집 지점(`NpcRoster.spot_position`)의 셀을 `load_cell_now`로 로딩하고 `spawn_npc`로 놓고, 끝나면 로딩한 셀을 `release_cells_now`로 저장·해제한다.
 
 - 한 번만: `seed_new_world`(새 월드, 맵 콘텐츠 뒤)와 `WorldPersistence.load_or_create`(저장된 월드를 복구한 뒤: 명단이 없던 때의 저장, 중간에 멈춘 배치). 기록에 있는 정의는 다시 놓지 않는다. 명단에 **새 정의가 더해졌으면** 이미 받은 월드에도 그 정의만 놓고 기록의 `content_version`을 지금 명단 값으로 바꾼다(2026-11-23, 개발용 명단 5 → 10명, 명단 `content_version` 2). 빠진 정의의 NPC는 남기고, 다른 변경(순서 등)은 로그만 남긴다. 저장된 월드에 배치하다 실패하면 서버 시작이 실패한다(`fatal`).
 - 조립 입력: `CompositionConfig.npc_roster`가 null이면 아무도 놓지 않는다(`from_defaults()`의 기본: 테스트·도구). `GameBootstrap`은 서버를 시작할 때 테스트 맵이 있으면 `NpcRoster.load_or_null()`을 넣는다. 그래서 기존 테스트에는 NPC가 생기지 않는다.
@@ -3019,7 +3019,9 @@ systems.npc.stages.executor = {schema_version: 1, next_plan_seq}
 
 **테스트**: `tests/unit/npc_executor_test.gd`(설정·지점 데이터, 벽 돌아 걷기와 걸음당 `resolve_movement` 한 번, 문 열고 지나가 닫기와 좀비 기본 검색에는 여전히 막힘, FIFO와 노드 예산, 예약의 독점과 완료·실패·취소·잠듦·제거 때 해제, 같은 틱에 깨어난 둘의 지점 다툼, 실패 사유와 인터럽트, 저장 → 재시작 → 복구가 끊지 않은 실행과 틱 단위로 같은 것(걷는 중·문 앞·문간·검색 중·지점 사용 중·잠든 채·메모리 밖에서 저장), 붐비는 계획 대기열의 저장 복구, 같은 대본 두 번 실행이 같은 것, 잘못된 문서 거부), `tests/unit/npc_executor_search_test.gd`(검색 옵션: 꺼져 있으면 결과가 전과 같고 문 질의를 부르지 않음, 켜면 닫힌 문을 직선으로 통과, 모서리 대각선 금지, 문 상태와 무관).
 
-### 17.8 NPC 기본 행동과 결정·실행 연결(P4-5b, 단계 `behaviours`, 구성 요소 `behaviour`)
+### 17.8 NPC 기본 행동과 결정·실행 연결(P4-5b, 단계 `behaviours`, 구성 요소 `behaviour`)
+
+> F-28(§17.13): 생성 건물에 혼자 사는 NPC는 그 건물에서 계산한 자리만 쓰고 일터가 없어 `work`를 고르지 않는다. 아래의 집·일터·음식 자리 설명은 개발 맵의 집에 사는 NPC(생성 맵이 없는 월드)의 것이다.
 
 결정 계층(P4-4, §17.6)이 고른 행동을 **실제로 하는 것**이다: 먹기·마시기·쉬기·일하기·배회·도주. 이동과 지점 예약은 실행기(P4-5a, §17.7)가 하고, 이 계층은 "어디로 갈지"와 "거기서 무슨 일이 일어나는지"를 맡는다. 이 티켓부터 **기본 조립의 NPC가 스스로 결정하고 움직인다**. 프로토콜·`PROTOCOL_VERSION`은 바꾸지 않았다. `needs/`·`scheduling/`·`mind/`·`decision/`의 코드는 고치지 않았다. 수치와 규칙은 전부 PROVISIONAL(docs/15 §17.8)이다.
 
@@ -3207,3 +3209,77 @@ FD-11("NPC마다 정해진 시각", 피로 0까지 잠)의 구현이다. 잠 빨
 **비용**: 멀쩡한 NPC는 이 단계가 보지 않는다. 틱마다 드는 것은 다친 NPC와 시체뿐이다. 측정(`tests/unit/npc_health_test.gd`, 이 PC, 헤드리스): 다친 NPC 50명에 틱당 약 0.45 ms(대부분 셀 저장 표시). 실제 서버 부하에서의 측정은 하지 않았다.
 
 **테스트**: `tests/unit/npc_health_test.gd`(규칙·좀비·근접·치료·죽음·목격·저장·재시작·셀 해제·옛 문서·측정), `tests/integration/npc_health_net_test.gd`(실제 ENet: 상태 복제, 클라이언트의 근접 공격·붕대, 좀비 공격 이벤트), `tests/unit/npc_net_state_test.gd`(전선 형식·거울·이름표).
+
+### 17.13 혼자 사는 NPC의 집(F-28, 구성 요소 `home`)
+
+사용자 지시(2026-11-23) "npc는 랜덤 집에서 혼자 버티고 살아남는 형태 ... 거처를 바꿔다닐 수도 있음"과 "일 할수도 있고 자유롭게"의 첫 구현이다. §17.1의 "명단 NPC는 정의가 가리키는 집 자리에 놓인다"와 §17.8의 "근무 시간대에 일터로 간다"는, 생성 맵(§15.3.1)이 있는 월드에서는 이 절로 바뀐다. 수치와 세부 규칙은 임시다(docs/15 §24, F28-001~F28-012). 수색·싸우기(F-29), 이사(F-30), 발견과 대화(F-31), 포섭(F-32)은 이 절에 없다.
+
+**한 줄 요약**: 생성 맵이 있는 월드에서 명단 NPC는 각자 월드 시드로 고른 생성 건물 하나에 혼자 산다. 그 건물에서 쓰는 자리(침대·물·음식 보관함)는 건물 모양에서 계산하고, 음식은 그 건물 보관함에 든 것뿐이며, 일터가 없어서 출근하지 않는다.
+
+**코드** (`scripts/domain/npc/homes/`)
+
+| 파일 | 역할 |
+|---|---|
+| `npc_home.gd` | 구성 요소 `home`(스키마 1): 이 NPC의 집이 어디서 왔는지. `definition`(정의가 가리키는 손으로 만든 맵의 집·일터) 또는 `generated`(생성 건물 id와 집 타일) |
+| `npc_home_layout.gd` | 건물 하나에서 집 타일·침대·물·음식 자리를 계산한다(순수 함수, 저장하지 않음) |
+| `npc_home_picker.gd` | 생성기에게 물어 NPC 한 명이 살 건물을 고른다(순수 함수) |
+| `npc_homes.gd` | 위 셋을 묶는 조회 창구: NPC의 집·일터 위치, 생성 건물의 자리. `NpcService`·`NpcExecutor`·`NpcBehaviours`가 같이 쓴다 |
+| `npc_home_settings.gd` | 설정(`data/tuning/npc_home_settings.tres`, `CompositionConfig.npc_homes`) |
+
+**언제 혼자 사나**: `NpcHomeSettings.lone_homes`가 켜져 있고(기본) 월드에 생성 맵이 있을 때(`CompositionConfig.procedural_map`, 전용 서버는 있음). 생성 맵이 없는 월드(대부분의 테스트·도구)에서는 전과 똑같이 정의가 가리키는 개발 맵의 집에 놓이고, 개발 맵 자리(`npc_spots`)·일터·채워 둔 식량을 쓴다. NPC 행동 일반을 보는 테스트는 이 통제된 구성을 그대로 쓴다.
+
+**집 고르기** (`NpcHomePicker.pick(정의 id, 이미 잡힌 건물들)`)
+
+- 입력이 같으면 결과가 같다: 생성기(월드 시드), 설정, 정의 id, 이미 잡힌 건물 목록. 난수는 `sha256("f28|home|<월드 시드>|<정의 id>")`로 만든 생성기 하나만 쓴다. 그래서 같은 시드의 월드는 언제 물어도 같은 집을 주고, 명단 뒤에 NPC가 더해져도 앞사람의 집은 바뀌지 않는다.
+- 한 건물에 한 명: 이미 잡힌 건물은 고르지 않는다.
+- 집 먼저: `home_building_types`(기본 `house`)인 건물만 찾고, 하나도 못 찾았을 때만 종류를 가리지 않는다. 보관함이 하나 이상 있고 집 배치(아래)가 나오는 건물만 대상이다.
+- 흩어 놓기: 천 명 중 `countryside_per_mille`(300)명은 마을 밖(마을 사이 길 옆 셀의 건물)에 산다. 비율을 정확히 지키므로 10명이면 4·7·10번째가 시골이다. 나머지는 지금까지 NPC가 가장 적게 사는 마을로 간다(같으면 정의 id에서 나온 순서). 마을이 남아 있는 동안 한 마을에 둘이 살지 않는다.
+- 비용 상한: 마을 하나당 셀 `cell_attempts`(64)개, 시골도 길 따라 64개까지만 계획을 묻는다. 맵 전체를 계획하지 않는다.
+- 기본 시드(20261123)·명단 10명의 결과: 마을 7곳에 한 명씩 + 시골 3명, 계획한 셀 51개, 6~7ms.
+
+**집 배치** (`NpcHomeLayout.of(건물)`): 건물의 크기·바깥문·보관함 자리만으로 정한다. 보관함이 있는 타일과 바깥문 바로 안쪽 타일은 쓰지 않는다.
+
+| 자리 | 규칙 | 자리 id |
+|---|---|---|
+| 침대 | 바깥벽을 따라 있는 빈 타일 중 바깥문에서 가장 먼 것 | `<건물 id>_bed` |
+| 물 | 바깥벽을 따라 있는 빈 타일 중 바깥문에 가장 가까운 것(침대 제외) | `<건물 id>_water` |
+| 집 타일 | 남은 빈 타일 중 건물 한가운데에 가장 가까운 것: NPC를 놓는 곳, 배회의 중심, 침대가 없을 때 자는 곳 | — |
+| 음식 | 건물의 보관함마다 하나, 보관함이 서 있는 타일 | `<건물 id>_food_<보관함 번호>` |
+
+같은 거리면 x가 작은 쪽, 그다음 z가 작은 쪽이다. 침대와 물은 한 번에 한 명(예약), 음식 보관함은 아니다. 일하는 자리는 없다. 기본 맵의 건물 4361채 모두에서 배치가 나온다(테스트가 전부 확인).
+
+자리는 어디에도 저장하지 않고 필요할 때 계산한다: `NpcExecutor`는 자리 id가 손으로 만든 자리 목록에 없으면 `NpcHomes.generated_spot(id)`에 묻고, 거기서 건물 id를 떼어 생성기의 그 셀 계획에서 배치를 만든다(건물 256채까지 캐시). 생성 건물의 자리는 `free_spot_ids`·`spot_ids`에 건물 id를 줄 때만 나온다(수천 채를 늘어놓지 않는다). 예약·저장되는 자리 id·깨어날 때 되찾기는 기존 규칙 그대로다.
+
+**놓기** (`NpcService.ensure_seeded`, 새 월드를 만들 때와 저장된 월드를 시작할 때)
+
+1. 명단의 정의마다 집을 고르고 월드 저장의 명단 기록 `homes`에 적는다.
+2. NPC마다: 집 셀을 올린다(`load_cell_now`) → 그 셀의 생성 건물을 **끝까지 짓는다**(`ProceduralMapService.finish_cell_now`: NPC를 벽이 나중에 생기는 집에 넣지 않는다) → 집 타일에 NPC를 만든다 → `home` 구성 요소에 건물 id와 집 타일을 적는다 → 그 건물의 보관함을 수색한 것으로 만든다(`ContainerService.search_now`: 플레이어가 처음 열 때와 같은 시드로 루팅을 굴린다) → 보관함 하나에 집 식량(`stock_item_id` × `stock_units`, 기본 전투식량 6단위)을 넣는다.
+3. 올린 셀을 저장하고 내린다(기존 `_release`). 서버가 시작될 때 메모리에 남는 NPC는 없다.
+
+집 식량은 NPC를 그 집에 넣을 때 한 번뿐이고 다시 채우지 않는다(개발 맵 음식 자리의 "처음 한 번 40단위"는 생성 집에 쓰지 않는다). 고를 건물이 없으면(생성 맵이 비어 있음) 그 NPC는 정의의 집에 놓이고 경고가 남는다.
+
+**행동** (`NpcBehaviours`)
+
+- 생성 집에 사는 NPC는 **그 건물의 자리만** 쓴다: 먹기는 그 건물 보관함, 마시기는 그 건물의 물, 낮잠·밤잠은 그 건물의 침대(없으면 집 타일). 2km 떨어진 개발 맵의 자리를 "가장 가까운 자리"로 고르지 않는다.
+- 배회의 중심과 "집으로 가서 자기"의 집은 `home` 구성 요소의 집 타일이다. 배회 반경(`wander_radius_m` 8m)은 그대로다.
+- **일**: 행동 `work`와 그 정의(8~18시)는 그대로 남아 있다(F-19·F-20에서 쓴다). 다만 일터가 있어야 후보가 되는데(`requires_job`), 일터는 "정의의 집에 사는 NPC의 정의가 가리키는 일 건물"뿐이다(`NpcHome.has_work_place`). 생성 집에 혼자 사는 NPC는 일터가 없어서 결정 계층이 `no_job`으로 빼고, 일터로 걸어가지 않는다. 개발 맵의 집에 사는 NPC(생성 맵 없는 월드)는 전처럼 출근한다.
+- 물은 기존 규칙대로 마르지 않는다(P4-5b). 혼자 버티는 설정에 맞는지는 사용자 결정이다(docs/15 F28-006).
+
+**이전 월드** (개발 맵의 집에 NPC를 놓았던 저장)
+
+- 시작할 때 명단 기록에 `homes`가 없는 정의에 집을 골라 적는다(NPC를 새로 만들지 않는다).
+- 그 NPC가 메모리에 들어오면(셀이 올라오면) 대기 줄에 서고, `NpcService.step`이 **틱마다 한 명씩** 옮긴다: 새 집 셀을 올리고 끝까지 짓고, NPC를 집 타일에 놓고, 위의 "놓기" 2번 뒷부분(구성 요소·수색·집 식량)을 한다. 옮긴 뒤 `home` 구성 요소가 `generated`이므로 다시 옮기지 않는다(기록은 NPC 자신에게 있다).
+- 하던 행동을 취소하지 않는다: 걷던 NPC는 다음 걸음에서 길이 끊겨 실패하고 다시 결정한다. 죽은 NPC(시체)는 옮기지 않는다.
+- `relocate_existing`을 끄면 이미 놓인 NPC는 그대로 두고, 그 뒤 명단에 더해진 NPC만 생성 집을 받는다.
+
+**저장** (프로토콜 변경 없음, `PROTOCOL_VERSION` 그대로)
+
+- NPC 문서의 구성 요소 `home`(스키마 1): `{source: "definition"}` 또는 `{source: "generated", building_id, tile: [x, z]}`. 이 구성 요소가 없는 옛 NPC 문서는 `definition`으로 읽는다.
+- 월드 문서 `systems.npc.rosters.<명단 id>.homes`: `{정의 id: 건물 id}`. 생성 집을 받은 정의만 있다. 없는 옛 저장은 그대로 읽는다. NPC가 나중에 이사하면(F-30) 바뀌는 것은 NPC의 `home` 구성 요소이고, 이 기록은 "처음 어디에 놓았는지"다.
+- `NpcService`·셀 문서의 스키마 번호는 그대로다(키가 늘었을 뿐).
+
+**다른 시스템에 더한 것**: `ProceduralMapGenerator.parse_building_id`·`building_by_id`·`cell_size_m`(배치는 바뀌지 않음: `GENERATOR_VERSION` 그대로), `ProceduralMapService.finish_cell_now`, `ContainerService.search_now`·`container_id_of_source`.
+
+**비용** (측정은 docs/15 §24.1): 먼 집의 NPC는 셀과 함께 메모리 밖에 있어서 틱 비용이 0이다(단계가 볼 NPC가 없다). 월드를 만들 때 한 번 셀 10개를 올려 짓고 저장한다.
+
+**테스트**: `tests/unit/npc_lone_home_test.gd`(설정, 건물 4361채의 배치, id 되읽기, 고르기의 흩어짐·재현, 새 월드의 배치·디스크·재시작·같은 시드, 끄기, 이전 월드 옮기기 한 번, 생성 집에서의 하루). 개발 맵의 집에 사는 통제된 구성은 기존 테스트가 그대로 본다(`npc_cell_persistence_test`, `npc_behaviour_day_test`, `phase4_acceptance_test` 등: 바꾸지 않았다).

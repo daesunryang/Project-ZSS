@@ -11,7 +11,12 @@ extends RefCounted
 ##   - one player, "alice", stands at the spawn point for the whole run (the
 ##     clock stops without a player, docs/13 §16.3 D4) and her needs do not
 ##     grow, so that she is still alive days later;
-##   - the cells are refreshed every tick (no real-time period).
+##   - the cells are refreshed every tick (no real-time period);
+##   - no generated map unless the caller gives one (`procedural`): without
+##     it the NPCs live in the houses of the test map their definitions
+##     name, with the shipped spots, a work place and the stocked food (the
+##     controlled setup of the behaviour tests). With it they live alone in
+##     generated buildings (F-28), as on a dedicated server.
 ## Fixed ticks: the caller says how long a tick is.
 
 const NEVER: float = 1.0e9
@@ -48,8 +53,9 @@ var _day_start: Dictionary = {}
 
 
 ## The composition of a dedicated server with the differences above.
-## `new_decider` is the world's decider (one per world).
-static func config(new_decider: NpcUtilityDecider) -> CompositionConfig:
+## `new_decider` is the world's decider (one per world). `procedural`: the
+## generated map of the world (null = none, see the header).
+static func config(new_decider: NpcUtilityDecider, procedural: ProceduralMapSettings = null) -> CompositionConfig:
 	var result: CompositionConfig = CompositionConfig.from_defaults()
 	# from_defaults() returns cached, shared resources: replace, never edit.
 	result.survival = SurvivalSettings.load_or_default().duplicate() as SurvivalSettings
@@ -65,6 +71,7 @@ static func config(new_decider: NpcUtilityDecider) -> CompositionConfig:
 	result.world_cells.preload_lookahead_sec = 0.0
 	result.map_content = MapContentDefinition.load_or_null()
 	result.npc_roster = NpcRoster.load_or_null()
+	result.procedural_map = procedural
 	result.npc_decider = new_decider
 	return result
 
@@ -76,11 +83,11 @@ static func new_decider() -> NpcUtilityDecider:
 ## A new world in memory (no files), seeded with the map and the roster.
 ## null when it could not be made. `max_npcs` > 0 replaces the shipped
 ## limit of NPCs (the measurement with more than the limit).
-static func begin_in_memory(world_id: String, tick_seconds: float, max_npcs: int = 0) -> NpcLifeRun:
+static func begin_in_memory(world_id: String, tick_seconds: float, max_npcs: int = 0, procedural: ProceduralMapSettings = null) -> NpcLifeRun:
 	var run: NpcLifeRun = NpcLifeRun.new()
 	run.tick_sec = tick_seconds
 	run.decider = new_decider()
-	var composition: CompositionConfig = config(run.decider)
+	var composition: CompositionConfig = config(run.decider, procedural)
 	if max_npcs > 0:
 		composition.npc = NpcSettings.load_or_default().duplicate() as NpcSettings
 		composition.npc.max_npcs = max_npcs
@@ -98,11 +105,11 @@ static func begin_in_memory(world_id: String, tick_seconds: float, max_npcs: int
 ## A server start on real files, as GameBootstrap does it: the world
 ## WorldPersistence finds under `save_root` (a new, seeded and saved one
 ## the first time; the saved one after that). null when it failed.
-static func begin_on_disk(world_id: String, save_root: String, tick_seconds: float) -> NpcLifeRun:
+static func begin_on_disk(world_id: String, save_root: String, tick_seconds: float, procedural: ProceduralMapSettings = null) -> NpcLifeRun:
 	var run: NpcLifeRun = NpcLifeRun.new()
 	run.tick_sec = tick_seconds
 	run.decider = new_decider()
-	var composition: CompositionConfig = config(run.decider)
+	var composition: CompositionConfig = config(run.decider, procedural)
 	if not composition.validate().is_empty():
 		return null
 	run.persistence = WorldPersistence.new(SaveService.new(save_root), composition)

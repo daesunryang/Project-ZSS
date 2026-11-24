@@ -99,8 +99,10 @@ func _start_network(config: LaunchConfig, settings: AppSettings, world_id: Strin
 		# F-33: and the generated map around it (towns and farms, placed cell by
 		# cell the first time a cell is loaded, docs/09 §15.3.1).
 		composition.procedural_map = ProceduralMapSettings.load_or_null()
-		# P4-1: and the dev NPCs, placed in buildings of that map, once
-		# (docs/09 §17.1). Without the map there is nowhere to place them.
+		# P4-1: and the dev NPCs, once (docs/09 §17.1). F-28: with the generated
+		# map each lives alone in a generated building chosen with the world
+		# seed (docs/09 §17.13); without it, in the buildings of the test map
+		# their definitions name. Without the map there is nowhere to place them.
 		if composition.map_content != null:
 			composition.npc_roster = NpcRoster.load_or_null()
 	errors = composition.validate()

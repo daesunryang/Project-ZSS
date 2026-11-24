@@ -55,6 +55,9 @@ const KEY_COUNT_PIECES: String = "structure_pieces"
 const KEY_COUNT_MAX_PIECES_PER_CELL: String = "max_pieces_per_cell"
 const KEY_COUNT_CONTAINERS: String = "containers"
 const KEY_COUNT_ZOMBIES: String = "zombies"
+## Keys of parse_building_id().
+const KEY_PARSED_CELL: String = "cell"
+const KEY_PARSED_INDEX: String = "index"
 
 ## Hex digits of a hash used as a seed: 60 bits, always a positive int.
 const SEED_HEX_DIGITS: int = 15
@@ -131,6 +134,11 @@ func max_cell() -> Vector2i:
 	return _max_cell
 
 
+## The side of a world cell, metres.
+func cell_size_m() -> float:
+	return _cell_size_m
+
+
 func cell_kind(cell: Vector2i) -> int:
 	if not is_usable() or cell.x < _min_cell.x or cell.y < _min_cell.y or cell.x > _max_cell.x or cell.y > _max_cell.y:
 		return CellKind.OUTSIDE
@@ -204,6 +212,32 @@ func count_summary() -> Dictionary:
 ## in the world ("gen_n12_p3_0" = cell (-12, 3), building 0).
 static func building_id_of(cell: Vector2i, index: int) -> String:
 	return "%s_%s_%s_%d" % [BUILDING_ID_PREFIX, _coordinate_label(cell.x), _coordinate_label(cell.y), index]
+
+
+## The cell and the index a generated building id names ({} = not such an
+## id): {"cell": Vector2i, "index": int}. The opposite of building_id_of.
+static func parse_building_id(building_id: String) -> Dictionary:
+	var parts: PackedStringArray = building_id.split("_")
+	if parts.size() != 4 or parts[0] != BUILDING_ID_PREFIX or not parts[3].is_valid_int() or parts[3].to_int() < 0:
+		return {}
+	var x: Variant = _coordinate_of(parts[1])
+	var z: Variant = _coordinate_of(parts[2])
+	if x == null or z == null:
+		return {}
+	var parsed: Dictionary = {KEY_PARSED_CELL: Vector2i(int(x), int(z)), KEY_PARSED_INDEX: parts[3].to_int()}
+	# Only the one spelling building_id_of writes ("n0", "p007" are no ids).
+	return parsed if building_id_of(parsed[KEY_PARSED_CELL] as Vector2i, int(parsed[KEY_PARSED_INDEX])) == building_id else {}
+
+
+## The generated building with this id, or null (not a generated id, or the
+## cell has no such building). Plans the building's cell.
+func building_by_id(building_id: String) -> ProceduralBuilding:
+	var parsed: Dictionary = parse_building_id(building_id)
+	if parsed.is_empty():
+		return null
+	var plan: ProceduralCellPlan = plan_cell(parsed[KEY_PARSED_CELL] as Vector2i)
+	var index: int = int(parsed[KEY_PARSED_INDEX])
+	return plan.buildings[index] if index < plan.buildings.size() else null
 
 
 # ------------------------------------------------------------ towns and roads
@@ -491,3 +525,12 @@ static func _between(at_center: int, at_edge: int, depth: int) -> int:
 
 static func _coordinate_label(value: int) -> String:
 	return ("n%d" % -value) if value < 0 else ("p%d" % value)
+
+
+## The number a coordinate label names, or null.
+static func _coordinate_of(label: String) -> Variant:
+	if label.length() < 2 or not label.substr(1).is_valid_int() or label.substr(1).to_int() < 0:
+		return null
+	if label[0] == "n":
+		return -label.substr(1).to_int()
+	return label.substr(1).to_int() if label[0] == "p" else null

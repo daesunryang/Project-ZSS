@@ -33,7 +33,9 @@ extends NpcStage
 ##           and sleeps there (without a home on this map: where it stands),
 ##           and it gets up by itself only when its fatigue is at most
 ##           sleep_until_fatigue (0).
-##   work    Walks to the work spot of its work building and works there
+##   work    (Only an NPC that has a work place: an NPC that lives alone in
+##           a generated building, F-28, has none.)
+##           Walks to the work spot of its work building and works there
 ##           for work_shift_sec ("working" for the need model: fatigue
 ##           rises faster). The time is added to the NPC's worked time.
 ##           Nothing is produced (Phase 6).
@@ -115,6 +117,8 @@ var _items: ItemCatalog = null
 var _spots: NpcSpotSet = null
 var _map_content: MapContentDefinition = null
 var _grid: StructureGrid = null
+## F-28: where each NPC lives (never null after install).
+var _homes: NpcHomes = null
 var _adapter_ref: WeakRef = null
 var _world_ref: WeakRef = null
 var _npcs_ref: WeakRef = null
@@ -132,8 +136,9 @@ func _init(settings: NpcBehaviourSettings = null) -> void:
 
 ## Gives `npcs` the behaviour component and stage (ServerComposition, after
 ## NpcExecutor.install) and makes this stage the executor's listener.
-## Returns the stage, or null when a registration fails.
-static func install(npcs: NpcService, settings: NpcBehaviourSettings, executor: NpcExecutor, items: ItemCatalog, grid: StructureGrid, spots: NpcSpotSet = null, map_content: MapContentDefinition = null) -> NpcBehaviours:
+## `homes` (F-28): where the NPCs live; without it every NPC lives where its
+## definition says. Returns the stage, or null when a registration fails.
+static func install(npcs: NpcService, settings: NpcBehaviourSettings, executor: NpcExecutor, items: ItemCatalog, grid: StructureGrid, spots: NpcSpotSet = null, map_content: MapContentDefinition = null, homes: NpcHomes = null) -> NpcBehaviours:
 	if npcs == null or settings == null or executor == null or grid == null:
 		return null
 	var stage: NpcBehaviours = NpcBehaviours.new(settings)
@@ -142,6 +147,7 @@ static func install(npcs: NpcService, settings: NpcBehaviourSettings, executor: 
 	stage._grid = grid
 	stage._spots = spots
 	stage._map_content = map_content
+	stage._homes = homes if homes != null else NpcHomes.new(null, map_content, grid)
 	if npcs.register_component(NpcBehaviourState.COMPONENT_ID, NpcBehaviourState.create.bind(settings)) != OK or npcs.add_stage(stage) != OK:
 		return null
 	stage._npcs_ref = weakref(npcs)
@@ -192,13 +198,13 @@ func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, action: NpcActio
 		ACTION_EAT:
 			code = _begin_eat(world, npc, state, definition)
 		ACTION_DRINK:
-			code = _begin_at_spot(npc, state, NpcSpotDefinition.KIND_WATER, definition.home_building_id if definition != null else "", npc.position, _settings.drink_duration_sec)
+			code = _begin_at_spot(npc, state, NpcSpotDefinition.KIND_WATER, _homes.home_building_id(npc, definition), npc.position, _settings.drink_duration_sec)
 		ACTION_REST:
 			code = _begin_rest(world, npc, state, definition, false)
 		ACTION_SLEEP:
 			code = _begin_rest(world, npc, state, definition, true)
 		ACTION_WORK:
-			code = _begin_at_spot(npc, state, NpcSpotDefinition.KIND_WORK, definition.work_building_id if definition != null else "", _place_of(definition, false, npc.position), _settings.work_shift_sec)
+			code = _begin_at_spot(npc, state, NpcSpotDefinition.KIND_WORK, _homes.work_building_id(npc, definition), _place_of(npc, definition, false), _settings.work_shift_sec)
 		ACTION_WANDER:
 			code = _begin_wander(world, npc, state, definition)
 		ACTION_FLEE:
@@ -372,7 +378,7 @@ func _begin_eat(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, def
 	# stock already and no food) is not walked to: the next spot is tried.
 	var known_empty: Dictionary[String, bool] = {}
 	while true:
-		var picked: Dictionary = _pick_spot(npc.npc_id, NpcSpotDefinition.KIND_FOOD, definition.home_building_id if definition != null else "", npc.position, known_empty)
+		var picked: Dictionary = _pick_spot(npc, NpcSpotDefinition.KIND_FOOD, _homes.home_building_id(npc, definition), npc.position, known_empty)
 		if not str(picked["code"]).is_empty():
 			return NpcActionExecutor.FAIL_NO_RESOURCE if not known_empty.is_empty() else str(picked["code"])
 		var spot_id: String = str(picked["spot"])
@@ -387,7 +393,7 @@ func _begin_eat(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, def
 ## Rest and sleep. `go_home` (the night sleep): without a bed the NPC walks
 ## to its home tile first.
 func _begin_rest(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, definition: NpcDefinition, go_home: bool) -> String:
-	var picked: Dictionary = _pick_spot(npc.npc_id, NpcSpotDefinition.KIND_BED, definition.home_building_id if definition != null else "", _place_of(definition, true, npc.position))
+	var picked: Dictionary = _pick_spot(npc, NpcSpotDefinition.KIND_BED, _homes.home_building_id(npc, definition), _place_of(npc, definition, true))
 	if str(picked["code"]).is_empty():
 		var code: String = _use_spot(npc.npc_id, state, str(picked["spot"]), NpcExecutor.HOLD)
 		if code.is_empty():
@@ -395,7 +401,7 @@ func _begin_rest(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, de
 	if go_home:
 		# No bed for it: it sleeps on its home tile, when it has one here and
 		# is not there yet (the walk ends in _on_done).
-		var home: Vector3 = _place_of(definition, true, npc.position)
+		var home: Vector3 = _place_of(npc, definition, true)
 		if _grid.tile_of(home) != _grid.tile_of(npc.position) and _move(npc.npc_id, state, home, false).is_empty():
 			return ""
 	# No bed for it: it rests where it stands. (state.action_id is set only
@@ -406,14 +412,14 @@ func _begin_rest(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, de
 
 
 func _begin_at_spot(npc: NpcState, state: NpcBehaviourState, kind: String, building_id: String, near: Vector3, duration_sec: float) -> String:
-	var picked: Dictionary = _pick_spot(npc.npc_id, kind, building_id, near)
+	var picked: Dictionary = _pick_spot(npc, kind, building_id, near)
 	if not str(picked["code"]).is_empty():
 		return str(picked["code"])
 	return _use_spot(npc.npc_id, state, str(picked["spot"]), duration_sec)
 
 
 func _begin_wander(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, definition: NpcDefinition) -> String:
-	var centre: Vector3 = _place_of(definition, true, npc.position)
+	var centre: Vector3 = _place_of(npc, definition, true)
 	# Always two numbers of the NPC's own generator.
 	var angle: float = npc.rng.randf() * TAU
 	var distance: float = sqrt(npc.rng.randf()) * _settings.wander_radius_m
@@ -456,10 +462,17 @@ func _use_spot(npc_id: String, state: NpcBehaviourState, spot_id: String, durati
 ## {spot, code}: the free spot of `kind` nearest to `near`, of the building
 ## first, then of any; code "" when there is one, target_gone when the
 ## world has no such spot, reserved when every one is taken. Spots in
-## `without` are not looked at.
-func _pick_spot(npc_id: String, kind: String, building_id: String, near: Vector3, without: Dictionary[String, bool] = {}) -> Dictionary:
+## `without` are not looked at. An NPC that lives in a generated building
+## (F-28) has the spots of that building and no others: it lives alone, far
+## from the spots of the hand-made map.
+func _pick_spot(npc: NpcState, kind: String, building_id: String, near: Vector3, without: Dictionary[String, bool] = {}) -> Dictionary:
+	var npc_id: String = npc.npc_id
 	var all: PackedStringArray = []
-	if _spots != null:
+	if _homes.lives_in_generated_home(npc):
+		for spot_id: String in _homes.generated_spot_ids(building_id, kind):
+			if _executor.has_spot(spot_id) and not without.has(spot_id):
+				all.append(spot_id)
+	elif _spots != null:
 		for spot_id: String in _spots.spot_ids(kind):
 			if _executor.has_spot(spot_id) and not without.has(spot_id):
 				all.append(spot_id)
@@ -471,7 +484,7 @@ func _pick_spot(npc_id: String, kind: String, building_id: String, near: Vector3
 		var best: String = ""
 		var best_distance: float = INF
 		for spot_id: String in all:
-			if own_building and _spots.get_spot(spot_id).building_id != building_id:
+			if own_building and _executor.spot_definition(spot_id).building_id != building_id:
 				continue
 			if not _executor.is_spot_free(spot_id, npc_id):
 				continue
@@ -485,14 +498,11 @@ func _pick_spot(npc_id: String, kind: String, building_id: String, near: Vector3
 	return {"spot": "", "code": NpcActionExecutor.FAIL_RESERVED}
 
 
-## The NPC's home tile (or work tile), or `fallback` when it has none on
-## this map.
-func _place_of(definition: NpcDefinition, home: bool, fallback: Vector3) -> Vector3:
-	if definition == null or _map_content == null:
-		return fallback
-	var building_id: String = definition.home_building_id if home else definition.work_building_id
-	var place: Variant = NpcRoster.spot_position(_map_content, _grid, building_id, definition.home_tile_offset if home else definition.work_tile_offset) if not building_id.is_empty() else null
-	return place as Vector3 if place != null else fallback
+## The NPC's home tile (or work tile), or where it stands when it has none
+## in this world.
+func _place_of(npc: NpcState, definition: NpcDefinition, home: bool) -> Vector3:
+	var place: Variant = _homes.home_position(npc, definition) if home else _homes.work_position(npc, definition)
+	return place as Vector3 if place != null else npc.position
 
 
 # ------------------------------------------------------------ the executor's reports

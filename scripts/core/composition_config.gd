@@ -117,6 +117,11 @@ var npc_behaviour: NpcBehaviourSettings = null
 ## treatment, death, rising. null = NPCs have no health: nothing can hurt
 ## them and zombies do not see them (tests of other things).
 var npc_health: NpcHealthSettings = null
+## F-28 (docs/09 §17.13): where the NPCs of the roster live in a world that
+## has a generated map (`procedural_map`): each alone in a generated
+## building. Without a generated map (tests, tools) they live on the home
+## spots their definitions name.
+var npc_homes: NpcHomeSettings
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -166,6 +171,7 @@ static func from_defaults() -> CompositionConfig:
 	config.npc_spots = NpcSpotSet.load_or_null()
 	config.npc_behaviour = NpcBehaviourSettings.load_or_default()
 	config.npc_health = NpcHealthSettings.load_or_default()
+	config.npc_homes = NpcHomeSettings.load_or_default()
 	return config
 
 
@@ -196,6 +202,9 @@ func _validate_npcs() -> PackedStringArray:
 		errors.append_array(npc_behaviour.validate())
 	if npc_health != null:
 		errors.append_array(npc_health.validate())
+	if npc_homes != null:
+		errors.append_array(npc_homes.validate())
+		errors.append_array(npc_homes.validate_against(catalog))
 	if npc_roster != null:
 		errors.append_array(npc_roster.validate())
 		errors.append_array(npc_roster.validate_against(npc_definitions, map_content, StructureGrid.new(building.grid_module_m), npc.max_npcs))

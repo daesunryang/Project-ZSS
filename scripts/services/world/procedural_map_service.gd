@@ -145,6 +145,21 @@ func finish_pending(world: ServerWorld) -> void:
 		cell_id = _next_buildable(world)
 
 
+## Builds everything that is still to be built in one cell that is in memory
+## (F-28: an NPC is put into a house of the cell right now). True when the
+## cell is in memory and complete afterwards. A cell that is being saved is
+## left alone (false).
+func finish_cell_now(world: ServerWorld, cell_id: String) -> bool:
+	if world == null or not world.is_cell_loaded(cell_id):
+		return false
+	if _plans.has(cell_id):
+		var cells: WorldCellService = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
+		if cells != null and cells.state_of(cell_id) == WorldCellLifecycle.State.SAVING:
+			return false
+		_advance(world, cell_id, NO_BUDGET_LIMIT)
+	return not _plans.has(cell_id)
+
+
 # ------------------------------------------------------------ ServerSystem
 
 func on_registered(world: ServerWorld) -> void:

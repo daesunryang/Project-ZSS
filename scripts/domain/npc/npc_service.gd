@@ -62,6 +62,19 @@ extends ServerSystem
 ## unchanged through to_cell_document / restore_cell_document /
 ## release_cell.
 ##
+## Homes (F-28, docs/09 §17.13): in a world with a generated map every NPC
+## of the roster lives alone in a generated building chosen with the world
+## seed (NpcHomePicker; one NPC per building, spread over the towns and the
+## countryside). The roster record keeps which building each definition got
+## (`homes`), the NPC keeps it in its NpcHome component. The cell of a home
+## is brought into memory and built completely before the NPC is put into
+## it, its containers are searched (their loot is rolled) and one of them
+## gets the home stock (NpcHomeSettings), once. In a world without a
+## generated map (tests, tools) the NPCs are placed on the home spots their
+## definitions name, as before. NPCs a world placed that way before it had
+## lone homes are moved to their generated home once, the first time each
+## is in memory (one per tick, in step(); a dead NPC stays where it is).
+##
 ## Roster (docs/13 §16.3 D5): the NPCs of the configured NpcRoster are
 ## placed on their home spots exactly once per world. The world save
 ## records, per roster id, the NPC id every definition got and whether the
@@ -77,7 +90,9 @@ extends ServerSystem
 ##   {schema_version,
 ##    population: {npc_id: definition_id},      every NPC of the world
 ##    rosters: {roster_id: {content_version, npcs: {definition_id: npc_id},
-##                          complete}},
+##                          complete,
+##                          homes: {definition_id: building_id}}},   (F-28;
+##                          only definitions with a generated home)
 ##    npcs: [...],     only NPCs that are not saved with a cell document
 ##    stages: {stage_id: NpcStage.to_world_document()}}
 ## A world that never had an NPC, a roster or a stage document saves
@@ -94,6 +109,8 @@ const KEY_ROSTERS: String = "rosters"
 const KEY_STAGES: String = "stages"
 const KEY_CONTENT_VERSION: String = "content_version"
 const KEY_COMPLETE: String = "complete"
+## F-28: {definition_id: generated building id} of a roster record.
+const KEY_HOMES: String = "homes"
 ## Keys of the success events.
 const KEY_NPC_ID: String = "npc_id"
 const KEY_DEFINITION_ID: String = "definition_id"
@@ -105,6 +122,11 @@ const REPORT_NPCS: String = "npcs"
 const REPORT_CELLS_LOADED: String = "cells_loaded"
 const REPORT_RELEASES: String = "releases"
 const REPORT_USEC: String = "usec"
+## F-28: NPCs placed in a generated home, homes chosen, and how long the
+## choosing took (microseconds, wall clock; part of `usec`).
+const REPORT_GENERATED_HOMES: String = "generated_homes"
+const REPORT_HOMES_CHOSEN: String = "homes_chosen"
+const REPORT_CHOOSING_USEC: String = "choosing_usec"
 
 const REASON_UNAVAILABLE: String = "npcs_unavailable"
 const REASON_UNKNOWN_DEFINITION: String = "unknown_npc_definition"
@@ -131,12 +153,20 @@ signal npc_slept(npc_id: String)
 var last_step_msec: float = 0.0
 var blocked_move_count: int = 0
 var last_seed_report: Dictionary = {}
+## F-28: NPCs moved from the hand-made map to a generated home since this
+## system was created, and how long the slowest move took (microseconds).
+var relocated_count: int = 0
+var max_relocation_usec: int = 0
 
 var _settings: NpcSettings
 var _definitions: NpcCatalog
 var _roster: NpcRoster
 var _map_content: MapContentDefinition
 var _grid: StructureGrid
+## F-28: where NPCs live (null = on the home spots of their definitions).
+var _homes: NpcHomes = null
+## NPCs in memory that wait to be moved to their generated home.
+var _pending_relocations: Dictionary[String, bool] = {}
 var _ids: EntityIdGenerator
 var _registry: EntityRegistry
 var _clock: WorldClock
@@ -184,6 +214,14 @@ func get_system_id() -> String:
 
 
 # ------------------------------------------------------------ seams
+
+## F-28: gives this system the homes of the world (ServerComposition, before
+## the world is seeded or restored). Without it every NPC of the roster is
+## placed on the home spot its definition names.
+func set_homes(homes: NpcHomes) -> void:
+	_homes = homes
+
+
 
 ## Registers a kind of component: `factory` is called without arguments and
 ## returns a new NpcComponent whose component_id() is `component_id`. Every
@@ -455,6 +493,17 @@ func seeded_npc_ids(roster_id: String) -> PackedStringArray:
 	return ids
 
 
+## The generated building a definition of a roster lives in, as it was
+## chosen for this world ("" = none: it lives where its definition says).
+func seeded_home(roster_id: String, definition_id: String) -> String:
+	return str(((_rosters.get(roster_id, {}) as Dictionary).get(KEY_HOMES, {}) as Dictionary).get(definition_id, ""))
+
+
+## Number of NPCs in memory that wait to be moved to their generated home.
+func pending_relocation_count() -> int:
+	return _pending_relocations.size()
+
+
 ## The NPC id a definition of a roster got in this world ("" = not placed).
 func seeded_npc_id(roster_id: String, definition_id: String) -> String:
 	return str(((_rosters.get(roster_id, {}) as Dictionary).get(KEY_NPCS, {}) as Dictionary).get(definition_id, ""))
@@ -473,6 +522,16 @@ func ensure_seeded(world: ServerWorld) -> Error:
 		return OK
 	var roster_id: String = _roster.roster_id
 	var record: Dictionary = _rosters.get(roster_id, {})
+	var report: Dictionary = {REPORT_NPCS: 0, REPORT_CELLS_LOADED: 0, REPORT_RELEASES: 0, REPORT_USEC: 0, REPORT_GENERATED_HOMES: 0, REPORT_HOMES_CHOSEN: 0, REPORT_CHOOSING_USEC: 0}
+	var started_usec: int = Time.get_ticks_usec()
+	if not record.is_empty() and _choose_homes(world, record, report) > 0:
+		# A world that placed its NPCs before it had lone homes: they move
+		# when they are in memory (step()).
+		for npc_id: String in npc_ids():
+			if not _relocation_target(_npcs[npc_id]).is_empty():
+				_pending_relocations[npc_id] = true
+		report[REPORT_USEC] = Time.get_ticks_usec() - started_usec
+		last_seed_report = report
 	if bool(record.get(KEY_COMPLETE, false)):
 		# A roster that grew since this world got it (2026-11-23: five dev
 		# NPCs became ten) places the new definitions now. Who the world has
@@ -489,18 +548,17 @@ func ensure_seeded(world: ServerWorld) -> Error:
 		GameLogger.info("npc", "the roster grew since this world was given it; the new NPCs are placed", {"world_id": world.world_id, "roster_id": roster_id, "seeded_version": int(record.get(KEY_CONTENT_VERSION, 0)), "content_version": _roster.content_version, "missing": missing})
 		record[KEY_COMPLETE] = false
 	var cells: WorldCellService = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
-	var started_usec: int = Time.get_ticks_usec()
 	if record.is_empty():
 		record = {KEY_CONTENT_VERSION: _roster.content_version, KEY_NPCS: {}, KEY_COMPLETE: false}
 		_rosters[roster_id] = record
+	_choose_homes(world, record, report)
 	var placed: Dictionary = record[KEY_NPCS]
-	var report: Dictionary = {REPORT_NPCS: 0, REPORT_CELLS_LOADED: 0, REPORT_RELEASES: 0, REPORT_USEC: 0}
 	var loaded_here: Array[String] = []
 	var error: Error = OK
 	for definition_id: String in _roster.npc_definition_ids:
 		if placed.has(definition_id):
 			continue
-		error = _place_roster_npc(world, cells, definition_id, placed, loaded_here, report)
+		error = _place_roster_npc(world, cells, definition_id, record, loaded_here, report)
 		if error != OK:
 			break
 	if error == OK:
@@ -515,7 +573,7 @@ func ensure_seeded(world: ServerWorld) -> Error:
 		record[KEY_COMPLETE] = false
 		GameLogger.error("npc", "the roster could not be placed completely", {"world_id": world.world_id, "roster_id": roster_id, "error": error_string(error), "npcs_placed": placed.size(), "operation": "seed_roster"})
 		return error
-	GameLogger.info("npc", "npc roster seeded", {"world_id": world.world_id, "roster_id": roster_id, "content_version": _roster.content_version, "npcs": int(report[REPORT_NPCS]), "cells_loaded": int(report[REPORT_CELLS_LOADED]), "msec": float(int(report[REPORT_USEC])) / 1000.0})
+	GameLogger.info("npc", "npc roster seeded", {"world_id": world.world_id, "roster_id": roster_id, "content_version": _roster.content_version, "npcs": int(report[REPORT_NPCS]), "generated_homes": int(report[REPORT_GENERATED_HOMES]), "cells_loaded": int(report[REPORT_CELLS_LOADED]), "msec": float(int(report[REPORT_USEC])) / 1000.0})
 	return OK
 
 
@@ -533,6 +591,8 @@ func seed_new_world(world: ServerWorld) -> Error:
 
 ## Runs the stages. Without stages (P4-1) nothing happens: NPCs stand still.
 func step(world: ServerWorld, action_delta: float, world_delta: float) -> void:
+	if not _pending_relocations.is_empty():
+		_relocate_next(world)
 	if _stages.is_empty():
 		last_step_msec = 0.0
 		return
@@ -571,6 +631,9 @@ func to_world_document() -> Dictionary:
 			KEY_NPCS: (_rosters[roster_id][KEY_NPCS] as Dictionary).duplicate(),
 			KEY_COMPLETE: bool(_rosters[roster_id][KEY_COMPLETE]),
 		}
+		var homes: Dictionary = (_rosters[roster_id] as Dictionary).get(KEY_HOMES, {})
+		if not homes.is_empty():
+			rosters[roster_id][KEY_HOMES] = homes.duplicate()
 	var document: Dictionary = {"schema_version": SCHEMA_VERSION, KEY_POPULATION: population, KEY_ROSTERS: rosters}
 	if not npcs.is_empty():
 		document[KEY_NPCS] = npcs
@@ -722,6 +785,8 @@ func _enter(world: ServerWorld, npc: NpcState) -> void:
 	for stage: NpcStage in _stages:
 		stage.on_npc_entered(world, npc)
 	npc_entered.emit(npc.npc_id)
+	if not _relocation_target(npc).is_empty():
+		_pending_relocations[npc.npc_id] = true
 	if world.is_cell_simulated(cell_id):
 		_wake(world, npc)
 
@@ -735,6 +800,7 @@ func _leave(world: ServerWorld, npc: NpcState, retired: bool) -> void:
 	for component_id: String in npc.component_ids():
 		npc.component(component_id).on_detached(world, npc, retired)
 	_npcs.erase(npc.npc_id)
+	_pending_relocations.erase(npc.npc_id)
 	world.cell_index.remove(npc.npc_id)
 	npc_left.emit(npc.npc_id, retired)
 
@@ -885,14 +951,36 @@ func _read_rosters(raw: Variant, errors: PackedStringArray) -> Dictionary[String
 				continue
 			placed[str(definition_id)] = str(npc_id)
 		rosters[str(roster_id)] = {KEY_CONTENT_VERSION: int((entry as Dictionary)[KEY_CONTENT_VERSION]), KEY_NPCS: placed, KEY_COMPLETE: bool((entry as Dictionary)[KEY_COMPLETE])}
+		# F-28: absent in a save from before lone homes.
+		var saved_homes: Variant = (entry as Dictionary).get(KEY_HOMES, {})
+		if typeof(saved_homes) != TYPE_DICTIONARY:
+			errors.append("npc: invalid homes in the record of roster %s" % str(roster_id))
+			continue
+		var homes: Dictionary = {}
+		for definition_id: Variant in (saved_homes as Dictionary):
+			var building_id: Variant = (saved_homes as Dictionary)[definition_id]
+			if typeof(definition_id) != TYPE_STRING or typeof(building_id) != TYPE_STRING or not ItemInstance.is_valid_definition_id(str(building_id)):
+				errors.append("npc: invalid home in the record of roster %s" % str(roster_id))
+				continue
+			homes[str(definition_id)] = str(building_id)
+		if not homes.is_empty():
+			rosters[str(roster_id)][KEY_HOMES] = homes
 	return rosters
 
 
 ## Places one NPC of the roster on its home spot: brings the cell of the
-## spot into memory, spawns the NPC and records its id.
-func _place_roster_npc(world: ServerWorld, cells: WorldCellService, definition_id: String, placed: Dictionary, loaded_here: Array[String], report: Dictionary) -> Error:
+## spot into memory, spawns the NPC and records its id. With a generated
+## home (F-28, the record's `homes`): the cell is built completely first,
+## and the NPC is given its home and the home its stock.
+func _place_roster_npc(world: ServerWorld, cells: WorldCellService, definition_id: String, record: Dictionary, loaded_here: Array[String], report: Dictionary) -> Error:
+	var placed: Dictionary = record[KEY_NPCS]
 	var definition: NpcDefinition = _definitions.get_definition(definition_id)
-	var home: Variant = NpcRoster.spot_position(_map_content, _grid, definition.home_building_id, definition.home_tile_offset) if definition != null else null
+	var layout: NpcHomeLayout = _homes.layout_of(str((record.get(KEY_HOMES, {}) as Dictionary).get(definition_id, ""))) if _homes != null and definition != null else null
+	var home: Variant = null
+	if layout != null:
+		home = _grid.tile_center(layout.home_tile())
+	elif definition != null:
+		home = NpcRoster.spot_position(_map_content, _grid, definition.home_building_id, definition.home_tile_offset)
 	if not (home is Vector3):
 		GameLogger.error("npc", "an NPC of the roster has no home spot on this map", {"world_id": world.world_id, "definition_id": definition_id, "operation": "seed_roster"})
 		return ERR_INVALID_DATA
@@ -903,13 +991,140 @@ func _place_roster_npc(world: ServerWorld, cells: WorldCellService, definition_i
 			return ERR_CANT_OPEN
 		loaded_here.append(cell_id)
 		report[REPORT_CELLS_LOADED] = int(report[REPORT_CELLS_LOADED]) + 1
+	if layout != null:
+		_build_home_cell(world, cell_id)
 	var spawned: ActionResult = spawn_npc(world, definition_id, home as Vector3)
 	if not spawned.ok:
 		GameLogger.error("npc", "an NPC of the roster was refused", {"world_id": world.world_id, "definition_id": definition_id, "reason": spawned.reason, "operation": "seed_roster"})
 		return ERR_INVALID_DATA
 	placed[definition_id] = str(spawned.event[KEY_NPC_ID])
 	report[REPORT_NPCS] = int(report[REPORT_NPCS]) + 1
+	if layout != null:
+		_move_in(world, _npcs[str(spawned.event[KEY_NPC_ID])], layout)
+		report[REPORT_GENERATED_HOMES] = int(report[REPORT_GENERATED_HOMES]) + 1
 	return OK
+
+
+# ------------------------------------------------------------ homes (F-28)
+
+## Gives every definition of the roster that has none a generated home in
+## the record (`homes`), when this world gives lone homes. A definition
+## whose NPC was placed already gets one only with
+## NpcHomeSettings.relocate_existing. Returns how many were chosen.
+func _choose_homes(world: ServerWorld, record: Dictionary, report: Dictionary) -> int:
+	if _homes == null or not _homes.gives_lone_homes():
+		return 0
+	var started_usec: int = Time.get_ticks_usec()
+	var homes: Dictionary = record.get(KEY_HOMES, {})
+	var placed: Dictionary = record[KEY_NPCS]
+	var taken: Dictionary = {}
+	for definition_id: Variant in homes:
+		taken[str(homes[definition_id])] = true
+	var picker: NpcHomePicker = NpcHomePicker.new(_homes.generator(), _homes.settings)
+	var chosen: int = 0
+	var planned_cells: int = 0
+	for definition_id: String in _roster.npc_definition_ids:
+		if homes.has(definition_id) or (placed.has(definition_id) and not _homes.settings.relocate_existing):
+			continue
+		var building: ProceduralBuilding = picker.pick(definition_id, taken)
+		planned_cells += picker.last_planned_cell_count
+		if building == null:
+			GameLogger.warning("npc", "no generated building is free for an NPC of the roster; it lives where its definition says", {"world_id": world.world_id, "definition_id": definition_id, "operation": "choose_homes"})
+			continue
+		homes[definition_id] = building.building_id()
+		taken[building.building_id()] = true
+		chosen += 1
+	if chosen > 0:
+		record[KEY_HOMES] = homes
+		report[REPORT_HOMES_CHOSEN] = int(report[REPORT_HOMES_CHOSEN]) + chosen
+		report[REPORT_CHOOSING_USEC] = int(report[REPORT_CHOOSING_USEC]) + Time.get_ticks_usec() - started_usec
+		GameLogger.info("npc", "generated homes chosen for the roster", {"world_id": world.world_id, "roster_id": _roster.roster_id, "homes": chosen, "cells_planned": planned_cells, "msec": float(Time.get_ticks_usec() - started_usec) / 1000.0})
+	return chosen
+
+
+## Builds everything the generated map puts into a cell that is in memory
+## now, so an NPC is never put into a house whose walls come later.
+func _build_home_cell(world: ServerWorld, cell_id: String) -> void:
+	var map: ProceduralMapService = world.get_system(ProceduralMapService.SYSTEM_ID) as ProceduralMapService
+	if map != null:
+		map.finish_cell_now(world, cell_id)
+
+
+## The NPC (in memory, standing in the building) lives there from now on:
+## its home component names the building, the containers of the building are
+## searched (their loot is rolled), and the first of them that has room gets
+## the home stock. Called once per NPC and home.
+func _move_in(world: ServerWorld, npc: NpcState, layout: NpcHomeLayout) -> void:
+	var home: NpcHome = NpcHome.of(npc)
+	if home != null:
+		home.set_generated(layout.building_id, layout.home_tile())
+	mark_npc_dirty(npc.npc_id)
+	var containers: ContainerService = world.get_system(ContainerService.SYSTEM_ID) as ContainerService
+	if containers == null:
+		return
+	var left: PackedInt32Array = _homes.stock_stacks()
+	for index: int in range(layout.food_offsets.size()):
+		var container_id: String = containers.container_id_of_source(MapBuildingPlan.container_source_key(ProceduralMapGenerator.MAP_ID, layout.building_id, index))
+		if container_id.is_empty() or not containers.search_now(world, container_id):
+			continue
+		var container: ContainerInstance = containers.get_container(container_id)
+		while not left.is_empty() and not world.inventory.spawn_detached_item(container.inventory_id, _homes.settings.stock_item_id, left[0]).is_empty():
+			left.remove_at(0)
+			mark_cell_save_dirty(container.cell_id)
+	if not left.is_empty():
+		GameLogger.warning("npc", "the home stock did not fit the containers of a home", {"world_id": world.world_id, "entity_id": npc.npc_id, "building_id": layout.building_id, "stacks_left": left.size(), "operation": "move_in"})
+
+
+## The generated building an NPC in memory must still be moved to ("" =
+## none): an NPC of the roster that lives where its definition says, in a
+## world that has chosen a generated home for its definition.
+func _relocation_target(npc: NpcState) -> String:
+	if _homes == null or _roster == null or not _homes.settings.relocate_existing:
+		return ""
+	var record: Dictionary = _rosters.get(_roster.roster_id, {})
+	var target: String = str((record.get(KEY_HOMES, {}) as Dictionary).get(npc.definition_id, ""))
+	if target.is_empty() or str((record.get(KEY_NPCS, {}) as Dictionary).get(npc.definition_id, "")) != npc.npc_id:
+		return ""
+	var home: NpcHome = NpcHome.of(npc)
+	return target if home != null and not home.is_generated() else ""
+
+
+## Moves one waiting NPC (the smallest id) to its generated home: the cell
+## of the home is brought into memory and built, the NPC is put on its home
+## tile and moves in. What it was doing is not cancelled: a walk fails at
+## its next step (the way is gone) and the decision layer chooses again.
+## A dead NPC stays where it lies. An NPC that cannot be moved now (its
+## home's cell cannot be loaded) is tried again when it comes into memory
+## the next time.
+func _relocate_next(world: ServerWorld) -> void:
+	var ids: PackedStringArray = PackedStringArray(_pending_relocations.keys())
+	ids.sort()
+	var npc_id: String = ids[0]
+	_pending_relocations.erase(npc_id)
+	var npc: NpcState = _npcs.get(npc_id, null)
+	var target: String = _relocation_target(npc) if npc != null else ""
+	if target.is_empty() or _is_blocked(npc):
+		return
+	var started_usec: int = Time.get_ticks_usec()
+	var layout: NpcHomeLayout = _homes.layout_of(target)
+	var cells: WorldCellService = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
+	if layout == null:
+		GameLogger.error("npc", "the generated home of an NPC does not exist on this map", {"world_id": world.world_id, "entity_id": npc_id, "building_id": target, "operation": "relocate"})
+		return
+	var position: Vector3 = _grid.tile_center(layout.home_tile())
+	var cell_id: String = world.cell_id_at(position)
+	if not world.is_cell_loaded(cell_id) and (cells == null or not cells.load_cell_now(world, cell_id)):
+		GameLogger.error("npc", "the cell of a generated home could not be loaded", {"world_id": world.world_id, "entity_id": npc_id, "cell_id": cell_id, "operation": "relocate"})
+		return
+	_build_home_cell(world, cell_id)
+	var from_cell_id: String = world.cell_index.cell_of(npc_id)
+	if not set_npc_transform(world, npc_id, position, npc.yaw):
+		GameLogger.error("npc", "an NPC could not be put into its generated home", {"world_id": world.world_id, "entity_id": npc_id, "cell_id": cell_id, "operation": "relocate"})
+		return
+	_move_in(world, npc, layout)
+	relocated_count += 1
+	max_relocation_usec = maxi(max_relocation_usec, Time.get_ticks_usec() - started_usec)
+	GameLogger.info("npc", "an NPC of the hand-made map moved to its generated home", {"world_id": world.world_id, "entity_id": npc_id, "building_id": target, "from_cell_id": from_cell_id, "cell_id": cell_id})
 
 
 ## Saves and releases the cells a seeding brought into memory. A world

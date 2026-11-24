@@ -91,7 +91,8 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# systems. After the hand-made map content, whose area it leaves alone.
 	# Without settings (config.procedural_map null: tests, tools) it places
 	# nothing and saves nothing.
-	if world.register_system(ProceduralMapService.new(config.procedural_map, config.building.grid_module_m)) != OK:
+	var procedural_map: ProceduralMapService = ProceduralMapService.new(config.procedural_map, config.building.grid_module_m)
+	if world.register_system(procedural_map) != OK:
 		return null
 	# P4-1 (docs/09 §17.1): NPCs. After the map content, in whose buildings
 	# the roster places them (once per world; without a roster nobody).
@@ -99,6 +100,15 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# world is seeded or restored.
 	var npcs: NpcService = NpcService.new(config.npc, config.npc_definitions, config.npc_roster, config.map_content, StructureGrid.new(config.building.grid_module_m), world.ids, world.registry, world.clock)
 	if world.register_system(npcs) != OK:
+		return null
+	# F-28 (docs/09 §17.13): where the NPCs live. With a generated map every
+	# NPC of the roster gets a generated building of its own; the spots it
+	# uses there are derived from the building. Without one (tests, tools)
+	# the NPCs live on the home spots their definitions name.
+	var npc_homes: NpcHomes = NpcHomes.new(config.npc_homes, config.map_content, StructureGrid.new(config.building.grid_module_m), config.catalog)
+	npc_homes.set_generator_source(Callable(procedural_map, "generator"))
+	npcs.set_homes(npc_homes)
+	if npcs.register_component(NpcHome.COMPONENT_ID, NpcHome.make) != OK:
 		return null
 	if npcs.register_component(NpcNeeds.COMPONENT_ID, NpcNeeds.create.bind(config.npc_needs)) != OK:
 		return null
@@ -124,7 +134,7 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# scheduler: what an NPC decides in a tick it starts doing in that tick.
 	# A decider that has on_executor_attached(executor) is given the stage
 	# (test deciders that drive the movement executor themselves).
-	var npc_executor: NpcExecutor = NpcExecutor.install(npcs, config.npc_executor, npc_scheduler, config.structures, StructureGrid.new(config.building.grid_module_m), config.npc_spots, config.map_content)
+	var npc_executor: NpcExecutor = NpcExecutor.install(npcs, config.npc_executor, npc_scheduler, config.structures, StructureGrid.new(config.building.grid_module_m), config.npc_spots, config.map_content, npc_homes)
 	if npc_executor == null:
 		return null
 	if config.npc_decider != null and config.npc_decider.has_method(NpcExecutor.DECIDER_HOOK):
@@ -135,7 +145,7 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# config.npc_behaviour (tests that want NPCs to stand still) nothing is
 	# installed and the decider chooses nothing.
 	if config.npc_behaviour != null:
-		var npc_behaviours: NpcBehaviours = NpcBehaviours.install(npcs, config.npc_behaviour, npc_executor, config.catalog, StructureGrid.new(config.building.grid_module_m), config.npc_spots, config.map_content)
+		var npc_behaviours: NpcBehaviours = NpcBehaviours.install(npcs, config.npc_behaviour, npc_executor, config.catalog, StructureGrid.new(config.building.grid_module_m), config.npc_spots, config.map_content, npc_homes)
 		if npc_behaviours == null:
 			return null
 		if config.npc_decider != null and config.npc_decider.has_method(NpcBehaviours.DECIDER_HOOK):

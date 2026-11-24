@@ -440,6 +440,27 @@ func has_source(source_key: String) -> bool:
 	return _sources.has(source_key)
 
 
+## The id of the container in memory that was created with this source key
+## ("" = none).
+func container_id_of_source(source_key: String) -> String:
+	return _sources.get(source_key, "")
+
+
+## Searches a container as a server rule (no actor, no range, no search
+## time; F-28: an NPC that moves into a building knows what is in it): its
+## loot is rolled now if it never was, exactly as a player's first search
+## would roll it (the same seed, so the same loot). False when the container
+## is not in memory.
+func search_now(world: ServerWorld, container_id: String) -> bool:
+	var container: ContainerInstance = _containers.get(container_id, null)
+	if world == null or container == null:
+		return false
+	if not container.searched:
+		_finish_search(world, container)
+		mark_cell_save_dirty(container.cell_id)
+	return true
+
+
 ## Ids of the containers of one cell that are in memory, sorted.
 func container_ids_in_cell(world: ServerWorld, cell_id: String) -> PackedStringArray:
 	return world.cell_index.entities_in_cell(cell_id, ENTITY_KIND_CONTAINER)

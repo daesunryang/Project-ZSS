@@ -146,6 +146,8 @@ var _grid: StructureGrid = null
 var _spots: NpcSpotSet = null
 ## spot_id -> where an NPC stands to use it (only spots of this world).
 var _spot_positions: Dictionary[String, Vector3] = {}
+## F-28: the spots of generated buildings NPCs live in (null = none).
+var _homes: NpcHomes = null
 var _reservations: NpcReservations = NpcReservations.new()
 var _scheduler_ref: WeakRef = null
 ## Optional: (npc_id, reason) is called instead of the scheduler.
@@ -175,15 +177,17 @@ func _init(settings: NpcExecutorSettings = null) -> void:
 ## ServerComposition, after NpcScheduler.install). `scheduler`: who is told
 ## about results (null = nobody). `structures`: to tell a door from a wall.
 ## `spots` with `map_content`: the NPC spots of this world (spots that name
-## a building need the map content they belong to). Returns the stage, or
-## null when a registration fails.
-static func install(npcs: NpcService, settings: NpcExecutorSettings, scheduler: NpcScheduler, structures: StructureCatalog, grid: StructureGrid, spots: NpcSpotSet = null, map_content: MapContentDefinition = null) -> NpcExecutor:
+## a building need the map content they belong to). `homes` (F-28): the
+## spots of the generated buildings NPCs live in, derived when they are
+## asked for. Returns the stage, or null when a registration fails.
+static func install(npcs: NpcService, settings: NpcExecutorSettings, scheduler: NpcScheduler, structures: StructureCatalog, grid: StructureGrid, spots: NpcSpotSet = null, map_content: MapContentDefinition = null, homes: NpcHomes = null) -> NpcExecutor:
 	if npcs == null or settings == null or grid == null:
 		return null
 	var executor: NpcExecutor = NpcExecutor.new(settings)
 	executor._structures = structures
 	executor._grid = grid
 	executor._spots = spots
+	executor._homes = homes
 	if spots != null:
 		executor._spot_positions = spots.positions(map_content, grid)
 	executor._scheduler_ref = weakref(scheduler) if scheduler != null else null
@@ -253,19 +257,19 @@ func begin_use_spot(npc_id: String, spot_id: String, duration_sec: float, run: b
 	var refusal: String = _begin_refusal(npc_id)
 	if not refusal.is_empty():
 		return ActionResult.failure(refusal)
-	if not _spot_positions.has(spot_id):
+	if not has_spot(spot_id):
 		return ActionResult.failure(REASON_UNKNOWN_SPOT)
 	if not is_finite(duration_sec) or duration_sec > MAX_DURATION_SEC or (duration_sec < 0.0 and duration_sec != HOLD):
 		return ActionResult.failure(REASON_BAD_DURATION)
 	var state: NpcExecutorState = _awake[npc_id]
-	if _spots.get_spot(spot_id).exclusive and state.reserved_spot_id != spot_id:
+	if spot_definition(spot_id).exclusive and state.reserved_spot_id != spot_id:
 		if not _reservations.claim(spot_id, npc_id):
 			return ActionResult.failure(REASON_SPOT_RESERVED)
 		state.reserved_spot_id = spot_id
 		state.reservation_auto = true
 	state.clear_action()
 	state.kind = NpcExecutorState.KIND_USE_SPOT
-	state.target = _spot_positions[spot_id]
+	state.target = spot_position(spot_id) as Vector3
 	state.run = run
 	state.spot_id = spot_id
 	state.use_usec = NpcExecutorState.FOREVER if duration_sec == HOLD else NpcExecutorSettings.to_usec(duration_sec)
@@ -341,7 +345,7 @@ func reserve(npc_id: String, spot_id: String) -> ActionResult:
 	var state: NpcExecutorState = _awake.get(npc_id, null)
 	if state == null:
 		return ActionResult.failure(REASON_NOT_AWAKE if _state_of(npc_id) != null else REASON_UNKNOWN_NPC)
-	if not _spot_positions.has(spot_id) or not _spots.get_spot(spot_id).exclusive:
+	if not has_spot(spot_id) or not spot_definition(spot_id).exclusive:
 		return ActionResult.failure(REASON_UNKNOWN_SPOT)
 	if not _reservations.claim(spot_id, npc_id):
 		return ActionResult.failure(REASON_SPOT_RESERVED)
@@ -377,34 +381,56 @@ func reserved_spot_of(npc_id: String) -> String:
 ## True when the spot exists and nobody, or `for_npc_id`, holds it.
 func is_spot_free(spot_id: String, for_npc_id: String = "") -> bool:
 	_settle()
-	return _spot_positions.has(spot_id) and _reservations.is_free(spot_id, for_npc_id)
+	return has_spot(spot_id) and _reservations.is_free(spot_id, for_npc_id)
 
 
 ## The spots of this world nobody holds, sorted by id; `kind` and
-## `building_id` narrow the list ("" = any).
+## `building_id` narrow the list ("" = any). The spots of a generated
+## building (F-28) are listed only when that building is asked for: the
+## generated map has thousands of them.
 func free_spot_ids(kind: String = "", building_id: String = "") -> PackedStringArray:
 	_settle()
 	var ids: PackedStringArray = []
-	if _spots == null:
-		return ids
-	for spot_id: String in _spots.spot_ids(kind, building_id):
-		if _spot_positions.has(spot_id) and _reservations.is_free(spot_id):
+	for spot_id: String in spot_ids(kind, building_id):
+		if _reservations.is_free(spot_id):
 			ids.append(spot_id)
 	return ids
 
 
+## The spots that have a place in this world, sorted by id; narrowed like
+## free_spot_ids.
+func spot_ids(kind: String = "", building_id: String = "") -> PackedStringArray:
+	var ids: PackedStringArray = []
+	if _spots != null:
+		for spot_id: String in _spots.spot_ids(kind, building_id):
+			if _spot_positions.has(spot_id):
+				ids.append(spot_id)
+	if _homes != null and not building_id.is_empty():
+		for spot_id: String in _homes.generated_spot_ids(building_id, kind):
+			if not _spot_positions.has(spot_id):
+				ids.append(spot_id)
+		ids.sort()
+	return ids
+
+
+## True for a spot of the spot set that has a place in this world, and for
+## a spot of a generated building of this world (F-28).
 func has_spot(spot_id: String) -> bool:
-	return _spot_positions.has(spot_id)
+	return _spot_positions.has(spot_id) or (_homes != null and _homes.generated_spot(spot_id) != null)
 
 
 ## Where an NPC stands to use a spot (Vector3), or null.
 func spot_position(spot_id: String) -> Variant:
-	return _spot_positions[spot_id] if _spot_positions.has(spot_id) else null
+	if _spot_positions.has(spot_id):
+		return _spot_positions[spot_id]
+	return _homes.generated_spot_position(spot_id) if _homes != null else null
 
 
 ## The spot's definition (kind, building, exclusive), or null.
 func spot_definition(spot_id: String) -> NpcSpotDefinition:
-	return _spots.get_spot(spot_id) if _spot_positions.has(spot_id) else null
+	if _spot_positions.has(spot_id):
+		return _spots.get_spot(spot_id)
+	return _homes.generated_spot(spot_id) if _homes != null else null
 
 
 ## The planning queue, who is next first.
@@ -600,7 +626,7 @@ func _settle() -> void:
 		var lost_spot: String = ""
 		var lost_code: String = ""
 		if not state.reserved_spot_id.is_empty():
-			if not _spot_positions.has(state.reserved_spot_id):
+			if not has_spot(state.reserved_spot_id):
 				lost_code = FAIL_TARGET_GONE
 			elif not _reservations.claim(state.reserved_spot_id, npc_id):
 				lost_code = FAIL_SPOT_RESERVED
@@ -613,7 +639,7 @@ func _settle() -> void:
 		if state.is_busy():
 			_active[npc_id] = state
 			_order_stale = true
-			if state.kind == NpcExecutorState.KIND_USE_SPOT and not _spot_positions.has(state.spot_id):
+			if state.kind == NpcExecutorState.KIND_USE_SPOT and not has_spot(state.spot_id):
 				_finish(npc_id, state, NpcExecutorState.RESULT_FAILED, FAIL_TARGET_GONE)
 				action_failed = true
 			elif not lost_spot.is_empty() and state.spot_id == lost_spot:

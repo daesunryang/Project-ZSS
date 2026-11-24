@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="NpcHomeSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/homes/npc_home_settings.gd" id="1_npc_home"]
+
+[resource]
+script = ExtResource("1_npc_home")
+lone_homes = true
+home_building_types = PackedStringArray("house")
+countryside_per_mille = 300
+cell_attempts = 64
+stock_item_id = "dev_food_ration"
+stock_units = 6
+relocate_existing = true
