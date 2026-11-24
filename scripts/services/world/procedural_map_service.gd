@@ -137,10 +137,12 @@ func is_cell_complete(cell_id: String) -> bool:
 	return not _plans.has(cell_id)
 
 
-## Builds everything that is queued now (tests, tools).
+## Builds everything that is queued and can be built now (tests, tools).
 func finish_pending(world: ServerWorld) -> void:
-	while not _queue.is_empty():
-		_advance(world, _queue[0], NO_BUDGET_LIMIT)
+	var cell_id: String = _next_buildable(world)
+	while not cell_id.is_empty():
+		_advance(world, cell_id, NO_BUDGET_LIMIT)
+		cell_id = _next_buildable(world)
 
 
 # ------------------------------------------------------------ ServerSystem
@@ -166,8 +168,11 @@ func step(world: ServerWorld, _action_delta: float, _world_delta: float) -> void
 		return
 	var started_usec: int = Time.get_ticks_usec()
 	var budget: int = _settings.max_pieces_per_tick
-	while budget > 0 and not _queue.is_empty():
-		budget -= _advance(world, _queue[0], budget)
+	while budget > 0:
+		var cell_id: String = _next_buildable(world)
+		if cell_id.is_empty():
+			break
+		budget -= _advance(world, cell_id, budget)
 	max_step_usec = maxi(max_step_usec, Time.get_ticks_usec() - started_usec)
 
 
@@ -276,6 +281,19 @@ func _on_cell_state_changed(cell_id: String, from: int, to: int) -> void:
 		return
 	_plans[cell_id] = plan
 	_queue.append(cell_id)
+
+
+## The first queued cell that may be built now ("" = none). A cell that is
+## being saved (SAVING) is left alone until the save is done: what was placed
+## after its document was cut would leave memory unsaved. It then either
+## stays in memory and is built on, or comes back with its record and goes on
+## where the saved record says.
+func _next_buildable(world: ServerWorld) -> String:
+	var cells: WorldCellService = world.get_system(WorldCellService.SYSTEM_ID) as WorldCellService
+	for cell_id: String in _queue:
+		if cells == null or cells.state_of(cell_id) != WorldCellLifecycle.State.SAVING:
+			return cell_id
+	return ""
 
 
 ## Places the next structure pieces of a cell, building by building, until

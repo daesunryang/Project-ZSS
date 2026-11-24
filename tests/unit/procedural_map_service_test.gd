@@ -316,6 +316,27 @@ func test_cells_that_get_nothing_leave_no_trace() -> void:
 	assert_eq(store.saved_cell_ids().size(), 0, "and nothing to save for them")
 
 
+func test_a_cell_that_is_being_saved_is_not_built_on() -> void:
+	var world: ServerWorld = _world()
+	var map: ProceduralMapService = _map(world)
+	var cell: Vector2i = _built_cell(world, _town_crossing(world))
+	var cell_id: String = WorldCellGrid.id_of(cell)
+	assert_true(_cells(world).load_cell_now(world, cell_id))
+	world.step_systems(TICK)
+	var placed: int = map.structures_placed
+	assert_true(placed > 0 and map.pending_cell_count() == 1, "the cell is half-built")
+	# The state a cell has while a background save of it is running.
+	_cells(world).set("_states", {cell_id: WorldCellLifecycle.State.SAVING} as Dictionary[String, int])
+	for _tick: int in range(5):
+		map.step(world, TICK, TICK)
+	map.finish_pending(world)
+	assert_eq(map.structures_placed, placed, "nothing is placed in a cell whose document was already cut")
+	assert_eq(map.pending_cell_count(), 1, "it waits")
+	_cells(world).set("_states", {cell_id: WorldCellLifecycle.State.PRELOADED} as Dictionary[String, int])
+	map.finish_pending(world)
+	assert_eq(_pieces_in_cell(world, cell_id), _planned_pieces(world, cell), "and is finished when the save is done")
+
+
 # ------------------------------------------------------------ determinism
 
 func test_two_worlds_with_the_same_seed_get_the_same_buildings() -> void:

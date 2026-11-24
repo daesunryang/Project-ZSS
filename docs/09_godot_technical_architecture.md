@@ -2267,6 +2267,7 @@ RPC 서명·채널·순서·저장 시점은 바뀌지 않았다. 플레이어�
 **배치(`ProceduralMapService`, 서버 시스템, 맵 콘텐츠 뒤·NPC 앞에 등록)**
 - **월드를 만들 때는 아무것도 놓지 않는다.** 시드만 정한다. `WorldCellService`가 셀을 메모리로 올리면(LOADING → PRELOADED, `cell_state_changed`) 그 셀의 계획을 묻는다. 계획이 비면 아무 흔적도 남기지 않는다(기록도, 저장 파일도 없다). 아니면 줄에 세운다.
 - 줄은 `step()`에서 틱마다 `max_pieces_per_tick` 조각씩 짓는다(건물 하나의 조각 → 그 건물의 보관함 → 다음 건물 … → 좀비 → 완료). 셀이 ACTIVE가 될 때 플레이어가 그 셀이나 이웃 셀에 있으면 그 자리에서 끝까지 짓고(사람 둘레에 벽이 솟지 않게), 아니면 줄 맨 앞으로 보낸다. 미리 올리는 고리(반경 3)가 활성 영역(반경 2)보다 한 칸 넓어서, 걸어서 닿는 셀은 닿기 훨씬 전에 끝나 있다.
+- 저장 중(SAVING)인 셀은 짓지 않고 기다린다: 셀 문서가 이미 잘린 뒤에 놓은 조각은 저장되지 않은 채 메모리에서 내려가기 때문이다. 저장이 끝나 셀이 남으면 이어 짓고, 내려갔다 오면 저장된 기록부터 잇는다.
 - 놓는 길은 각 시스템의 서버 규칙이다: `BuildingService.place_completed_structure`(새 진입점, 아래), `ContainerService.create_container`(출처 키 `procedural/<건물 id>/<번호>`), `ZombieService.spawn_zombie`(`has_spawn_room()`으로 먼저 묻는다). 자리가 찼거나 변에 누가 서 있는 조각, 좀비 상한에 걸린 좀비는 빼고 센다(`skipped_structures`, `skipped_zombies`).
 - **셀마다 한 번**: 셀 문서 `systems.procedural_map` = `{schema_version: 1, generator_version, buildings_done, pieces_done, complete}`. 구조물과 같은 세대에 저장되므로 재시작이나 셀 재로딩이 같은 조각을 두 번 놓지 않고, 플레이어가 바꾼 것(철거한 벽, 비운 보관함)은 그대로 남는다. 반쯤 짓다 내려간 셀은 다시 올라올 때 다음 조각부터 잇는다. 완료된 셀은 생성기나 설정이 바뀌어도 가진 것을 지킨다. 다른 생성기 버전으로 반쯤 지어진 셀은 그대로 완료로 친다(경고 로그).
 - **월드 문서** `systems.procedural_map` = `{schema_version: 1, world_seed: "<정수 문자열>", generator_version}`. 월드는 만들어질 때의 시드를 지킨다(설정의 시드가 바뀌어도). 설정이 없는 조립(테스트·도구의 기본)은 아무것도 만들지 않고 아무것도 저장하지 않는다.
