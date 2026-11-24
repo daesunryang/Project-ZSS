@@ -44,6 +44,21 @@ extends NpcStage
 ##           wander_linger_sec, done.
 ##   flee    Runs flee_distance_m straight away from the threat the
 ##           decision layer names (target.threat_position).
+## F-29 (docs/09 §17.14; only with enable_survival(), otherwise refused):
+##   scavenge  A trip of an NPC that lives alone: to a building, through
+##           its containers, home, the loot into the home's containers
+##           (NpcScavenging).
+##   treat   Stands treat_duration_sec, then uses the first item it carries
+##           that treats it (NpcHealth.apply_treatment). No such item when
+##           the time is over: no_resource.
+##   fight   Stands and swings at the nearest zombie within reach with the
+##           best weapon it carries (NpcFighting), again after every weapon
+##           cooldown, until no living zombie is within reach.
+## And two changes to the actions above for an NPC that lives alone:
+##   drink   Farther than drink_carried_beyond_m from its home it drinks a
+##           drink it carries, where it stands.
+##   flee    It runs home instead of straight away when its home is far
+##           enough from the threat and not behind it.
 ## Any other action id is refused (unsupported_action).
 ##
 ## Reports to the decision layer (the scheduler's interrupts, P4-4's
@@ -92,7 +107,15 @@ const ACTION_SLEEP: String = "sleep"
 const ACTION_WORK: String = "work"
 const ACTION_WANDER: String = "wander"
 const ACTION_FLEE: String = "flee"
-const ACTIONS: PackedStringArray = [ACTION_EAT, ACTION_DRINK, ACTION_REST, ACTION_SLEEP, ACTION_WORK, ACTION_WANDER, ACTION_FLEE]
+const ACTION_SCAVENGE: String = "scavenge"
+const ACTION_TREAT: String = "treat"
+const ACTION_FIGHT: String = "fight"
+const ACTIONS: PackedStringArray = [ACTION_EAT, ACTION_DRINK, ACTION_REST, ACTION_SLEEP, ACTION_WORK, ACTION_WANDER, ACTION_FLEE, ACTION_SCAVENGE, ACTION_TREAT, ACTION_FIGHT]
+## The actions of F-29: refused until enable_survival() was called.
+const SURVIVAL_ACTIONS: PackedStringArray = [ACTION_SCAVENGE, ACTION_TREAT, ACTION_FIGHT]
+## Count of the swings of a fight that hit / that killed.
+const COUNT_FIGHT_HIT: String = "fight_hit"
+const COUNT_FIGHT_KILL: String = "fight_kill"
 ## Count of an action that was cut short while it was being done:
 ## "<action id>_cut" (NpcBehaviourState.counts).
 const COUNT_CUT_SUFFIX: String = "_cut"
@@ -119,6 +142,10 @@ var _map_content: MapContentDefinition = null
 var _grid: StructureGrid = null
 ## F-28: where each NPC lives (never null after install).
 var _homes: NpcHomes = null
+## F-29: null until enable_survival().
+var _sense: NpcSurvivalSense = null
+var _scavenging: NpcScavenging = null
+var _fighting: NpcFighting = null
 var _adapter_ref: WeakRef = null
 var _world_ref: WeakRef = null
 var _npcs_ref: WeakRef = null
@@ -173,6 +200,24 @@ func movement_executor() -> NpcExecutor:
 	return _executor
 
 
+## F-29: turns on the actions scavenge, treat and fight, and what an NPC
+## that lives alone does differently when it drinks and flees
+## (ServerComposition, before the world runs).
+func enable_survival(sense: NpcSurvivalSense, fighting: NpcFighting) -> void:
+	_sense = sense
+	_fighting = fighting
+	_scavenging = NpcScavenging.new(sense, _grid, Callable(self, "_move")) if sense != null else null
+
+
+## The scavenging helper (null without enable_survival()).
+func scavenging() -> NpcScavenging:
+	return _scavenging
+
+
+func fighting() -> NpcFighting:
+	return _fighting
+
+
 # ------------------------------------------------------------ the contract
 
 ## NpcActionExecutor.begin: "" when the action runs now, or a failure code.
@@ -180,7 +225,7 @@ func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, action: NpcActio
 	var state: NpcBehaviourState = _state_of(npc)
 	if world == null or npcs == null or state == null or action == null:
 		return NpcActionExecutor.FAIL_UNSUPPORTED
-	if not ACTIONS.has(action.action_id):
+	if not ACTIONS.has(action.action_id) or (_sense == null and SURVIVAL_ACTIONS.has(action.action_id)):
 		return NpcActionExecutor.FAIL_UNSUPPORTED
 	if not npcs.is_awake(npc.npc_id):
 		return FAIL_NOT_READY
@@ -198,7 +243,12 @@ func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, action: NpcActio
 		ACTION_EAT:
 			code = _begin_eat(world, npc, state, definition)
 		ACTION_DRINK:
-			code = _begin_at_spot(npc, state, NpcSpotDefinition.KIND_WATER, _homes.home_building_id(npc, definition), npc.position, _settings.drink_duration_sec)
+			if _drinks_what_it_carries(world, npc, state, definition):
+				state.step = NpcBehaviourState.STEP_PERFORMING
+				state.timer_usec = maxi(NpcBehaviourSettings.to_usec(_settings.drink_duration_sec), 1)
+				_report(npc.npc_id, NpcActionExecutor.REPORT_ARRIVED)
+			else:
+				code = _begin_at_spot(npc, state, NpcSpotDefinition.KIND_WATER, _homes.home_building_id(npc, definition), npc.position, _settings.drink_duration_sec)
 		ACTION_REST:
 			code = _begin_rest(world, npc, state, definition, false)
 		ACTION_SLEEP:
@@ -208,7 +258,13 @@ func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, action: NpcActio
 		ACTION_WANDER:
 			code = _begin_wander(world, npc, state, definition)
 		ACTION_FLEE:
-			code = _begin_flee(world, npc, state, target)
+			code = _begin_flee(world, npc, state, target, definition)
+		ACTION_SCAVENGE:
+			code = _scavenging.begin(world, npcs, npc, state)
+		ACTION_TREAT:
+			code = _begin_treat(npc, state)
+		ACTION_FIGHT:
+			code = _begin_fight(world, npc, state)
 	if not code.is_empty():
 		state.clear_action()
 		return code
@@ -241,6 +297,8 @@ func cancel(world: ServerWorld, npcs: NpcService, npc: NpcState) -> void:
 	# (a rest the decision layer ends because the NPC is rested enough).
 	if state.step == NpcBehaviourState.STEP_PERFORMING:
 		state.add_count(action_id + COUNT_CUT_SUFFIX)
+	if action_id == ACTION_SCAVENGE and _scavenging != null:
+		_scavenging.on_cancelled(npc)
 	_end(world, npcs, npc, state)
 	_executor.cancel(npc.npc_id)
 	cancelled_count += 1
@@ -279,6 +337,8 @@ func on_npc_woke(world: ServerWorld, npc: NpcState) -> void:
 	if state.is_running():
 		_running[npc.npc_id] = state
 		_order_stale = true
+	if _scavenging != null:
+		_scavenging.queue_cells_of(world, npc)
 
 
 func on_npc_slept(_world_now: ServerWorld, npc: NpcState) -> void:
@@ -290,7 +350,11 @@ func on_npc_slept(_world_now: ServerWorld, npc: NpcState) -> void:
 ## the look at a resting NPC, the time worked.
 func step(world: ServerWorld, npcs: NpcService, action_delta: float, _world_delta: float) -> void:
 	last_step_usec = 0
-	if _running.is_empty() or not is_finite(action_delta) or action_delta <= 0.0:
+	if not is_finite(action_delta) or action_delta <= 0.0:
+		return
+	if _scavenging != null:
+		_scavenging.warm_one()
+	if _running.is_empty():
 		return
 	var started_usec: int = Time.get_ticks_usec()
 	_world_ref = weakref(world)
@@ -324,6 +388,14 @@ func step(world: ServerWorld, npcs: NpcService, action_delta: float, _world_delt
 		match state.action_id:
 			ACTION_EAT:
 				_finish_eating(world, npcs, npc, state)
+			ACTION_DRINK:
+				_finish_drinking_carried(world, npcs, npc, state)
+			ACTION_SCAVENGE:
+				_step_scavenge(world, npcs, npc, state)
+			ACTION_TREAT:
+				_finish_treating(world, npcs, npc, state)
+			ACTION_FIGHT:
+				_swing(world, npcs, npc, state)
 			ACTION_REST, ACTION_SLEEP:
 				var needs: NpcNeeds = _advanced_needs(world, npc)
 				if needs == null or needs.value(NpcNeedKind.FATIGUE) <= (_settings.sleep_until_fatigue if state.action_id == ACTION_SLEEP else _settings.rest_until_fatigue):
@@ -427,17 +499,125 @@ func _begin_wander(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, 
 	return _move(npc.npc_id, state, goal, false)
 
 
-func _begin_flee(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, target: Dictionary) -> String:
+func _begin_flee(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, target: Dictionary, definition: NpcDefinition) -> String:
 	var raw: Variant = target.get(NpcActionExecutor.TARGET_THREAT_POSITION, null)
 	var away: Vector3 = Vector3.ZERO
+	var threat_known: bool = false
 	if typeof(raw) == TYPE_ARRAY and (raw as Array).size() == 3:
 		away = Vector3(npc.position.x - float(raw[0]), 0.0, npc.position.z - float(raw[2]))
+		threat_known = away.is_finite()
 	if not away.is_finite() or away.length() < 0.001:
 		# On top of the threat, or no threat named: any way is away.
 		var angle: float = npc.rng.randf() * TAU
 		away = Vector3(cos(angle), 0.0, sin(angle))
 	var goal: Vector3 = world.clamp_to_world(npc.position + away.normalized() * _settings.flee_distance_m)
+	if threat_known and _sense != null and _sense.is_lone(npc):
+		# F-29: home is the safe place, when it is far enough from the threat
+		# and the way there does not lead towards it.
+		var home: Vector3 = _place_of(npc, definition, true)
+		var to_home: Vector3 = Vector3(home.x - npc.position.x, 0.0, home.z - npc.position.z)
+		var home_from_threat: float = Vector2(home.x - float(raw[0]), home.z - float(raw[2])).length()
+		if _grid.tile_of(home) != _grid.tile_of(npc.position) and home_from_threat >= _sense.settings.flee_home_min_threat_distance_m and to_home.dot(away) >= 0.0:
+			goal = home
 	return _move(npc.npc_id, state, goal, true)
+
+
+# ------------------------------------------------------------ F-29: survival
+
+## True when the NPC drinks a drink it carries where it stands: it lives
+## alone, carries one, and is farther from its home than
+## drink_carried_beyond_m.
+func _drinks_what_it_carries(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, definition: NpcDefinition) -> bool:
+	if _sense == null or not _sense.is_lone(npc) or _drink_stack(world, state.inventory_id) == null:
+		return false
+	var home: Vector3 = _place_of(npc, definition, true)
+	return Vector2(home.x - npc.position.x, home.z - npc.position.z).length() > _sense.settings.drink_carried_beyond_m
+
+
+## The first stack of a drink (it lowers thirst and not hunger, and treats
+## nothing) in an inventory, by slot; null when there is none.
+func _drink_stack(world: ServerWorld, inventory_id: String) -> ItemInstance:
+	for item: ItemInstance in NpcSurvivalSense.items_of(world, inventory_id):
+		if _sense.kind_of(world.inventory.definition_of(item.item_instance_id)) == NpcSurvivalSense.KIND_DRINK:
+			return item
+	return null
+
+
+## The unit of drink the NPC carries is used up and lowers its thirst.
+func _finish_drinking_carried(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBehaviourState) -> void:
+	var stack: ItemInstance = _drink_stack(world, state.inventory_id) if _sense != null else null
+	var drink: ItemDefinition = world.inventory.definition_of(stack.item_instance_id) if stack != null else null
+	if drink == null or not world.inventory.remove_item(state.inventory_id, stack.item_instance_id, 1).ok:
+		_fail(world, npcs, npc, state, NpcActionExecutor.FAIL_NO_RESOURCE)
+		return
+	var needs: NpcNeeds = _advanced_needs(world, npc)
+	var info: Dictionary = {INFO_ITEM: drink.definition_id}
+	if needs != null:
+		needs.satisfy(NpcNeedKind.THIRST, drink.consume_thirst_reduction, "drink_%s" % drink.definition_id)
+		info[NpcNeedKind.THIRST] = needs.value(NpcNeedKind.THIRST)
+	_finish(world, npcs, npc, state, info)
+
+
+## The timer of a scavenging trip ran out (a search, or the stowing).
+func _step_scavenge(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBehaviourState) -> void:
+	var info: Dictionary = {}
+	var code: String = _scavenging.on_timer(world, npcs, npc, state, info) if _scavenging != null else NpcActionExecutor.FAIL_UNSUPPORTED
+	if code == NpcScavenging.STEP_DONE:
+		_finish(world, npcs, npc, state, info)
+	elif code != NpcScavenging.STEP_CONTINUES:
+		_fail(world, npcs, npc, state, code)
+
+
+func _begin_treat(npc: NpcState, state: NpcBehaviourState) -> String:
+	if not _sense.can_treat(npc):
+		return NpcActionExecutor.FAIL_NO_RESOURCE
+	state.step = NpcBehaviourState.STEP_PERFORMING
+	state.timer_usec = maxi(NpcBehaviourSettings.to_usec(_sense.settings.treat_duration_sec), 1)
+	_report(npc.npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	return ""
+
+
+## The NPC uses the first item it carries that treats it.
+func _finish_treating(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBehaviourState) -> void:
+	var item: ItemInstance = _sense.treatment_item(npc) if _sense != null else null
+	var health: NpcHealth = NpcHealth.of_world(world)
+	var treatment: ItemDefinition = world.inventory.definition_of(item.item_instance_id) if item != null else null
+	if treatment == null or health == null:
+		_fail(world, npcs, npc, state, NpcActionExecutor.FAIL_NO_RESOURCE)
+		return
+	var item_id: String = item.item_instance_id
+	if not world.inventory.remove_item(state.inventory_id, item_id, 1).ok or not health.apply_treatment(npc.npc_id, treatment, item_id).ok:
+		_fail(world, npcs, npc, state, NpcActionExecutor.FAIL_NO_RESOURCE)
+		return
+	_finish(world, npcs, npc, state, {INFO_ITEM: treatment.definition_id})
+
+
+func _begin_fight(world: ServerWorld, npc: NpcState, state: NpcBehaviourState) -> String:
+	if _fighting == null or NpcFighting.nearest_zombie(world, npc, _fighting.reach_of(world, state.inventory_id, _sense.settings.fight_range_m)).is_empty():
+		return NpcActionExecutor.FAIL_TARGET_GONE
+	state.step = NpcBehaviourState.STEP_PERFORMING
+	state.timer_usec = maxi(NpcBehaviourSettings.to_usec(_sense.settings.fight_windup_sec), 1)
+	_report(npc.npc_id, NpcActionExecutor.REPORT_ARRIVED)
+	return ""
+
+
+## One swing of a fight; the fight is over when no living zombie is within
+## reach any more.
+func _swing(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBehaviourState) -> void:
+	var reach: float = _fighting.reach_of(world, state.inventory_id, _sense.settings.fight_range_m) if _fighting != null else 0.0
+	var zombie_id: String = NpcFighting.nearest_zombie(world, npc, reach)
+	if zombie_id.is_empty():
+		_finish(world, npcs, npc, state, {})
+		return
+	var swung: Dictionary = _fighting.swing(world, npcs, npc, state.inventory_id, zombie_id, _sense.settings.fight_range_m)
+	if bool(swung[NpcFighting.KEY_HIT]):
+		state.add_count(COUNT_FIGHT_HIT)
+	if bool(swung[NpcFighting.KEY_DIED]):
+		state.add_count(COUNT_FIGHT_KILL)
+		if NpcFighting.nearest_zombie(world, npc, reach).is_empty():
+			_finish(world, npcs, npc, state, {NpcActionExecutor.TARGET_THREAT_ID: zombie_id})
+			return
+	state.timer_usec = maxi(NpcBehaviourSettings.to_usec(float(swung[NpcFighting.KEY_COOLDOWN_SEC])), 1)
 
 
 func _move(npc_id: String, state: NpcBehaviourState, goal: Vector3, run: bool) -> String:
@@ -575,6 +755,13 @@ func _on_done(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBeh
 				npcs.mark_npc_dirty(npc.npc_id)
 			else:
 				_finish(world, npcs, npc, state, {})
+		ACTION_SCAVENGE:
+			# A walk of the trip is over: it searches, or puts its loot away.
+			var code: String = _scavenging.on_walk_done(world, npcs, npc, state) if _scavenging != null else NpcActionExecutor.FAIL_UNSUPPORTED
+			if code == NpcScavenging.STEP_CONTINUES:
+				_report(npc.npc_id, NpcActionExecutor.REPORT_ARRIVED)
+			else:
+				_fail(world, npcs, npc, state, code)
 		_:
 			_finish(world, npcs, npc, state, {})
 
@@ -618,6 +805,8 @@ func _finish(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBeha
 func _fail(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBehaviourState, code: String) -> void:
 	var action_id: String = state.action_id
 	state.add_count(NpcBehaviourState.COUNT_FAILED)
+	if action_id == ACTION_SCAVENGE and _scavenging != null:
+		_scavenging.on_failed(world, npc, code)
 	_end(world, npcs, npc, state)
 	failed_count += 1
 	_report(npc.npc_id, NpcActionExecutor.failed_reason(code))

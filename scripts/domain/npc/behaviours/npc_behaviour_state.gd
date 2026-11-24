@@ -55,6 +55,8 @@ var worked_usec: int = 0
 var inventory_id: String = ""
 
 var _slots: int = 4
+## Slots of the inventory while the NPC is in memory (see on_attached).
+var _capacity: int = 4
 ## What the NPC carries while it is NOT in memory (and until on_attached()).
 var _saved_items: Array = []
 var _world_ref: WeakRef = null
@@ -102,12 +104,14 @@ func on_attached(world: ServerWorld, npc: NpcState) -> void:
 	_world_ref = weakref(world)
 	_npc_id = npc.npc_id
 	if not inventory_id.is_empty():
-		var snapshot: Dictionary = {InventoryService.DETACHED_CAPACITY: maxi(_slots, _highest_slot() + 1), InventoryService.SNAPSHOT_ITEMS: _saved_items}
+		_capacity = maxi(_slots, _highest_slot() + 1)
+		var snapshot: Dictionary = {InventoryService.DETACHED_CAPACITY: _capacity, InventoryService.SNAPSHOT_ITEMS: _saved_items}
 		var errors: PackedStringArray = world.inventory.restore_detached_snapshot(inventory_id, snapshot)
 		if errors.is_empty():
 			_saved_items = []
 			return
 		GameLogger.error("npc", "an NPC's saved inventory could not be restored; it starts with an empty one", {"entity_id": npc.npc_id, "inventory_id": inventory_id, "errors": "; ".join(errors), "operation": "restore_inventory"})
+	_capacity = _slots
 	inventory_id = world.inventory.create_detached_inventory(_slots)
 	_saved_items = []
 
@@ -125,6 +129,11 @@ func on_detached(world: ServerWorld, _npc: NpcState, retired: bool) -> void:
 		_saved_items = _live_items(world)
 	world.inventory.release_detached_inventory(inventory_id)
 	_world_ref = null
+
+
+## Slots of the NPC's inventory (F-29: how much it can carry).
+func capacity() -> int:
+	return _capacity
 
 
 ## What the NPC carries, in slot order.

@@ -40,7 +40,9 @@ extends NpcStage
 ## cure still helps, uses the first fitting item it carries (slot order),
 ## at most once per NpcHealthSettings.self_treat_cooldown_world_sec. It is
 ## a rule of this stage, not a scored action: the NPC does not stop what it
-## is doing (docs/15 F25-004).
+## is doing (docs/15 F25-004). F-29: with `self_treat_by_action` this
+## rule is off and the NPC treats itself by choosing the action "treat"
+## (NpcBehaviours), which takes time and has its place among the scores.
 ##
 ## Death (health 0, or the infection reached its end):
 ##   1. the vitals record when, of what and by whom;
@@ -101,6 +103,9 @@ var refused_rise_count: int = 0
 var body_removed_count: int = 0
 var self_treat_count: int = 0
 var last_hurt_count: int = 0
+## F-29: true = the stage's own self treatment rule is off (the decision
+## layer has the action "treat"). Set by ServerComposition.
+var self_treat_by_action: bool = false
 
 var _survival: SurvivalSettings
 var _settings: NpcHealthSettings
@@ -436,7 +441,7 @@ static func _loss_cause(bleeding_rate: float, infection_rate: float) -> String:
 ## The NPC uses a treatment it carries when one would help (see the
 ## header). One look per cooldown, whether or not it found something.
 func _treat_itself(world: ServerWorld, npcs: NpcService, npc: NpcState, vitals: NpcVitals, now: float) -> void:
-	if not _settings.self_treat_enabled or now < vitals.self_treat_ready_at_world_time:
+	if self_treat_by_action or not _settings.self_treat_enabled or now < vitals.self_treat_ready_at_world_time:
 		return
 	var needs_cure: bool = vitals.infection.is_infected() and _infection_treatment_refusal(vitals).is_empty()
 	if not vitals.is_bleeding() and not needs_cure:

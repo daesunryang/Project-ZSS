@@ -366,10 +366,17 @@ func test_the_shipped_actions_and_settings_are_valid_and_bad_data_is_refused() -
 	var actions: NpcActionCatalog = NpcActionCatalog.load_directory()
 	assert_eq(shipped.validate().size(), 0, ", ".join(shipped.validate()))
 	assert_eq(shipped.validate_against(actions).size(), 0, ", ".join(shipped.validate_against(actions)))
-	assert_eq(actions.action_ids(), PackedStringArray([DRINK, EAT, FLEE, REST, SLEEP, WANDER, WORK]), "the seven actions, sorted")
+	# F-29 added fight, scavenge and treat to the seven of Phase 4.
+	assert_eq(actions.action_ids(), PackedStringArray([DRINK, EAT, "fight", FLEE, REST, "scavenge", SLEEP, "treat", WANDER, WORK]), "the ten actions, sorted")
 	assert_false(actions.get_action(FLEE).selectable, "only the hard interrupt starts the flee action")
+	assert_false(actions.get_action("fight").selectable, "only the hard interrupt starts the fight action")
 	assert_eq(shipped.fallback_action_id, WANDER)
 	assert_eq(shipped.flee_action_id, FLEE)
+	assert_eq(shipped.fight_action_id, "fight")
+	for action_id: String in actions.action_ids():
+		# The actions of Phase 4 draw a number each, the later ones none: adding
+		# an action does not change what an older world's NPCs draw.
+		assert_eq(actions.get_action(action_id).draws_jitter, [DRINK, EAT, FLEE, REST, SLEEP, WANDER, WORK].has(action_id), "jitter of %s" % action_id)
 	var config_errors: PackedStringArray = CompositionConfig.from_defaults().validate()
 	assert_eq(config_errors.size(), 0, ", ".join(config_errors))
 	# What other players may see is the list the wire knows.
@@ -851,7 +858,8 @@ func test_an_action_that_runs_until_done_outlives_its_own_precondition() -> void
 	# The shipped nap (rest) and night sleep are such actions; nothing else is.
 	var shipped: NpcActionCatalog = NpcActionCatalog.load_directory()
 	for action_id: String in shipped.action_ids():
-		assert_eq(shipped.get_action(action_id).runs_until_done, action_id == REST or action_id == SLEEP, "shipped %s" % action_id)
+		# (F-29: and a scavenging trip, which is not given up half way.)
+		assert_eq(shipped.get_action(action_id).runs_until_done, action_id == REST or action_id == SLEEP or action_id == "scavenge", "shipped %s" % action_id)
 
 
 func test_an_npc_without_a_candidate_falls_back_or_stands_idle() -> void:

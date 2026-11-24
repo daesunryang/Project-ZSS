@@ -15,13 +15,19 @@ extends NpcDecider
 ##      this night's (F-6): the NPC does not begin another one in it.
 ##   3. Hard interrupt: a visible zombie (NpcThreatSense) starts the flee
 ##      action whatever the NPC does, unless it already flees or the flee
-##      action is on its retry cooldown.
+##      action is on its retry cooldown. F-29 (with an NpcSurvivalSense):
+##      the NPC remembers where it saw the zombie, and when the zombie is
+##      adjacent and fleeing is blocked (the flee action is on its
+##      cooldown) or fails (it has fled for fight_after_fleeing_sec and the
+##      zombie is still adjacent) it starts the fight action instead and
+##      keeps it while the zombie stays adjacent ("cornered").
 ##   4. Recover: until its cooldown is over nothing is chosen.
 ##   5. Minimum duration: a running action that started less than its
 ##      min_duration ago is kept without looking at the candidates. So is,
 ##      for as long as it runs, an action with `runs_until_done` (the
 ##      rest): only the executor's report, a hard interrupt, or another
-##      need of the NPC in the DANGER category ends it (docs/15 P4-172).
+##      need of the NPC in the DANGER category ends it (docs/15 P4-172);
+##      since F-29 also a wound it could treat now (_treatment_calls).
 ##      That is how a sleeper wakes on danger (F-6): a visible zombie is
 ##      step 3, a need in danger sends it to step 6, where an action with
 ##      `yields_to_danger_need` is no candidate while the NPC can eat or
@@ -38,8 +44,9 @@ extends NpcDecider
 ## and the signal `decided`).
 ##
 ## Determinism: the actions are looked at in id order, an evaluation draws
-## one number of `npc.rng` per action of the catalog (none when
-## `score_jitter` is 0), every time is the scheduler's integer clock.
+## one number of `npc.rng` per action of the catalog that has
+## `draws_jitter` (none when `score_jitter` is 0), every time is the
+## scheduler's integer clock.
 
 ## Emitted after every decision with its record (see the KEY_ constants).
 signal decided(npc_id: String, record: Dictionary)
@@ -60,6 +67,10 @@ const REJECT_NOT_BEDTIME: String = "not_bedtime"
 const REJECT_SLEPT: String = "slept_tonight"
 ## F-6: the NPC's night sleep can begin now, so it does not nap instead.
 const REJECT_BEDTIME_NOW: String = "bedtime_now"
+## F-29: the action is for NPCs that live alone / there is nothing the NPC
+## could treat itself with (or nothing to treat).
+const REJECT_NOT_LONE: String = "not_lone"
+const REJECT_NOTHING_TO_TREAT: String = "nothing_to_treat"
 ## A failure code the executor returned that is not a snake_case id.
 const FAIL_BAD_CODE: String = "bad_failure_code"
 
@@ -81,6 +92,8 @@ const DEFAULT_BEDTIME_HOUR: float = 22.0
 
 ## Record "hard_interrupt".
 const HARD_THREAT: String = "threat_visible"
+## F-29: the zombie is adjacent and fleeing is blocked or fails.
+const HARD_CORNERED: String = "cornered"
 
 ## Record "outcome".
 const OUTCOME_STARTED: String = "started"
@@ -137,6 +150,10 @@ var _executor: NpcActionExecutor = null
 var _scheduler_ref: WeakRef = null
 var _sensor_ref: WeakRef = null
 var _told_no_executor: bool = false
+## F-29: what the NPC knows about its supplies, its wounds and danger
+## (null = the survival rules of F-29 are off: nobody scavenges, treats
+## itself by choice, remembers zombies or fights).
+var _survival: NpcSurvivalSense = null
 
 
 func _init(settings: NpcDecisionSettings, catalog: NpcActionCatalog, need_settings: NpcNeedSettings, action_executor: NpcActionExecutor = null) -> void:
@@ -183,6 +200,25 @@ func executor() -> NpcActionExecutor:
 	return _executor
 
 
+## F-29: gives the decider the NPCs' survival sense (ServerComposition).
+func set_survival(sense: NpcSurvivalSense) -> void:
+	_survival = sense
+
+
+func survival() -> NpcSurvivalSense:
+	return _survival
+
+
+## F-29: true when the catalog has a selectable action an NPC treats itself
+## with (`requires_treatment`): NpcHealth then leaves the treating to it.
+func has_treat_action() -> bool:
+	for action_id: String in _catalog.action_ids():
+		var action: NpcActionDefinition = _catalog.get_action(action_id)
+		if action.selectable and action.requires_treatment:
+			return true
+	return false
+
+
 func settings() -> NpcDecisionSettings:
 	return _settings
 
@@ -201,6 +237,19 @@ func may_start_fleeing(state: NpcDecisionComponent, now_usec: int) -> bool:
 	if state.is_running() and state.action_id == flee.action_id:
 		return false
 	return not state.is_on_cooldown(flee.action_id, now_usec)
+
+
+## F-29: how near (metres) a visible zombie must be for this NPC to be
+## asked whether it is cornered now; 0 when it could not start to fight
+## (no fight action, no survival sense, it fights already, or the fight
+## action is on its retry cooldown).
+func fight_alert_range(state: NpcDecisionComponent, now_usec: int) -> float:
+	var fight: NpcActionDefinition = _fight_action()
+	if _executor == null or fight == null or _survival == null or state == null:
+		return 0.0
+	if (state.is_running() and state.action_id == fight.action_id) or state.is_on_cooldown(fight.action_id, now_usec):
+		return 0.0
+	return _survival.settings.fight_range_m
 
 
 func decide(world: ServerWorld, npcs: NpcService, npc: NpcState, reasons: PackedStringArray, scheduler: NpcScheduler) -> void:
@@ -285,6 +334,23 @@ func _hard_interrupt(world: ServerWorld, npcs: NpcService, npc: NpcState, state:
 	if threat.is_empty():
 		return false
 	record[KEY_HARD_INTERRUPT] = HARD_THREAT
+	var seen: Dictionary = {
+		NpcActionExecutor.TARGET_THREAT_ID: threat[NpcThreatSense.KEY_THREAT_ID],
+		NpcActionExecutor.TARGET_THREAT_POSITION: threat[NpcThreatSense.KEY_THREAT_POSITION],
+	}
+	if _survival != null:
+		var place: Array = threat[NpcThreatSense.KEY_THREAT_POSITION]
+		_survival.note_zombie_seen(world, npc, Vector3(float(place[0]), float(place[1]), float(place[2])))
+	var fight: NpcActionDefinition = _fight_action()
+	if fight != null and _is_cornered(state, flee, fight, float(threat[NpcThreatSense.KEY_DISTANCE]), now):
+		record[KEY_HARD_INTERRUPT] = HARD_CORNERED
+		if state.is_running() and state.action_id == fight.action_id:
+			record[KEY_CHOSEN] = fight.action_id
+			record[KEY_OUTCOME] = OUTCOME_KEPT
+			record[KEY_TARGET] = state.target.duplicate(true)
+			return true
+		_interrupt_with(world, npcs, npc, state, fight, seen, now, record, scheduler)
+		return true
 	if state.is_running() and state.action_id == flee.action_id:
 		record[KEY_CHOSEN] = flee.action_id
 		record[KEY_OUTCOME] = OUTCOME_KEPT
@@ -295,6 +361,13 @@ func _hard_interrupt(world: ServerWorld, npcs: NpcService, npc: NpcState, state:
 		# the ordinary choice.
 		(record[KEY_REJECTED] as Array).append({KEY_ACTION_ID: flee.action_id, KEY_CODE: REJECT_COOLDOWN})
 		return false
+	_interrupt_with(world, npcs, npc, state, flee, seen, now, record, scheduler)
+	return true
+
+
+## A hard interrupt starts `action` whatever the NPC does: the running
+## action is cancelled, a recovery is cut short.
+func _interrupt_with(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcDecisionComponent, action: NpcActionDefinition, target: Dictionary, now: int, record: Dictionary, scheduler: NpcScheduler) -> void:
 	hard_interrupt_count += 1
 	var was_running: bool = state.is_running()
 	if was_running:
@@ -305,12 +378,22 @@ func _hard_interrupt(world: ServerWorld, npcs: NpcService, npc: NpcState, state:
 	_move(state, NpcDecisionState.INTERRUPT, record)
 	state.clear_action()
 	_move(state, NpcDecisionState.PLAN, record)
-	var target: Dictionary = {
-		NpcActionExecutor.TARGET_THREAT_ID: threat[NpcThreatSense.KEY_THREAT_ID],
-		NpcActionExecutor.TARGET_THREAT_POSITION: threat[NpcThreatSense.KEY_THREAT_POSITION],
-	}
-	_begin(world, npcs, npc, state, flee, target, now, record, scheduler, OUTCOME_SWITCHED if was_running else OUTCOME_STARTED)
-	return true
+	_begin(world, npcs, npc, state, action, target, now, record, scheduler, OUTCOME_SWITCHED if was_running else OUTCOME_STARTED)
+
+
+## F-29: true when a zombie `distance_m` away has the NPC cornered: it is
+## adjacent, the NPC could fight, and fleeing is blocked (the flee action
+## is on its retry cooldown: it just failed) or fails (the NPC has fled for
+## fight_after_fleeing_sec and the zombie is still adjacent). An NPC that
+## fights already stays cornered while the zombie is adjacent.
+func _is_cornered(state: NpcDecisionComponent, flee: NpcActionDefinition, fight: NpcActionDefinition, distance_m: float, now: int) -> bool:
+	if _survival == null or distance_m > _survival.settings.fight_range_m or state.is_on_cooldown(fight.action_id, now):
+		return false
+	if state.is_running() and state.action_id == fight.action_id:
+		return true
+	if state.is_on_cooldown(flee.action_id, now):
+		return true
+	return state.is_running() and state.action_id == flee.action_id and now - state.action_started_at_usec >= NpcScheduleSettings.to_usec(_survival.settings.fight_after_fleeing_sec)
 
 
 ## Steps 4 to 6.
@@ -331,7 +414,7 @@ func _choose(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcDeci
 		record[KEY_CHOSEN] = current.action_id
 		record[KEY_OUTCOME] = OUTCOME_MIN_DURATION
 		return
-	if current != null and current.runs_until_done and not _other_need_in_danger(needs, current.need_kind) and not _night_sleep_calls(npc, current, state, needs, npcs.definition_of(npc.npc_id), now, world.clock.world_time_sec):
+	if current != null and current.runs_until_done and not _other_need_in_danger(needs, current.need_kind) and not _night_sleep_calls(npc, current, state, needs, npcs.definition_of(npc.npc_id), now, world.clock.world_time_sec) and not _treatment_calls(npc, state, now):
 		# It goes on until the executor says it is over: its own preconditions
 		# (the need that started it has dropped) and the other candidates are
 		# not looked at. No number is drawn, as in the minimum duration.
@@ -376,14 +459,14 @@ func _best_candidate(world: ServerWorld, npc: NpcState, state: NpcDecisionCompon
 		var action: NpcActionDefinition = _catalog.get_action(action_id)
 		# One number per action, candidate or not: what an NPC draws does not
 		# depend on which preconditions hold.
-		var jitter: float = npc.rng.randf() if _settings.score_jitter > 0.0 else 0.0
+		var jitter: float = npc.rng.randf() if _settings.score_jitter > 0.0 and action.draws_jitter else 0.0
 		var code: String = _precondition(npc, action, state, needs, definition, now, world.clock.world_time_sec)
 		if not code.is_empty():
 			(record[KEY_REJECTED] as Array).append({KEY_ACTION_ID: action_id, KEY_CODE: code})
 			continue
 		ranked.append(NpcUtilityScorer.score(
 			action, _settings,
-			_need_urgency(needs, action.need_kind),
+			_need_term(npc, needs, action),
 			NpcUtilityScorer.personality_fit(traits, action.personality_traits),
 			NpcUtilityScorer.environment_fit(action, hour),
 			_relationship_context(npc, action),
@@ -406,7 +489,11 @@ func _precondition(npc: NpcState, action: NpcActionDefinition, state: NpcDecisio
 		return REJECT_COOLDOWN
 	if action.requires_job and (definition == null or definition.job_role.is_empty() or not _has_work_place(npc, definition)):
 		return REJECT_NO_JOB
-	if action.min_need_urgency > 0.0 and _need_urgency(needs, action.need_kind) + URGENCY_EPSILON < action.min_need_urgency:
+	if action.requires_lone_home and (_survival == null or not _survival.is_lone(npc)):
+		return REJECT_NOT_LONE
+	if action.requires_treatment and (_survival == null or not _survival.can_treat(npc)):
+		return REJECT_NOTHING_TO_TREAT
+	if action.min_need_urgency > 0.0 and _need_term(npc, needs, action) + URGENCY_EPSILON < action.min_need_urgency:
 		return REJECT_NEED_LOW
 	if action.blocked_by_danger_need and needs != null:
 		for kind: String in NpcNeedKind.SIMULATED_KINDS:
@@ -455,6 +542,19 @@ func _night_sleep_calls(npc: NpcState, action: NpcActionDefinition, state: NpcDe
 		var other: NpcActionDefinition = _catalog.get_action(action_id)
 		if other.requires_bedtime and other.need_kind == action.need_kind and _precondition(npc, other, state, needs, definition, now, world_time_sec).is_empty():
 			return true
+	return false
+
+
+## F-29: true when the NPC could treat itself now (it is wounded, carries
+## what helps, and a treating action is not on its cooldown): that ends an
+## action that otherwise runs until it is done, like a need in danger does.
+func _treatment_calls(npc: NpcState, state: NpcDecisionComponent, now: int) -> bool:
+	if _survival == null:
+		return false
+	for action_id: String in _catalog.action_ids():
+		var action: NpcActionDefinition = _catalog.get_action(action_id)
+		if action.selectable and action.requires_treatment and not state.is_on_cooldown(action_id, now):
+			return _survival.can_treat(npc)
 	return false
 
 
@@ -548,6 +648,14 @@ func _need_urgency(needs: NpcNeeds, kind: String) -> float:
 	return NpcUtilityScorer.need_urgency(needs.value(kind), _need_settings.need_max)
 
 
+## The need term of an action: the urgency of its simulated need, or (F-29,
+## `need_is_supply_shortage`) how badly the NPC lacks supplies.
+func _need_term(npc: NpcState, needs: NpcNeeds, action: NpcActionDefinition) -> float:
+	if action.need_is_supply_shortage:
+		return _survival.supply_shortage(npc) if _survival != null else 0.0
+	return _need_urgency(needs, action.need_kind)
+
+
 ## Phase 5 (docs/05 §9.2 relationship_context): 0 until relationships
 ## change what an NPC wants.
 func _relationship_context(_npc: NpcState, _action: NpcActionDefinition) -> float:
@@ -572,6 +680,10 @@ func _other_need_in_danger(needs: NpcNeeds, own_kind: String) -> bool:
 
 func _flee_action() -> NpcActionDefinition:
 	return _catalog.get_action(_settings.flee_action_id) if not _settings.flee_action_id.is_empty() else null
+
+
+func _fight_action() -> NpcActionDefinition:
+	return _catalog.get_action(_settings.fight_action_id) if not _settings.fight_action_id.is_empty() else null
 
 
 func _min_duration_sec(action: NpcActionDefinition) -> float:

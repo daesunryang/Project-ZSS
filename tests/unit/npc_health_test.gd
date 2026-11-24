@@ -74,6 +74,10 @@ func _config() -> CompositionConfig:
 	if not _with_behaviours:
 		config.npc_behaviour = null
 	config.npc_health = _health_settings if _with_health else null
+	# The body rules alone: with F-29's survival layer an NPC treats itself by
+	# choosing an action (tests/unit/npc_scavenge_test.gd), and the self
+	# treatment rule of the health stage, which this file tests, is off.
+	config.npc_scavenge = null
 	config.gameplay = GameplaySettings.new()
 	config.gameplay.world_half_extent_m = 50.0
 	config.gameplay.player_spawn_position = SPAWN

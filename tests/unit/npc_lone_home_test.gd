@@ -11,6 +11,9 @@ extends TestCase
 ##
 ## The shipped composition and generated map, without generated zombies (an
 ## NPC flees what it sees; a zombie in the street would decide the day).
+## The two tests of living at home run without the survival layer of F-29:
+## with it the NPC leaves its house to search the neighbourhood
+## (tests/unit/npc_scavenge_test.gd).
 ## NPCs in the houses of the test map (the controlled setup of the other NPC
 ## tests): npc_cell_persistence_test.gd, npc_behaviour_day_test.gd.
 
@@ -559,7 +562,7 @@ func test_npcs_that_were_busy_in_the_test_map_go_on_living_after_they_were_moved
 	before.finish()
 	# The next start has the generated map: they come into memory around the
 	# observer and are moved.
-	var run: NpcLifeRun = NpcLifeRun.begin_on_disk(WORLD, _root, TICK, _procedural())
+	var run: NpcLifeRun = NpcLifeRun.begin_on_disk(WORLD, _root, TICK, _procedural(), false)
 	assert_not_null(run, "the old save loads")
 	if run == null:
 		return
@@ -599,7 +602,7 @@ func test_npcs_that_were_busy_in_the_test_map_go_on_living_after_they_were_moved
 # ------------------------------------------------------------ living there
 
 func test_a_lone_npc_eats_drinks_and_sleeps_in_its_house_and_nothing_sends_it_to_work() -> void:
-	var run: NpcLifeRun = NpcLifeRun.begin_in_memory(WORLD, TICK, 0, _procedural())
+	var run: NpcLifeRun = NpcLifeRun.begin_in_memory(WORLD, TICK, 0, _procedural(), false)
 	assert_not_null(run, "the world could be made")
 	if run == null:
 		return

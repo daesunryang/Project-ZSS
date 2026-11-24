@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="NpcActionDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/decision/npc_action_definition.gd" id="1_action"]
+
+[resource]
+script = ExtResource("1_action")
+action_id = "treat"
+fixed_priority = 70
+base_priority = 1.0
+requires_treatment = true
+draws_jitter = false
+min_duration_sec = 4.0
+retry_cooldown_sec = 5.0

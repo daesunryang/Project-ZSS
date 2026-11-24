@@ -84,6 +84,22 @@ const ID_MAX_LENGTH: int = 32
 ## or it just failed), the NPC may lie down all the same.
 @export var yields_to_danger_need: bool = false
 
+@export_group("Survival (F-29, docs/09 §17.14)")
+## True: the need term of this action is the NPC's supply shortage
+## (NpcSurvivalSense.supply_shortage, 0..1) instead of the urgency of a
+## simulated need; `need_kind` stays empty and `min_need_urgency` is
+## compared with the shortage.
+@export var need_is_supply_shortage: bool = false
+## Only an NPC that lives alone in a generated building (F-28) may choose it.
+@export var requires_lone_home: bool = false
+## Only an NPC that is wounded or infected AND carries an item that would
+## treat it now may choose it.
+@export var requires_treatment: bool = false
+## False: no number of the NPC's generator is drawn for this action (its
+## jitter term is 0). The actions added after Phase 4 are like this, so that
+## adding one does not change what the NPCs of an older world draw.
+@export var draws_jitter: bool = true
+
 @export_group("Keeping")
 ## True: once started, the utility choice neither replaces nor stops the
 ## action for as long as it runs: its preconditions (min_need_urgency) and
@@ -119,8 +135,10 @@ func validate() -> PackedStringArray:
 			errors.append("npc action %s: %s must be within 0..1" % [action_id, entry[0]])
 	if not need_kind.is_empty() and not NpcNeedKind.is_simulated(need_kind):
 		errors.append("npc action %s: need_kind '%s' is not a simulated need" % [action_id, need_kind])
-	if need_kind.is_empty() and (need_weight > 0.0 or min_need_urgency > 0.0):
+	if need_kind.is_empty() and not need_is_supply_shortage and (need_weight > 0.0 or min_need_urgency > 0.0):
 		errors.append("npc action %s: a need weight or minimum without need_kind" % action_id)
+	if need_is_supply_shortage and not need_kind.is_empty():
+		errors.append("npc action %s: need_is_supply_shortage and need_kind exclude each other" % action_id)
 	for trait_name: Variant in personality_traits:
 		var weight: Variant = personality_traits[trait_name]
 		if typeof(trait_name) != TYPE_STRING or not NpcDefinition.PERSONALITY_TRAITS.has(str(trait_name)):

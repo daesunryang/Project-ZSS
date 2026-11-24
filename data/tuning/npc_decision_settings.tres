@@ -13,6 +13,7 @@ recover_cooldown_sec = 1.0
 retry_cooldown_sec = 10.0
 retry_cooldown_max_sec = 120.0
 flee_action_id = "flee"
+fight_action_id = "fight"
 threat_sight_range_m = 15.0
 threat_check_period_sec = 0.5
 day_length_world_sec = 86400.0

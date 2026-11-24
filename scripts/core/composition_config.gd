@@ -122,6 +122,10 @@ var npc_health: NpcHealthSettings = null
 ## building. Without a generated map (tests, tools) they live on the home
 ## spots their definitions name.
 var npc_homes: NpcHomeSettings
+## F-29 (docs/09 §17.14): survival first: scavenging, danger memories, self
+## treatment by choice, fighting when cornered. null = none of it (the NPCs
+## behave as before F-29). Needs `npc_behaviour`.
+var npc_scavenge: NpcScavengeSettings = null
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -172,6 +176,7 @@ static func from_defaults() -> CompositionConfig:
 	config.npc_behaviour = NpcBehaviourSettings.load_or_default()
 	config.npc_health = NpcHealthSettings.load_or_default()
 	config.npc_homes = NpcHomeSettings.load_or_default()
+	config.npc_scavenge = NpcScavengeSettings.load_or_default()
 	return config
 
 
@@ -205,6 +210,9 @@ func _validate_npcs() -> PackedStringArray:
 	if npc_homes != null:
 		errors.append_array(npc_homes.validate())
 		errors.append_array(npc_homes.validate_against(catalog))
+	if npc_scavenge != null:
+		errors.append_array(npc_scavenge.validate())
+		errors.append_array(npc_scavenge.validate_against(navigation))
 	if npc_roster != null:
 		errors.append_array(npc_roster.validate())
 		errors.append_array(npc_roster.validate_against(npc_definitions, map_content, StructureGrid.new(building.grid_module_m), npc.max_npcs))

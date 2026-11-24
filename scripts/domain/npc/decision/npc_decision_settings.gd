@@ -40,6 +40,13 @@ const DEFAULT_PATH: String = "res://data/tuning/npc_decision_settings.tres"
 ## (bucketed like the decisions).
 @export_range(0.05, 600.0, 0.05, "suffix:s") var threat_check_period_sec: float = 0.5
 
+@export_group("Hard interrupt: cornered (F-29)")
+## The action an NPC starts when a zombie is adjacent and fleeing is blocked
+## or fails ("" = NPCs never fight). When and how near is
+## NpcScavengeSettings (fight_range_m, fight_after_fleeing_sec); without an
+## NpcSurvivalSense on the decider nobody fights.
+@export var fight_action_id: String = ""
+
 @export_group("Environment")
 ## Calendar seconds of one day (the hours of an action's window).
 @export_range(1.0, 10000000.0) var day_length_world_sec: float = 86400.0
@@ -73,7 +80,7 @@ func validate() -> PackedStringArray:
 		errors.append("npc decision night_sleep_window_hours must be at most 24")
 	if errors.is_empty() and retry_cooldown_max_sec < retry_cooldown_sec:
 		errors.append("npc decision retry_cooldown_max_sec must be >= retry_cooldown_sec")
-	for entry: Array in [["fallback_action_id", fallback_action_id], ["flee_action_id", flee_action_id]]:
+	for entry: Array in [["fallback_action_id", fallback_action_id], ["flee_action_id", flee_action_id], ["fight_action_id", fight_action_id]]:
 		if not str(entry[1]).is_empty() and not NpcComponent.is_valid_id(str(entry[1])):
 			errors.append("npc decision %s must be snake_case or empty" % str(entry[0]))
 	if record_capacity < 1 or record_top_candidates < 1:
@@ -88,7 +95,7 @@ func validate_against(actions: NpcActionCatalog) -> PackedStringArray:
 	if actions == null:
 		errors.append("npc decision: no action catalog")
 		return errors
-	for entry: Array in [["fallback_action_id", fallback_action_id], ["flee_action_id", flee_action_id]]:
+	for entry: Array in [["fallback_action_id", fallback_action_id], ["flee_action_id", flee_action_id], ["fight_action_id", fight_action_id]]:
 		if not str(entry[1]).is_empty() and not actions.has(str(entry[1])):
 			errors.append("npc decision %s '%s' is not an action" % [entry[0], entry[1]])
 	return errors

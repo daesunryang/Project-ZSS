@@ -144,6 +144,7 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# executor, so the NPCs decide and act from here on. Without
 	# config.npc_behaviour (tests that want NPCs to stand still) nothing is
 	# installed and the decider chooses nothing.
+	var npc_survival: NpcSurvivalSense = null
 	if config.npc_behaviour != null:
 		var npc_behaviours: NpcBehaviours = NpcBehaviours.install(npcs, config.npc_behaviour, npc_executor, config.catalog, StructureGrid.new(config.building.grid_module_m), config.npc_spots, config.map_content, npc_homes)
 		if npc_behaviours == null:
@@ -153,6 +154,18 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 		# (A decider that was made with an executor of its own keeps it.)
 		if npc_decider is NpcUtilityDecider and (npc_decider as NpcUtilityDecider).executor() == null:
 			(npc_decider as NpcUtilityDecider).set_executor(npc_behaviours.action_executor())
+		# F-29 (docs/09 §17.14): survival first. An NPC that lives alone
+		# searches the buildings around its home, every NPC remembers where
+		# it met zombies, treats itself by choice and fights when it is
+		# cornered. Without config.npc_scavenge none of that exists.
+		if config.npc_scavenge != null:
+			if npcs.register_component(NpcScavengeState.COMPONENT_ID, NpcScavengeState.make) != OK:
+				return null
+			npc_survival = NpcSurvivalSense.new(config.npc_scavenge, npc_homes, config.melee_weapons)
+			npc_survival.attach(world, npcs)
+			npc_behaviours.enable_survival(npc_survival, NpcFighting.new(config.melee_weapons, config.combat))
+			if npc_decider is NpcUtilityDecider:
+				(npc_decider as NpcUtilityDecider).set_survival(npc_survival)
 
 	# F-25 (docs/09 §17.12): the NPCs' bodies, LAST of the NPC stages: what a
 	# tick did to an NPC is in its vitals before the tick ends. Zombies and
@@ -161,6 +174,12 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 		var npc_health: NpcHealth = NpcHealth.install(npcs, config.survival, config.npc_health)
 		if npc_health == null:
 			return null
+		if npc_survival != null:
+			# F-29: a zombie's hit is remembered where it happened, and an NPC
+			# whose decision layer has an action that treats it uses that
+			# instead of the stage's own rule.
+			npc_health.npc_damaged.connect(npc_survival.on_npc_damaged)
+			npc_health.self_treat_by_action = npc_decider is NpcUtilityDecider and (npc_decider as NpcUtilityDecider).has_treat_action()
 		if zombies.add_target_source(NpcZombieTargets.new(npc_health)) != OK:
 			return null
 		var combat: CombatService = world.get_system(CombatService.SYSTEM_ID) as CombatService

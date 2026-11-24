@@ -1,0 +1,24 @@
+[gd_resource type="Resource" script_class="NpcActionDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/decision/npc_action_definition.gd" id="1_action"]
+
+[resource]
+script = ExtResource("1_action")
+action_id = "scavenge"
+fixed_priority = 20
+base_priority = 0.02
+need_weight = 0.55
+personality_traits = {
+"conscientiousness": 1.0,
+"risk_tolerance": 1.0
+}
+personality_weight = 0.12
+active_from_hour = 6.0
+active_until_hour = 20.0
+environment_weight = 0.04
+need_is_supply_shortage = true
+requires_lone_home = true
+draws_jitter = false
+runs_until_done = true
+min_duration_sec = 10.0
+retry_cooldown_sec = 30.0

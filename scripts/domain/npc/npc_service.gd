@@ -499,6 +499,19 @@ func seeded_home(roster_id: String, definition_id: String) -> String:
 	return str(((_rosters.get(roster_id, {}) as Dictionary).get(KEY_HOMES, {}) as Dictionary).get(definition_id, ""))
 
 
+## True when this world chose the generated building as the home of an NPC
+## of a roster (F-29: nobody searches somebody else's home).
+func is_seeded_home(building_id: String) -> bool:
+	if building_id.is_empty():
+		return false
+	for roster_id: String in _rosters:
+		var homes: Dictionary = (_rosters[roster_id] as Dictionary).get(KEY_HOMES, {})
+		for definition_id: Variant in homes:
+			if str(homes[definition_id]) == building_id:
+				return true
+	return false
+
+
 ## Number of NPCs in memory that wait to be moved to their generated home.
 func pending_relocation_count() -> int:
 	return _pending_relocations.size()

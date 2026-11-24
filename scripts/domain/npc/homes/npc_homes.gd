@@ -162,3 +162,26 @@ func generated_spot_position(spot_id: String) -> Variant:
 	if layout == null or _grid == null:
 		return null
 	return _grid.tile_center(layout.origin_tile + spot.tile_offset)
+
+
+# ------------------------------------------------------------ any generated building
+
+## The middle of a generated building (Vector3), or null (F-29: how far a
+## building is, and which cell it stands in; a building never crosses a
+## cell border).
+func building_center(building_id: String) -> Variant:
+	var layout: NpcHomeLayout = layout_of(building_id)
+	if layout == null or _grid == null:
+		return null
+	var low: Vector3 = _grid.tile_center(layout.origin_tile)
+	var high: Vector3 = _grid.tile_center(layout.origin_tile + layout.size_tiles - Vector2i.ONE)
+	return (low + high) * 0.5
+
+
+## Where somebody stands to search the container at `index` of a generated
+## building (Vector3: the container's own tile), or null.
+func container_position(building_id: String, index: int) -> Variant:
+	var layout: NpcHomeLayout = layout_of(building_id)
+	if layout == null or _grid == null or index < 0 or index >= layout.food_offsets.size():
+		return null
+	return _grid.tile_center(layout.origin_tile + layout.food_offsets[index])

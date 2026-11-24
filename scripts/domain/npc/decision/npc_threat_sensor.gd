@@ -7,7 +7,10 @@ extends NpcStage
 ## (NpcThreatSense); when it sees one and could flee, the sensor asks the
 ## scheduler for a decision at once (interrupt "threat_seen"). The decider
 ## then looks again itself and starts the flee action: the sensor decides
-## nothing and changes no NPC.
+## nothing and changes no NPC. F-29: an NPC that cannot start to flee (it
+## flees already, or the flee action just failed) but could fight is looked
+## at too, and a decision is asked for when the zombie is adjacent
+## (NpcUtilityDecider.fight_alert_range): that decision finds it cornered.
 ##
 ## No state of its own: the slots come from the scheduler's saved clock, so
 ## a restored run looks at the same NPCs in the same ticks. Without an
@@ -73,10 +76,15 @@ func step(world: ServerWorld, npcs: NpcService, action_delta: float, _world_delt
 				continue
 			var npc: NpcState = npcs.get_npc(npc_id)
 			var state: NpcDecisionComponent = npc.component(NpcDecisionComponent.COMPONENT_ID) as NpcDecisionComponent
-			if not _decider.may_start_fleeing(state, now):
+			var may_flee: bool = _decider.may_start_fleeing(state, now)
+			var fight_range_m: float = _decider.fight_alert_range(state, now)
+			if not may_flee and fight_range_m <= 0.0:
 				continue
 			check_count += 1
 			last_check_count += 1
-			if not NpcThreatSense.nearest_visible(world, npc.position, _settings.threat_sight_range_m, zombies).is_empty() and scheduler.request_interrupt(npc_id, NpcUtilityDecider.REASON_THREAT_SEEN):
+			var threat: Dictionary = NpcThreatSense.nearest_visible(world, npc.position, _settings.threat_sight_range_m, zombies)
+			if threat.is_empty() or not (may_flee or float(threat[NpcThreatSense.KEY_DISTANCE]) <= fight_range_m):
+				continue
+			if scheduler.request_interrupt(npc_id, NpcUtilityDecider.REASON_THREAT_SEEN):
 				alert_count += 1
 	last_step_usec = Time.get_ticks_usec() - started_usec
