@@ -1006,7 +1006,8 @@ func _request_use(kind: ConsumeIntentPolicy.Kind) -> void:
 	if mode == ConsumeIntentPolicy.UseMode.ON_SELF:
 		_inventory_module.request_consume(item_id)
 		return
-	var target_id: String = _treat_target_id()
+	# F-25: a treatment may also be meant for a living NPC in reach.
+	var target_id: String = _treat_target_id(kind == ConsumeIntentPolicy.Kind.BANDAGE or kind == ConsumeIntentPolicy.Kind.CURE)
 	if target_id.is_empty():
 		_show_consume_text(ClientPresentationFormatter.no_treat_target_text())
 		return
@@ -1016,7 +1017,7 @@ func _request_use(kind: ConsumeIntentPolicy.Kind) -> void:
 ## The player a "use on another player" key would name now: the nearest
 ## other living player in the camera direction within reach, in the mirror
 ## ("" = nobody). A suggestion only; the server decides.
-func _treat_target_id() -> String:
+func _treat_target_id(include_npcs: bool = false) -> String:
 	if _state == null or _state.local_player_id.is_empty():
 		return TreatTargetPolicy.NO_TARGET
 	var dead: PackedStringArray = []
@@ -1024,7 +1025,15 @@ func _treat_target_id() -> String:
 		for player_id: String in _state.players:
 			if _survival_state.has_player(player_id) and not _survival_state.is_alive(player_id):
 				dead.append(player_id)
-	return TreatTargetPolicy.pick_target(_state.local_player_id, _state.players, dead, _yaw, _presentation.treat_target_range_m, deg_to_rad(_presentation.treat_target_half_angle_deg))
+	var candidates: Dictionary = _state.players
+	if include_npcs and _npc_state != null:
+		# F-25: the mirrored NPCs that are not bodies, beside the players
+		# (TreatTargetPolicy only reads ids and positions).
+		candidates = _state.players.duplicate()
+		for npc_id: String in _npc_state.npcs:
+			if not _npc_state.is_dead(npc_id):
+				candidates[npc_id] = _npc_state.npcs[npc_id]
+	return TreatTargetPolicy.pick_target(_state.local_player_id, candidates, dead, _yaw, _presentation.treat_target_range_m, deg_to_rad(_presentation.treat_target_half_angle_deg))
 
 
 ## Keeps the HUD's "treat target" line current: the candidate changes when

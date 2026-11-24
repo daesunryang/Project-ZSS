@@ -54,6 +54,14 @@ extends ServerSystem
 ## When sight and sound happen in the same decision, sight wins and the
 ## noise is discarded (it will not be investigated later).
 ##
+## Targets that are not players (F-25, docs/09 §17.12): what a registered
+## ZombieTargetSource lists (the living, awake NPCs) is seen, chased and
+## attacked by the same rules, with the same rolls and numbers. Its id is
+## kept where a player's id is (ZombieState.target_player_id, `target_id`
+## of the events), so nothing of the save format changes. `infection` of
+## zombie_attacked is then what the source answered ("npc_infected", ...).
+## Without a source (tests, a world without NPC health) nothing changes.
+##
 ## Events (drain_events; every event has event_type, zombie_id, world_time;
 ## positions are [x, y, z] arrays, all values JSON-safe):
 ##   zombie_spawned        {position, yaw}
@@ -197,6 +205,9 @@ var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 ## over, so the step never changes the zombie set it is working on.
 var _stepping: bool = false
 var _pending_player_zombies: Array[Dictionary] = []
+## Who else than players can be sensed and attacked (F-25), in the order
+## they were added.
+var _target_sources: Array[ZombieTargetSource] = []
 ## Ephemeral paths, resumable searches and planning deadlines. They are not
 ## saved: a loaded zombie plans against structures currently in memory.
 var _navigation_states: Dictionary[String, _NavigationState] = {}
@@ -239,6 +250,15 @@ func get_system_id() -> String:
 
 
 # ------------------------------------------------------------ public API
+
+## Lets zombies sense and attack what `source` lists besides players (F-25:
+## the NPCs). Added once, by ServerComposition, before the world runs.
+func add_target_source(source: ZombieTargetSource) -> Error:
+	if source == null or _target_sources.has(source):
+		return ERR_INVALID_PARAMETER
+	_target_sources.append(source)
+	return OK
+
 
 ## Creates a zombie at `position` (clamped into the world) facing `yaw`.
 ## Success event: zombie_spawned. Fails on non-finite input or when
@@ -479,6 +499,8 @@ func _step_zombies(world: ServerWorld, action_delta: float) -> void:
 	context.survival = world.get_system(SurvivalService.SYSTEM_ID) as SurvivalService
 	context.noise = world.get_system(NoiseService.SYSTEM_ID) as NoiseService
 	context.online_ids = world.online_player_ids()
+	for source: ZombieTargetSource in _target_sources:
+		context.other_ids.append_array(source.target_ids())
 	while not _ai_queue.is_empty() and last_ai_update_count < _settings.max_ai_updates_per_tick:
 		var zombie_id: String = _ai_queue.pop_front()
 		_ai_queued.erase(zombie_id)
@@ -703,7 +725,7 @@ func _think(context: _Context, zombie: ZombieState) -> void:
 	if not zombie.alerted_by.is_empty():
 		if _is_valid_target(context, zombie.alerted_by):
 			alert_id = zombie.alerted_by
-			alert_position = context.world.get_player(alert_id).position
+			alert_position = _target_position(context, alert_id)
 			_face(zombie, alert_position)
 		zombie.alerted_by = ""
 	# Distance is the target-loss rule for an existing pursuit. Once the
@@ -711,7 +733,7 @@ func _think(context: _Context, zombie: ZombieState) -> void:
 	# the break; another visible player may still take priority as before.
 	var ignored_sight_id: String = ""
 	if had_target and _is_valid_target(context, zombie.target_player_id):
-		var tracked_position: Vector3 = context.world.get_player(zombie.target_player_id).position
+		var tracked_position: Vector3 = _target_position(context, zombie.target_player_id)
 		if ZombiePerception.flat_distance(zombie.position, tracked_position) > _settings.pursuit_break_distance_m:
 			ignored_sight_id = zombie.target_player_id
 	var seen_id: String = _visible_target(context, zombie, ignored_sight_id)
@@ -752,7 +774,7 @@ func _think(context: _Context, zombie: ZombieState) -> void:
 
 
 func _on_target_seen(context: _Context, zombie: ZombieState, target_id: String) -> void:
-	var target_position: Vector3 = context.world.get_player(target_id).position
+	var target_position: Vector3 = _target_position(context, target_id)
 	var engaged: bool = zombie.state == ZombieState.State.CHASE or zombie.state == ZombieState.State.ATTACK
 	if not engaged or not zombie.target_visible or zombie.target_player_id != target_id:
 		_push_event(EVENT_DETECTED, zombie.zombie_id, {"sense": SENSE_SIGHT, "target_id": target_id, "position": _to_array(target_position)})
@@ -776,6 +798,10 @@ func _on_target_seen(context: _Context, zombie: ZombieState, target_id: String) 
 ## Builds the DamageInput on the server and hands it to survival; the
 ## zombie never writes player health itself.
 func _attack(context: _Context, zombie: ZombieState, target_id: String) -> void:
+	var source: ZombieTargetSource = _source_of(target_id)
+	if source != null:
+		_attack_other(context, zombie, target_id, source)
+		return
 	var target: PlayerState = context.world.get_player(target_id)
 	if target == null or context.world.is_line_blocked(zombie.position, target.position):
 		return
@@ -804,6 +830,35 @@ func _attack(context: _Context, zombie: ZombieState, target_id: String) -> void:
 	})
 
 
+## The same attack on a target that is not a player (F-25): the same rolls
+## from the zombie's own generator, the same damage numbers and the same
+## event; what the wound and the exposure do is the target's own rule
+## (ZombieTargetSource.receive_attack).
+func _attack_other(context: _Context, zombie: ZombieState, target_id: String, source: ZombieTargetSource) -> void:
+	if context.world.is_line_blocked(zombie.position, source.target_position(target_id)):
+		return
+	zombie.attack_ready_at = context.now + _settings.attack_cooldown_sec
+	var is_bite: bool = zombie.rng.randf() < _settings.bite_chance
+	var part_name: String = _settings.attack_body_parts[zombie.rng.randi_range(0, _settings.attack_body_parts.size() - 1)]
+	var wound_type: Wound.Type = Wound.Type.BITE if is_bite else Wound.Type.SCRATCH
+	var amount: float = _settings.bite_damage if is_bite else _settings.scratch_damage
+	var damage: DamageInput = DamageInput.create(zombie.zombie_id, BodyPart.from_name(part_name) as BodyPart.Part, wound_type, amount)
+	var exposure: InfectionState.Exposure = InfectionState.Exposure.BITE if is_bite else InfectionState.Exposure.SCRATCH
+	var hit: ActionResult = source.receive_attack(target_id, damage, exposure)
+	if not hit.ok:
+		GameLogger.warning("zombie", "attack rejected by the target", {"entity_id": zombie.zombie_id, "target_id": target_id, "reason": hit.reason, "operation": "attack"})
+		return
+	_push_event(EVENT_ATTACKED, zombie.zombie_id, {
+		"target_id": target_id,
+		"wound_type": Wound.type_name(wound_type),
+		"body_part": part_name,
+		"damage": amount,
+		"target_health_after": float(hit.event.get("health_after", 0.0)),
+		"target_died": bool(hit.event.get("died", false)),
+		"infection": str(hit.event.get("infection", "")),
+	})
+
+
 ## Keeps an existing pursuit without using sight. Returns false when the
 ## target is dead/offline or strictly beyond the configured break distance.
 ## Damage, sound and a different visible target have already had their
@@ -811,7 +866,7 @@ func _attack(context: _Context, zombie: ZombieState, target_id: String) -> void:
 func _continue_pursuit(context: _Context, zombie: ZombieState) -> bool:
 	if not _is_valid_target(context, zombie.target_player_id):
 		return false
-	var target_position: Vector3 = context.world.get_player(zombie.target_player_id).position
+	var target_position: Vector3 = _target_position(context, zombie.target_player_id)
 	if ZombiePerception.flat_distance(zombie.position, target_position) > _settings.pursuit_break_distance_m:
 		return false
 	zombie.focus_position = target_position
@@ -845,6 +900,22 @@ func _visible_target(context: _Context, zombie: ZombieState, ignored_player_id: 
 		if distance < best_distance:
 			best_distance = distance
 			best_id = player_id
+	# Targets that are not players (F-25: NPCs), by the same rule. A player
+	# at the same distance wins: it was looked at first.
+	for target_id: String in context.other_ids:
+		if target_id == ignored_player_id or _source_of(target_id) == null:
+			continue
+		var target_position: Vector3 = _target_position(context, target_id)
+		if not ZombiePerception.can_see(zombie.position, zombie.yaw, target_position, _sight_range_to(context, zombie, target_id), half_angle):
+			continue
+		if context.world.is_line_blocked(zombie.position, target_position):
+			continue
+		if target_id == zombie.target_player_id:
+			return target_id
+		var target_distance: float = ZombiePerception.flat_distance(zombie.position, target_position)
+		if target_distance < best_distance:
+			best_distance = target_distance
+			best_id = target_id
 	return best_id
 
 
@@ -858,18 +929,40 @@ func _visible_target(context: _Context, zombie: ZombieState, ignored_player_id: 
 ## lying down in front of a zombie that already sees you does not hide you:
 ## the chase ends only out of its full range or view cone.
 func _sight_range_to(context: _Context, zombie: ZombieState, player_id: String) -> float:
-	var visibility: float = clampf(context.world.player_visibility_multiplier(player_id), 0.0, 1.0)
+	var source: ZombieTargetSource = _source_of(player_id)
+	var visibility: float = clampf(source.target_visibility(player_id) if source != null else context.world.player_visibility_multiplier(player_id), 0.0, 1.0)
 	var engaged: bool = zombie.state == ZombieState.State.CHASE or zombie.state == ZombieState.State.ATTACK
 	if engaged and zombie.target_visible and zombie.target_player_id == player_id:
 		visibility = maxf(visibility, _settings.tracked_target_min_visibility)
 	return _settings.effective_sight_range_m() * visibility
 
 
-## Only living, online players can be sensed or attacked.
+## Only living, online players can be sensed or attacked, and what a
+## registered target source says is a target now (F-25).
 func _is_valid_target(context: _Context, player_id: String) -> bool:
+	if _source_of(player_id) != null:
+		return true
 	if not context.world.is_online(player_id) or context.world.get_player(player_id) == null:
 		return false
 	return context.survival == null or context.survival.is_alive(player_id)
+
+
+## The source `target_id` is a target of now (null = a player, or nobody).
+func _source_of(target_id: String) -> ZombieTargetSource:
+	if target_id.is_empty():
+		return null
+	for source: ZombieTargetSource in _target_sources:
+		if source.is_target(target_id):
+			return source
+	return null
+
+
+## Where a valid target (_is_valid_target) is.
+func _target_position(context: _Context, target_id: String) -> Vector3:
+	var source: ZombieTargetSource = _source_of(target_id)
+	if source != null:
+		return source.target_position(target_id)
+	return context.world.get_player(target_id).position
 
 
 ## Strongest noise newer than the last one this zombie reacted to (null =
@@ -1173,6 +1266,9 @@ func _cancel_navigation(zombie_id: String) -> void:
 ## is blocked. The saved focus position remains the fallback and the place
 ## searched after the pursuit breaks.
 func _tracked_target_position(world: ServerWorld, zombie: ZombieState) -> Vector3:
+	var source: ZombieTargetSource = _source_of(zombie.target_player_id)
+	if source != null:
+		return source.target_position(zombie.target_player_id)
 	if world.is_online(zombie.target_player_id):
 		var player: PlayerState = world.get_player(zombie.target_player_id)
 		if player != null:
@@ -1261,4 +1357,6 @@ class _Context extends RefCounted:
 	var survival: SurvivalService = null
 	var noise: NoiseService = null
 	var online_ids: PackedStringArray = []
+	## Targets of the registered sources (F-25), as of the start of the step.
+	var other_ids: PackedStringArray = []
 	var now: float = 0.0

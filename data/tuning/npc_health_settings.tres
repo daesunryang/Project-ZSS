@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="NpcHealthSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/health/npc_health_settings.gd" id="1_npc_health"]
+
+[resource]
+script = ExtResource("1_npc_health")
+hurt_health_fraction = 0.5
+melee_body_part = "torso"
+infected_rise = true
+bitten_rise = true
+rise_chance = 1.0
+rise_delay_world_sec = 1440.0
+body_remove_delay_world_sec = 86400.0
+rise_retry_world_sec = 240.0
+self_treat_enabled = true
+self_treat_cooldown_world_sec = 240.0
+witness_range_m = 30.0
+death_memory_importance = 0.9
+death_memory_intensity = 0.8
+witness_fear = 0.4
+witness_grief = 0.3

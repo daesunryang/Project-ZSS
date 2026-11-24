@@ -51,7 +51,9 @@ func sync(npcs: Dictionary) -> void:
 		var npc_id: String = ids[index]
 		var entry: Dictionary = _entries[npc_id]
 		var posture: String = str(entry[NpcNetProtocol.KEY_POSTURE])
-		var lying: bool = posture != NpcNetProtocol.POSTURE_STANDING
+		# F-25: a dead NPC is its body, lying where it fell.
+		var condition: String = str(entry.get(NpcNetProtocol.KEY_CONDITION, NpcNetProtocol.CONDITION_OK))
+		var lying: bool = posture != NpcNetProtocol.POSTURE_STANDING or condition == NpcNetProtocol.CONDITION_DEAD
 		var center_height: float = _settings.npc_capsule_radius_m if lying else _settings.npc_capsule_height_m * 0.5
 		var tilt: float = _settings.npc_lying_tilt_rad if lying else 0.0
 		var basis := Basis.from_euler(Vector3(tilt, float(entry[NpcNetProtocol.KEY_YAW]), 0.0))
@@ -106,7 +108,18 @@ func _sync_labels() -> void:
 			_root.add_child(anchor)
 			_labels[npc_id] = anchor
 		anchor.position = entry[NpcNetProtocol.KEY_POSITION]
-		(anchor.get_node(LABEL_NODE) as Label3D).text = str(entry[NpcNetProtocol.KEY_NAME])
+		(anchor.get_node(LABEL_NODE) as Label3D).text = tag_text(str(entry[NpcNetProtocol.KEY_NAME]), str(entry.get(NpcNetProtocol.KEY_CONDITION, NpcNetProtocol.CONDITION_OK)), _settings)
+
+
+## The name tag of an NPC: its name, and what can be seen of its body
+## (F-25: hurt or dead) after it.
+static func tag_text(display_name: String, condition: String, settings: ClientPresentationSettings) -> String:
+	match condition:
+		NpcVitals.CONDITION_HURT:
+			return display_name + settings.npc_hurt_tag_suffix
+		NpcVitals.CONDITION_DEAD:
+			return display_name + settings.npc_dead_tag_suffix
+	return display_name
 
 
 func _is_drawable(value: Variant) -> bool:

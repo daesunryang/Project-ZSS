@@ -7,9 +7,14 @@ extends RefCounted
 ##
 ## Full public row (join fragment and npc_entered):
 ##   [npc_id, Korean/display name, appearance selection, position, yaw,
-##    action-label index, posture index]
+##    action-label index, posture index, condition index]
 ## Position snapshot row (5 Hz, channel 2): [npc_id, position, yaw]. Static
 ## identity is not repeated. Observable action-label changes use channel 0.
+##
+## Condition (F-25, docs/09 §17.12): all that anybody is told of an NPC's
+## body is one of CONDITIONS - "ok", "hurt" (it bleeds or is badly hurt) or
+## "dead" (the entity is the body). Health numbers, wounds and infection
+## never leave the server. A change is the npc_condition_changed event.
 
 const MAX_ROWS_PER_MESSAGE: int = 64
 const MAX_EVENTS_PER_MESSAGE: int = 64
@@ -23,6 +28,9 @@ const ACTION_LABELS: PackedStringArray = ["idle", "walk", "eat", "sleep", "work"
 const ACTION_IDLE: String = "idle"
 const POSTURES: PackedStringArray = PlayerPosture.NAMES
 const POSTURE_STANDING: String = "standing"
+const CONDITIONS: PackedStringArray = [NpcVitals.CONDITION_OK, NpcVitals.CONDITION_HURT, NpcVitals.CONDITION_DEAD]
+const CONDITION_OK: String = NpcVitals.CONDITION_OK
+const CONDITION_DEAD: String = NpcVitals.CONDITION_DEAD
 
 const KEY_TICK: String = "tick"
 const KEY_EVENT_SEQUENCE: String = "event_sequence"
@@ -37,10 +45,12 @@ const KEY_POSITION: String = "position"
 const KEY_YAW: String = "yaw"
 const KEY_ACTION_LABEL: String = "action_label"
 const KEY_POSTURE: String = "posture"
+const KEY_CONDITION: String = "condition"
 
 const EVENT_ENTERED: String = "npc_entered"
 const EVENT_LEFT: String = "npc_left"
 const EVENT_ACTION_CHANGED: String = "npc_action_changed"
+const EVENT_CONDITION_CHANGED: String = "npc_condition_changed"
 
 const REASON_BAD_ROW: String = "bad_row"
 const REASON_BAD_EVENT: String = "bad_event"
@@ -55,7 +65,8 @@ const PUBLIC_POSITION: int = 3
 const PUBLIC_YAW: int = 4
 const PUBLIC_ACTION: int = 5
 const PUBLIC_POSTURE: int = 6
-const PUBLIC_ROW_SIZE: int = 7
+const PUBLIC_CONDITION: int = 7
+const PUBLIC_ROW_SIZE: int = 8
 
 const SNAPSHOT_ID: int = 0
 const SNAPSHOT_POSITION: int = 1
@@ -68,6 +79,7 @@ const SNAPSHOT_ROW_SIZE: int = 3
 static func encode_public_row(source: Dictionary) -> Array:
 	var action_index: int = ACTION_LABELS.find(str(source.get(KEY_ACTION_LABEL, "")))
 	var posture_index: int = POSTURES.find(str(source.get(KEY_POSTURE, "")))
+	var condition_index: int = CONDITIONS.find(str(source.get(KEY_CONDITION, "")))
 	var row: Array = [
 		source.get(KEY_NPC_ID, null),
 		source.get(KEY_NAME, null),
@@ -76,6 +88,7 @@ static func encode_public_row(source: Dictionary) -> Array:
 		_float_number(source.get(KEY_YAW, null)),
 		action_index,
 		posture_index,
+		condition_index,
 	]
 	return row if public_row_error(row).is_empty() else []
 
@@ -94,6 +107,8 @@ static func public_row_error(value: Variant) -> String:
 		return REASON_BAD_ROW
 	if typeof(row[PUBLIC_POSTURE]) != TYPE_INT or int(row[PUBLIC_POSTURE]) < 0 or int(row[PUBLIC_POSTURE]) >= POSTURES.size():
 		return REASON_BAD_ROW
+	if typeof(row[PUBLIC_CONDITION]) != TYPE_INT or int(row[PUBLIC_CONDITION]) < 0 or int(row[PUBLIC_CONDITION]) >= CONDITIONS.size():
+		return REASON_BAD_ROW
 	return ""
 
 
@@ -106,6 +121,7 @@ static func decode_public_row(row: Array) -> Dictionary:
 		KEY_YAW: float(row[PUBLIC_YAW]),
 		KEY_ACTION_LABEL: ACTION_LABELS[int(row[PUBLIC_ACTION])],
 		KEY_POSTURE: POSTURES[int(row[PUBLIC_POSTURE])],
+		KEY_CONDITION: CONDITIONS[int(row[PUBLIC_CONDITION])],
 	}
 
 
@@ -158,6 +174,16 @@ static func action_changed_event(npc_id: String, action_label: String, world_tim
 	return event if event_error(event).is_empty() else {}
 
 
+static func condition_changed_event(npc_id: String, condition: String, world_time: float) -> Dictionary:
+	var event: Dictionary = {
+		KEY_EVENT_TYPE: EVENT_CONDITION_CHANGED,
+		KEY_NPC_ID: npc_id,
+		KEY_WORLD_TIME: world_time,
+		KEY_CONDITION: condition,
+	}
+	return event if event_error(event).is_empty() else {}
+
+
 ## Client: exact event validation. Unknown fields are rejected so a server
 ## bug cannot silently expose a new NPC detail.
 static func event_error(value: Variant) -> String:
@@ -165,7 +191,7 @@ static func event_error(value: Variant) -> String:
 		return REASON_BAD_EVENT
 	var event: Dictionary = value
 	var event_type: Variant = event.get(KEY_EVENT_TYPE, null)
-	if typeof(event_type) != TYPE_STRING or not [EVENT_ENTERED, EVENT_LEFT, EVENT_ACTION_CHANGED].has(str(event_type)):
+	if typeof(event_type) != TYPE_STRING or not [EVENT_ENTERED, EVENT_LEFT, EVENT_ACTION_CHANGED, EVENT_CONDITION_CHANGED].has(str(event_type)):
 		return REASON_BAD_EVENT_TYPE
 	if not _valid_npc_id(event.get(KEY_NPC_ID, null)) or not _valid_number(event.get(KEY_WORLD_TIME, null)):
 		return REASON_BAD_EVENT_FIELD
@@ -180,6 +206,10 @@ static func event_error(value: Variant) -> String:
 		EVENT_ACTION_CHANGED:
 			expected.append(KEY_ACTION_LABEL)
 			if typeof(event.get(KEY_ACTION_LABEL, null)) != TYPE_STRING or not ACTION_LABELS.has(str(event[KEY_ACTION_LABEL])):
+				return REASON_BAD_EVENT_FIELD
+		EVENT_CONDITION_CHANGED:
+			expected.append(KEY_CONDITION)
+			if typeof(event.get(KEY_CONDITION, null)) != TYPE_STRING or not CONDITIONS.has(str(event[KEY_CONDITION])):
 				return REASON_BAD_EVENT_FIELD
 	if not _has_exact_keys(event, expected):
 		return REASON_UNKNOWN_EVENT_FIELD

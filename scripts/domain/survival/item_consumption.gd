@@ -101,6 +101,8 @@ const REASON_TARGET_DEAD: String = ServerWorld.REASON_TARGET_DEAD
 const REASON_TARGET_TOO_FAR: String = ServerWorld.REASON_TARGET_TOO_FAR
 ## The item has nothing that may be given to another player (food, drink).
 const REASON_NOT_USABLE_ON_OTHERS: String = "not_usable_on_others"
+## A treatment was used on an NPC (F-25, try_use_on).
+const EVENT_ITEM_USED_ON_NPC: String = "item_used_on_npc"
 ## Value of `target_id` that means the user itself.
 const NO_TARGET: String = ""
 ## Refusals that say something about the treated player's condition.
@@ -137,6 +139,10 @@ static func try_use_on(world: ServerWorld, user_id: String, item_instance_id: St
 	var feeds: bool = world.gameplay.allow_feeding_others and definition.lowers_needs()
 	if not feeds and not definition.is_treatment():
 		return ActionResult.failure(REASON_NOT_USABLE_ON_OTHERS)
+	# F-25: the target may be an NPC (a bandage or a cure only).
+	var npc_health: NpcHealth = NpcHealth.of_world(world)
+	if npc_health != null and npc_health.has_npc(target_id):
+		return _use_on_npc(world, npc_health, user_id, target_id, item_instance_id, definition)
 	# The target: in the world, alive, close. Server state only.
 	var target: PlayerState = world.get_player(target_id)
 	if target == null or not world.is_online(target_id) or not survival.has_player(target_id):
@@ -146,6 +152,48 @@ static func try_use_on(world: ServerWorld, user_id: String, item_instance_id: St
 	if world.get_player(user_id).position.distance_to(target.position) > world.gameplay.treat_range_m:
 		return ActionResult.failure(REASON_TARGET_TOO_FAR)
 	return _use(world, survival, user_id, target_id, item_instance_id, definition, feeds)
+
+
+## A bandage or a cure of `user_id` on the NPC `target_id` (F-25, docs/09
+## §17.12): the same range and the same answers as on a player
+## (target_unavailable for an NPC that is not simulated, target_dead,
+## target_too_far, then what NpcHealth says: not_bleeding, not_infected,
+## too_late). Food and drink are not given to NPCs yet
+## (not_usable_on_others).
+static func _use_on_npc(world: ServerWorld, npc_health: NpcHealth, user_id: String, npc_id: String, item_instance_id: String, definition: ItemDefinition) -> ActionResult:
+	if not definition.is_treatment():
+		return ActionResult.failure(REASON_NOT_USABLE_ON_OTHERS)
+	var vitals: NpcVitals = npc_health.vitals_of(npc_id)
+	if vitals == null:
+		return ActionResult.failure(REASON_TARGET_UNAVAILABLE)
+	if not vitals.is_alive():
+		return ActionResult.failure(REASON_TARGET_DEAD)
+	if not npc_health.is_living_target(npc_id):
+		return ActionResult.failure(REASON_TARGET_UNAVAILABLE)
+	if world.get_player(user_id).position.distance_to(npc_health.position_of(npc_id)) > world.gameplay.treat_range_m:
+		return ActionResult.failure(REASON_TARGET_TOO_FAR)
+	var refusal: String = npc_health.check_treatment(npc_id, definition)
+	if not refusal.is_empty():
+		return ActionResult.failure(refusal)
+	var removal: ActionResult = world.remove_player_item(user_id, item_instance_id, CONSUMED_QUANTITY)
+	if not removal.ok:
+		return ActionResult.failure(removal.reason)
+	var treated: ActionResult = npc_health.apply_treatment(npc_id, definition, user_id)
+	if not treated.ok:
+		return _effect_lost(user_id, item_instance_id, treated.reason)
+	var event: Dictionary = {
+		"event_type": EVENT_ITEM_USED_ON_NPC,
+		"player_id": user_id,
+		"target_id": npc_id,
+		"item_instance_id": item_instance_id,
+		"definition_id": definition.definition_id,
+		"remaining_quantity": int(removal.event.get("remaining_quantity", 0)),
+		"bleeding_stopped_wound_ids": (treated.event.get("bleeding_stopped_wound_ids", []) as Array).duplicate(),
+		"infection_cured_from": str(treated.event.get("infection_cured_from", NOT_CURED)),
+		"world_time": world.clock.world_time_sec,
+	}
+	GameLogger.info("survival", "item used on an npc", event)
+	return ActionResult.success(event)
 
 
 ## True when `reason` is a refusal that says something about the target's

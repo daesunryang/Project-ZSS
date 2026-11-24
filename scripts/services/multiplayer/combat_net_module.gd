@@ -254,8 +254,16 @@ func _broadcast(batch: Array) -> void:
 ##   - a miss names no zombie: it goes to the peers that are told about the
 ##     cell the attacker stands in.
 ## Without the zombie module a hit is treated like a miss.
+## A hit on an NPC (F-25) goes to the attacker and to the peers that were
+## told about that NPC (NpcNetModule.knows_npc); the attacker is not told
+## about an NPC early: it comes with the next NPC reconciliation.
 func _is_for(peer_id: int, event: Dictionary, zombie_net: ZombieNetModule) -> bool:
 	var target_id: String = str(event.get(ClientCombatState.KEY_TARGET_ID, ""))
+	if NpcState.is_valid_npc_id(target_id):
+		if network.player_of_peer(peer_id) == str(event.get(ClientCombatState.KEY_ATTACKER_ID, "")):
+			return true
+		var npc_net: NpcNetModule = network.get_module(NpcNetModule.MODULE_NAME) as NpcNetModule
+		return npc_net != null and npc_net.knows_npc(peer_id, target_id)
 	var names_zombie: bool = zombie_net != null and not target_id.is_empty()
 	if network.player_of_peer(peer_id) == str(event.get(ClientCombatState.KEY_ATTACKER_ID, "")):
 		if names_zombie:

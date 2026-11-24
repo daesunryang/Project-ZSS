@@ -107,6 +107,10 @@ var npc_spots: NpcSpotSet = null
 ## null = no behaviour layer: the utility decider gets no executor and the
 ## NPCs stand still (tests of other things than what NPCs do).
 var npc_behaviour: NpcBehaviourSettings = null
+## F-25 (docs/09 §17.12): the NPCs' bodies (NpcHealth): damage, infection,
+## treatment, death, rising. null = NPCs have no health: nothing can hurt
+## them and zombies do not see them (tests of other things).
+var npc_health: NpcHealthSettings = null
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -155,6 +159,7 @@ static func from_defaults() -> CompositionConfig:
 	config.npc_executor = NpcExecutorSettings.load_or_default()
 	config.npc_spots = NpcSpotSet.load_or_null()
 	config.npc_behaviour = NpcBehaviourSettings.load_or_default()
+	config.npc_health = NpcHealthSettings.load_or_default()
 	return config
 
 
@@ -183,6 +188,8 @@ func _validate_npcs() -> PackedStringArray:
 		errors.append_array(npc_spots.validate_against(map_content, StructureGrid.new(building.grid_module_m), gameplay.world_half_extent_m, catalog))
 	if npc_behaviour != null:
 		errors.append_array(npc_behaviour.validate())
+	if npc_health != null:
+		errors.append_array(npc_health.validate())
 	if npc_roster != null:
 		errors.append_array(npc_roster.validate())
 		errors.append_array(npc_roster.validate_against(npc_definitions, map_content, StructureGrid.new(building.grid_module_m), npc.max_npcs))

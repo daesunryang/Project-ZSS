@@ -39,6 +39,11 @@ func _source(npc_id: String = NPC_A, position: Vector3 = Vector3(3.0, 0.0, 4.0),
 		NpcNetProtocol.KEY_YAW: 1.0,
 		NpcNetProtocol.KEY_ACTION_LABEL: action_label,
 		NpcNetProtocol.KEY_POSTURE: "standing",
+		NpcNetProtocol.KEY_CONDITION: "ok",
+		# F-25: what the condition is made from stays on the server.
+		"health": 41.5,
+		"injuries": [{"wound_type": "bite"}],
+		"infection": {"stage": "latent"},
 		# These deliberately resemble future private NPC state. Encoding must
 		# be a whitelist, so neither their keys nor values can leave.
 		"hunger": 0.91,
@@ -88,9 +93,12 @@ func test_public_rows_are_an_exact_whitelist_and_round_trip() -> void:
 		NpcNetProtocol.KEY_YAW: 1.0,
 		NpcNetProtocol.KEY_ACTION_LABEL: "walk",
 		NpcNetProtocol.KEY_POSTURE: "standing",
+		NpcNetProtocol.KEY_CONDITION: "ok",
 	})
+	assert_eq(row.size(), 8, "seven fields of P4-7 and the condition index of F-25")
+	assert_eq(NpcNetProtocol.CONDITIONS, PackedStringArray(["ok", "hurt", "dead"]))
 	var wire_text: String = var_to_str(row)
-	for forbidden: String in ["hunger", "emotions", "memory", "relationships", "personality", "skills", "goal", "rng_state", "components", PRIVATE_SENTINEL, "private_goal", "private_rng"]:
+	for forbidden: String in ["health", "injuries", "infection", "bite", "latent", "41.5", "hunger", "emotions", "memory", "relationships", "personality", "skills", "goal", "rng_state", "components", PRIVATE_SENTINEL, "private_goal", "private_rng"]:
 		assert_not_contains(wire_text, forbidden, "private NPC data is absent: " + forbidden)
 	assert_eq(NpcNetProtocol.ACTION_LABELS, PackedStringArray(["idle", "walk", "eat", "sleep", "work", "flee"]))
 	assert_eq(NpcNetProtocol.POSTURES, PlayerPosture.NAMES)
@@ -170,9 +178,13 @@ func test_malformed_rows_are_rejected_without_mutating_the_mirror() -> void:
 	var before: Dictionary = _state.get_npc(NPC_A).duplicate(true)
 	var bad_rows: Array = [
 		[],
-		[NPC_A, "name", {}, Vector3.ZERO, 0.0, 99, 0],
-		[NPC_A, "name", {"slot": PRIVATE_SENTINEL}, Vector3.ZERO, 0.0, 0, 0],
-		[NPC_A, "name", {}, Vector3(INF, 0.0, 0.0), 0.0, 0, 0],
+		[NPC_A, "name", {}, Vector3.ZERO, 0.0, 99, 0, 0],
+		[NPC_A, "name", {"slot": PRIVATE_SENTINEL}, Vector3.ZERO, 0.0, 0, 0, 0],
+		[NPC_A, "name", {}, Vector3(INF, 0.0, 0.0), 0.0, 0, 0, 0],
+		# F-25: a row of the old seven fields, and a condition nobody knows.
+		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0],
+		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, 3],
+		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, "dead"],
 	]
 	for bad: Array in bad_rows:
 		assert_ne(_state.apply_join({NpcNetProtocol.KEY_TICK: 1, NpcNetProtocol.KEY_EVENT_SEQUENCE: 0, NpcNetProtocol.KEY_ROWS: [bad]}), "")
@@ -192,4 +204,55 @@ func test_npc_presentation_batches_bodies_and_keeps_korean_name_tags() -> void:
 	assert_eq(visuals.label_of(NPC_A).text, "한서윤")
 	assert_eq(visuals.transform_of(NPC_B).origin.x, 8.0)
 	assert_ne(visuals.body_color(), presentation.zombie_idle_color, "NPC and zombie colours are distinct")
+	root.free()
+
+
+# ------------------------------------------------------------ F-25
+
+func test_the_condition_is_one_of_three_words_and_changes_by_its_own_event() -> void:
+	var hurt_source: Dictionary = _source()
+	hurt_source[NpcNetProtocol.KEY_CONDITION] = "hurt"
+	assert_eq(NpcNetProtocol.decode_public_row(NpcNetProtocol.encode_public_row(hurt_source))[NpcNetProtocol.KEY_CONDITION], "hurt")
+	var unknown_source: Dictionary = _source()
+	unknown_source[NpcNetProtocol.KEY_CONDITION] = "bleeding_badly"
+	assert_eq(NpcNetProtocol.encode_public_row(unknown_source), [], "an unknown condition makes no row")
+	var event: Dictionary = NpcNetProtocol.condition_changed_event(NPC_A, "dead", 20.0)
+	assert_eq(event, {
+		NpcNetProtocol.KEY_EVENT_TYPE: NpcNetProtocol.EVENT_CONDITION_CHANGED,
+		NpcNetProtocol.KEY_NPC_ID: NPC_A,
+		NpcNetProtocol.KEY_WORLD_TIME: 20.0,
+		NpcNetProtocol.KEY_CONDITION: "dead",
+	})
+	assert_eq(NpcNetProtocol.event_error(event), "")
+	assert_eq(NpcNetProtocol.condition_changed_event(NPC_A, "health_12", 20.0), {}, "nothing but the three words")
+	var with_number: Dictionary = event.duplicate()
+	with_number["health"] = 0.0
+	assert_eq(NpcNetProtocol.event_error(with_number), NpcNetProtocol.REASON_UNKNOWN_EVENT_FIELD)
+	var bad_word: Dictionary = event.duplicate()
+	bad_word[NpcNetProtocol.KEY_CONDITION] = 2
+	assert_eq(NpcNetProtocol.event_error(bad_word), NpcNetProtocol.REASON_BAD_EVENT_FIELD)
+
+
+func test_the_mirror_follows_the_condition_and_the_body_lies_with_a_tag() -> void:
+	assert_eq(_join(), "")
+	assert_eq(_state.condition_of(NPC_A), "ok")
+	assert_false(_state.is_dead(NPC_A))
+	assert_eq(_state.condition_of(NPC_B), "", "an unknown NPC has none")
+	assert_eq(_state.apply_events(2, 1, [NpcNetProtocol.condition_changed_event(NPC_A, "hurt", 3.0), NpcNetProtocol.condition_changed_event(NPC_B, "dead", 3.0)]), "")
+	assert_eq(_state.condition_of(NPC_A), "hurt")
+	assert_false(_state.has_npc(NPC_B), "a condition does not make an NPC known")
+	var root: Node3D = Node3D.new()
+	var presentation: ClientPresentationSettings = ClientPresentationSettings.new()
+	var visuals: NpcVisuals = NpcVisuals.new(root, presentation)
+	visuals.sync(_state.npcs)
+	assert_eq(visuals.label_of(NPC_A).text, "한서윤" + presentation.npc_hurt_tag_suffix)
+	var standing: Transform3D = visuals.transform_of(NPC_A)
+	assert_eq(_state.apply_events(3, 3, [NpcNetProtocol.condition_changed_event(NPC_A, "dead", 4.0)]), "")
+	assert_true(_state.is_dead(NPC_A))
+	visuals.sync(_state.npcs)
+	assert_eq(visuals.label_of(NPC_A).text, "한서윤" + presentation.npc_dead_tag_suffix)
+	var lying: Transform3D = visuals.transform_of(NPC_A)
+	assert_true(lying.origin.y < standing.origin.y, "the body lies on the ground")
+	assert_ne(lying.basis, standing.basis)
+	assert_eq(NpcVisuals.tag_text("이름", "ok", presentation), "이름")
 	root.free()

@@ -137,6 +137,19 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 		if npc_decider is NpcUtilityDecider and (npc_decider as NpcUtilityDecider).executor() == null:
 			(npc_decider as NpcUtilityDecider).set_executor(npc_behaviours.action_executor())
 
+	# F-25 (docs/09 §17.12): the NPCs' bodies, LAST of the NPC stages: what a
+	# tick did to an NPC is in its vitals before the tick ends. Zombies and
+	# melee swings reach the NPCs only through these two narrow sources.
+	if config.npc_health != null:
+		var npc_health: NpcHealth = NpcHealth.install(npcs, config.survival, config.npc_health)
+		if npc_health == null:
+			return null
+		if zombies.add_target_source(NpcZombieTargets.new(npc_health)) != OK:
+			return null
+		var combat: CombatService = world.get_system(CombatService.SYSTEM_ID) as CombatService
+		if combat == null or combat.add_target_source(NpcMeleeTargets.new(npc_health, config.npc_health)) != OK:
+			return null
+
 	# P4-8: a read-only query over the exact scheduler/executor instances.
 	# Metadata is runtime-only and avoids changing the established NPC APIs.
 	NpcDebugQuery.attach(world, NpcDebugQuery.new(world, npcs, npc_scheduler, npc_executor, config.npc_debug))
@@ -172,7 +185,8 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	# P4-7 (docs/09 §17.5): public NPC rows, interest reconciliation and
 	# 5 Hz position snapshots. The action label is what the NPC's decision
 	# component says it does (P4-4, docs/09 §17.6).
-	var npc_net: NpcNetModule = NpcNetModule.new(config.npc_net, NpcDecisionComponent.label_of)
+	# F-25: the condition (ok / hurt / dead) is what the NPC's vitals say.
+	var npc_net: NpcNetModule = NpcNetModule.new(config.npc_net, NpcDecisionComponent.label_of, NpcVitals.condition_of)
 	error = service.register_module(npc_net)
 	if error != OK:
 		npc_net.free()

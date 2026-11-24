@@ -68,6 +68,14 @@ func on_detached(_world: ServerWorld, _npc: NpcState, _retired: bool) -> void:
 	return
 
 
+## True while this component says the NPC must not be simulated (F-25: a
+## dead NPC). Such an NPC is never awake, whatever its cell is: every stage
+## sees it as an NPC of a cell that is not simulated. After the answer
+## changed, tell NpcService.refresh_simulation(world, npc_id).
+func blocks_simulation() -> bool:
+	return false
+
+
 ## Save data of this component ({} = nothing but the version).
 func to_document() -> Dictionary:
 	return {}

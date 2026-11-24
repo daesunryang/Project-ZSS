@@ -130,7 +130,13 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    in the join snapshot ("SkillNet" fragment) and _rpc_skill_snapshot to
 ##    the owner on change. No client -> server RPC; no existing message
 ##    changed (structure costs may now be lower than the definition's).
-const PROTOCOL_VERSION: int = 19
+## 20: F-25 NPC health (docs/09 §17.12). The public NPC row has an eighth
+##    field, the condition index (ok / hurt / dead), and NpcNet has the new
+##    event npc_condition_changed. `target_id` of zombie and combat events
+##    can now be an NPC id; a hit on an NPC goes to the attacker and to the
+##    peers that know that NPC. The use-on request accepts an NPC id as its
+##    target (a bandage or a cure). No new RPC.
+const PROTOCOL_VERSION: int = 20
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

@@ -439,7 +439,9 @@ func _rpc_request_use_on(request_id: Variant, item_instance_id: Variant, target_
 		return
 	var item_id: String = str(item_instance_id)
 	var target_id: String = str(target_player_id)
-	var on_other: bool = target_id != ItemConsumption.NO_TARGET and target_id != player_id
+	# F-25: a treatment on an NPC sends no notice (there is no target peer,
+	# and what bystanders may know of an NPC is its public condition).
+	var on_other: bool = target_id != ItemConsumption.NO_TARGET and target_id != player_id and not NpcState.is_valid_npc_id(target_id)
 	# For the target's notice (the item may be gone after the use).
 	var item: ItemInstance = _world.inventory.get_item(item_id)
 	var definition_id: String = item.definition_id if item != null else ""

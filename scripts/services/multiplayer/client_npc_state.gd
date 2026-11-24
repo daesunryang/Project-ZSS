@@ -56,6 +56,15 @@ func npc_count() -> int:
 	return npcs.size()
 
 
+## The public condition of a mirrored NPC (F-25), "" for an unknown one.
+func condition_of(npc_id: String) -> String:
+	return str((npcs.get(npc_id, {}) as Dictionary).get(NpcNetProtocol.KEY_CONDITION, ""))
+
+
+func is_dead(npc_id: String) -> bool:
+	return condition_of(npc_id) == NpcNetProtocol.CONDITION_DEAD
+
+
 func recent_events() -> Array[Dictionary]:
 	return _recent_events.duplicate(true)
 
@@ -197,6 +206,15 @@ func _apply_event(event: Dictionary) -> bool:
 			if str(entry[NpcNetProtocol.KEY_ACTION_LABEL]) == label:
 				return false
 			entry[NpcNetProtocol.KEY_ACTION_LABEL] = label
+			return true
+		NpcNetProtocol.EVENT_CONDITION_CHANGED:
+			if not npcs.has(npc_id):
+				return false
+			var row: Dictionary = npcs[npc_id]
+			var condition: String = str(event[NpcNetProtocol.KEY_CONDITION])
+			if str(row[NpcNetProtocol.KEY_CONDITION]) == condition:
+				return false
+			row[NpcNetProtocol.KEY_CONDITION] = condition
 			return true
 	return false
 

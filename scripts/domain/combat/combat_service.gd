@@ -20,6 +20,13 @@ extends ServerSystem
 ## the arc (ties: smaller zombie id). Players are never targets (PvP is
 ## disabled, docs/00).
 ##
+## Other targets (F-25, docs/09 §17.12): what a registered MeleeTargetSource
+## lists (the NPCs) can be hit too. A zombie in the arc always comes first
+## (docs/15 F25-006: a swing in a fight does not land on a bystander); with
+## no zombie in the arc the nearest such target is hit (ties: smaller id).
+## The damage formula, the wear and the event are the same; what the hit
+## does to the target is the source's rule.
+##
 ## Validation order (first failure wins, nothing changes on failure):
 ##   combat_unavailable  - no world, or survival/zombie system not registered
 ##   bad_aim_yaw         - NaN, infinite or |aim_yaw| > max_abs_aim_yaw
@@ -104,6 +111,8 @@ var _ready_at: Dictionary[String, float] = {}
 var _events: Array[Dictionary] = []
 ## Damage rolls. One RNG for all attacks; its state is saved.
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
+## What else than zombies a swing can hit (F-25), in the order added.
+var _target_sources: Array[MeleeTargetSource] = []
 
 
 func _init(settings: CombatSettings, weapons: MeleeWeaponCatalog, clock: WorldClock) -> void:
@@ -118,6 +127,15 @@ func get_system_id() -> String:
 
 
 # ------------------------------------------------------------ public API
+
+## Lets swings hit what `source` lists when no zombie is in the arc (F-25:
+## the NPCs). Added once, by ServerComposition, before the world runs.
+func add_target_source(source: MeleeTargetSource) -> Error:
+	if source == null or _target_sources.has(source):
+		return ERR_INVALID_PARAMETER
+	_target_sources.append(source)
+	return OK
+
 
 ## One melee swing by `player_id` aimed at `aim_yaw` (radians, yaw 0 = -Z).
 ## See the header for validation, effects and the event format.
@@ -180,6 +198,8 @@ func request_melee_attack(world: ServerWorld, player_id: String, aim_yaw: float)
 	var target_id: String = _pick_zombie(zombies, player.position, yaw, weapon)
 	if not target_id.is_empty():
 		_hit(zombies, survival, player_id, weapon, target_id, event)
+	else:
+		_hit_other(survival, player, yaw, weapon, event)
 	if bool(event["hit"]) and weapon_item != null:
 		_wear(world, player, weapon, weapon_item, event)
 	_make_noise(world, player, weapon)
@@ -327,6 +347,37 @@ func _hit(zombies: ZombieService, survival: SurvivalService, player_id: String, 
 	event["damage"] = amount
 	event["target_health_after"] = float(applied.event["health_after"])
 	event["target_died"] = bool(applied.event["died"])
+
+
+## No zombie is in the arc: the nearest target of the registered sources
+## (F-25: an NPC), if any, takes the same damage roll.
+func _hit_other(survival: SurvivalService, player: PlayerState, aim_yaw: float, weapon: MeleeWeaponDefinition, event: Dictionary) -> void:
+	if _target_sources.is_empty():
+		return
+	var candidate_ids: PackedStringArray = []
+	var candidate_positions: PackedVector3Array = []
+	var source_of: Dictionary[String, MeleeTargetSource] = {}
+	for source: MeleeTargetSource in _target_sources:
+		for target_id: String in source.melee_target_ids():
+			if source_of.has(target_id):
+				continue
+			source_of[target_id] = source
+			candidate_ids.append(target_id)
+			candidate_positions.append(source.melee_target_position(target_id))
+	var picked_id: String = MeleeHitRules.pick_target(player.position, aim_yaw, weapon.range_m, weapon.arc_angle_deg, candidate_ids, candidate_positions)
+	if picked_id.is_empty():
+		return
+	var roll: float = _rng.randf_range(_settings.damage_roll_min, _settings.damage_roll_max)
+	var amount: float = MeleeHitRules.damage(weapon.base_damage, survival.handling_multiplier(player.player_id), roll)
+	var applied: ActionResult = source_of[picked_id].apply_melee_damage(picked_id, amount, player.player_id, weapon)
+	if not applied.ok:
+		GameLogger.warning("combat", "hit rejected by the target", {"player_id": player.player_id, "entity_id": picked_id, "reason": applied.reason, "operation": "melee_attack"})
+		return
+	event["hit"] = true
+	event["target_id"] = picked_id
+	event["damage"] = amount
+	event["target_health_after"] = float(applied.event.get("health_after", 0.0))
+	event["target_died"] = bool(applied.event.get("died", false))
 
 
 ## Every swing is heard, hit or miss (docs/02 §5.3). A weapon with loudness

@@ -30,6 +30,9 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 @export_range(0.0001, 0.1) var npc_name_tag_pixel_size: float = 0.005
 @export_range(1, 256) var npc_name_tag_font_size: int = 34
 @export var npc_name_tag_color: Color = Color(0.70, 0.88, 1.0, 1.0)
+## F-25: what is written after an NPC's name while it is hurt / dead.
+@export var npc_hurt_tag_suffix: String = " (부상)"
+@export var npc_dead_tag_suffix: String = " (사망)"
 
 ## P4-8 development overlay. F4 does not overlap the existing letter F
 ## consume key or the F3 cell overlay.

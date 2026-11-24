@@ -3078,3 +3078,85 @@ FD-11("NPC마다 정해진 시각", 피로 0까지 잠)의 구현이다. 잠 빨
 **저장**: `decision` 구성 요소 스키마 2. `last_sleep_night`(정수, -1 = 아직 없음)가 더해졌다. 스키마 1 문서(이 키 없음)는 그대로 읽고 -1로 둔다. 진행 중인 밤잠·낮잠은 전부터 저장되던 `decision.action_id`·`behaviour`(행동, 단계, 타이머, 지점)와 `needs.activity`로 복구된다. 새 월드 문서는 없다.
 
 **테스트**: `tests/unit/npc_decision_test.gd`의 F-6 절(밤 번호와 창, 출하 데이터, 아침형·저녁형이 각자 시각에 잠자리에 듦, 끝까지 자고 하룻밤에 한 번·낮잠 문턱, 위험에 깨고 다시 잠, 저장·옛 스키마), `tests/unit/npc_behaviour_test.gd`(밤잠은 fatigue 0까지·낮잠은 5까지, 침대 없으면 집 타일), `tests/unit/npc_sleep_test.gd`(전용 서버 조립에서 개발용 NPC 5명의 첫 하루와 그 밤).
+
+### 17.12 NPC 체력·피해·죽음·좀비화(F-25, 단계 `health`, 구성 요소 `vitals`)
+
+사용자 지시(2026-11-23) "유저가 발견했을 때 포섭을 할 지 죽일지는 유저 선택"과 "죽은 NPC가 좀비도 될 수 있게"에 대한 답 "그렇게 해"의 구현이다. docs/13 §16.3 D3("Phase 4에서는 죽지 않는다, 좀비는 NPC를 목표로 삼지 않는다")은 이 절로 바뀌었다. 수치와 세부 규칙은 임시다(docs/15 §22, F25-001~F25-012). 생존 우선 결정·싸우기(F-29), 플레이어를 공격하는 NPC(F-32), NPC끼리 치료는 이 절에 없다.
+
+**코드**
+
+| 파일 | 역할 |
+|---|---|
+| `scripts/domain/npc/health/npc_vitals.gd` | 구성 요소 `vitals`(스키마 1): 체력, 상처(`Wound`), 감염(`InfectionState`), 죽은 시각·원인·죽인 쪽, 일어나는 시각, 자가 치료 가능 시각 |
+| `scripts/domain/npc/health/npc_health.gd` | 단계 `health`(NPC 단계 중 마지막): 피해, 감염 노출, 치료, 시간 진행, 죽음, 시체, 좀비화 |
+| `scripts/domain/npc/health/npc_health_settings.gd` | 플레이어 수치가 아닌 규칙(`data/tuning/npc_health_settings.tres`) |
+| `scripts/domain/zombie/zombie_target_source.gd`, `npc_zombie_targets.gd` | 좀비가 플레이어 말고 볼 수 있는 대상(좁은 접점) |
+| `scripts/domain/combat/melee_target_source.gd`, `npc_melee_targets.gd` | 근접 공격이 좀비 말고 맞힐 수 있는 대상(좁은 접점) |
+
+`CompositionConfig.npc_health`가 `null`이면 아무것도 설치되지 않는다(NPC에 체력이 없고 좀비가 NPC를 보지 못함: 다른 것을 보는 테스트용). `from_defaults()`는 설정을 넣는다.
+
+**체력·상처·감염은 플레이어 규칙을 그대로 쓴다**(`SurvivalSettings`):
+
+- 최대 체력 `max_health`, 상처 심각도 = 피해 / `wound_severity_reference_damage`, 출혈 시작 조건 `wound_starts_bleeding`, 상처 수 상한 `max_wounds_per_player`.
+- 달력 시간으로 흐른다. 출혈 중이거나 감염 단계의 체력 손실이 있으면 체력이 줄고, 둘 다 없을 때만 체력이 회복되고 상처가 낫는다. 출혈은 붕대 없이는 멈추지 않는다(플레이어와 같다, F25-003).
+- 감염: 노출 확률 `infection_chance(노출 종류)`를 **그 NPC의 저장되는 RNG**로 굴린다. 단계(LATENT → EARLY → PROGRESSING → SEVERE → TERMINAL)와 단계 길이·단계별 체력 손실도 플레이어와 같다. TERMINAL이 끝나면 죽는다(원인 `infection`).
+- 한 틱은 감염 단계 경계와 죽는 순간에서 잘라 계산하므로 결과가 틱 길이에 기대지 않는다.
+- NPC의 허기·갈증은 아직 체력을 깎지 않는다(F25-005). NPC는 스태미나가 없다.
+
+**누가 NPC를 다치게 하나**
+
+| 누가 | 경로 | 규칙 |
+|---|---|---|
+| 좀비 | `ZombieService.add_target_source(NpcZombieTargets)` | 살아 있고 깨어 있는(ACTIVE 셀) NPC를 플레이어와 **같은 규칙**(시야 거리·각도·선 차단, 추격·놓침, 공격 사거리·대기·쿨다운, 물기 확률·피해량·부위)으로 보고 쫓고 문다. 가장 가까운 보이는 대상을 고르고 같은 거리면 플레이어가 먼저다. NPC의 보임 배율은 1.0(자세 없음). 대상 ID는 `ZombieState.target_player_id`에 그대로 들어가므로 좀비 저장 형식은 바뀌지 않았다 |
+| 플레이어 근접 공격 | `CombatService.add_target_source(NpcMeleeTargets)` | 요청·검증·쿨다운·스태미나·소음·내구도는 좀비를 칠 때와 같다. 호 안에 **좀비가 있으면 좀비가 먼저**이고, 없을 때 가장 가까운 NPC가 맞는다(F25-006). 피해 = 같은 공식. 상처 종류는 날붙이·도끼 = 열상, 둔기·맨손 = 타박상. 부위는 `melee_body_part`(몸통) |
+
+깨어 있지 않은 NPC(셀이 시뮬레이션되지 않음)는 맞지도 치료받지도 않는다(D4: 그대로 멈춰 있다).
+
+**치료**
+
+- 플레이어: 기존 "다른 사람에게 쓰기" 요청(§14.27)의 대상에 NPC ID를 넣는다. 붕대(`treat_bleeding_wound_count`)와 치료제(`cures_infection`)만 된다(음식·물은 `not_usable_on_others`). 거리는 `treat_range_m`, 거절 사유는 플레이어 때와 같다: `target_unavailable`(모르는 ID, 멈춰 있는 NPC), `target_dead`, `target_too_far`, `not_bleeding`, `not_infected`, `too_late`(`infection_treatment_max_stage` 뒤). 거절되면 아이템은 줄지 않는다. NPC 대상에는 치료 알림(target/public notice)을 보내지 않는다.
+- NPC 스스로: 출혈 중이거나 치료 가능한 단계의 감염이면, 들고 있는 것 중 맞는 첫 아이템(칸 순서)을 하나 쓴다. `self_treat_cooldown_world_sec`(달력 240초)에 한 번만 살핀다. 점수로 고르는 행동이 아니라 이 단계의 규칙이라서 하던 일을 멈추지 않는다(F25-004).
+- 클라이언트: 붕대·치료제 키를 "다른 사람에게" 방식으로 누르면 카메라 방향·거리 안의 살아 있는 NPC도 후보가 된다(`TreatTargetPolicy`에 NPC 줄을 더해 넘김). 거래 요청 후보에는 들어가지 않는다.
+
+**죽음** (체력 0 또는 감염 끝)
+
+1. `vitals`에 죽은 시각(달력), 원인(`combat`·`bleeding`·`infection`·`bleeding_infection`), 죽인 쪽 ID를 적는다.
+2. 들고 있던 것을 전부 그 자리 바닥에 둔다(`InventoryService.drop_all_items`, 죽은 플레이어와 같다: ADR-012. 사라지지 않고 누구나 주울 수 있다).
+3. 일어날지 정한다(아래).
+4. NPC를 영영 재운다: `NpcComponent.blocks_simulation()`(새 계약)이 참인 NPC는 깨어나지 않는다. `NpcService.refresh_simulation()`이 바로 재우므로 스케줄러·결정·실행·욕구 단계는 그 NPC를 "시뮬레이션되지 않는 셀의 NPC"로 본다(코드 변경 없이 판단과 이동이 멈춘다).
+5. 죽음을 볼 수 있던 깨어 있는 NPC(`witness_range_m` 30 m 안, 선이 막히지 않음)는 기억 `npc_died`(관찰 `witnessed`, 모두 같은 event id, 참가자: 죽은 NPC = target, 죽인 플레이어·NPC = actor, 태그 `death`·`killed_by_player`·`killed_by_zombie`·`turned`)를 남기고 감정 fear +0.4, grief +0.3을 받는다. 관계 점수 등 사회 규칙은 없다(F25-007).
+6. 신호 `NpcHealth.npc_died(npc_id, cause, killer_id)`.
+
+엔티티는 **시체**로 월드에 남는다(위치 그대로, 셀 문서에 저장, 인구 목록에 남음). 시뮬레이션되는 셀에서만 다음이 일어난다:
+
+- 일어나는 시체: `rise_at_world_time`이 되면 그 자리에 좀비 하나를 만든다(`ZombieService.spawn_zombie(world, 위치, 방향)`: 기존 공개 함수 하나만 쓴다). 성공하면 NPC를 월드에서 뺀다(`remove_npc`, ID 은퇴). 거절(좀비 상한)되면 시체는 남고 `rise_retry_world_sec` 뒤 다시 시도한다. 어느 NPC가 어느 좀비가 됐는지는 서버 로그에만 있다.
+- 일어나지 않는 시체: `body_remove_delay_world_sec` 뒤에 뺀다.
+
+빠진 NPC의 ID는 은퇴(묘비)하고, 월드 저장의 명단 기록(`rosters.<id>.npcs`)은 그대로 남는다. 그래서 죽은 명단 NPC는 재시작해도, 명단이 커져도 다시 배치되지 않는다.
+
+**좀비화 규칙(임시, [사용자 확인 필요]: docs/15 F25-001·F25-002)**: 감염된 채 죽었거나(원인과 무관), 죽을 때 상처 중에 좀비에게 물린 상처(`bite`)가 있으면 일어난다. 확률 `rise_chance` 1.0, 지연 `rise_delay_world_sec` 달력 1440초(게임 24분, 실제 1분). 설정으로 둘 다 끌 수 있다.
+
+**저장** (`vitals`, NPC 문서의 구성 요소 칸, 셀 문서에 들어감)
+
+```
+{schema_version: 1, health, injuries: [Wound.to_dict()], infection: InfectionState.to_dict(),
+ died_at_world_time (-1 = 살아 있음), death_cause, killer_id,
+ rise_at_world_time (-1 = 일어나지 않음), self_treat_ready_at_world_time,
+ exact: {health, died_at, rise_at, self_treat_ready_at, infection_elapsed, severities: [...]}}
+```
+
+- `exact`는 이어지는 계산에 쓰이는 수의 비트다(`FloatBits`, docs/15 P4-281): 저장·재시작한 서버의 체력이 멈추지 않은 서버와 비트까지 같다.
+- 옛 문서(이 구성 요소가 없던 NPC)는 구성 요소 계약대로 `on_created()`를 받는다: 체력 가득, 상처·감염 없음. 이것이 옛 저장의 이전이다. 월드·셀 문서 스키마 번호는 바뀌지 않았다.
+- 잘못된 문서(체력 범위 밖, 죽은 시각과 체력이 어긋남, 상처·감염 모양 오류, 모르는 버전)는 그 NPC를 싣지 않는다(구성 요소 계약).
+- 셀이 메모리에서 나가면 다친 NPC·시체는 그대로 저장되고, 돌아오면 그대로 이어진다(멈춰 있던 동안은 출혈도 시체의 시간도 흐르지 않는 것처럼 보이지만 시각은 달력 절대값이라, 돌아왔을 때 일어날 시각이 지났으면 그 틱에 일어난다).
+
+**복제와 공개 범위** (`PROTOCOL_VERSION` 20)
+
+- 공개 NPC 줄(§17.5)에 여덟째 값 **상태**가 붙었다: `ok`·`hurt`(출혈 중이거나 체력이 `hurt_health_fraction` 50% 이하)·`dead`. 바뀌면 `npc_condition_changed {npc_id, world_time, condition}`(채널 0, 행동 라벨과 같은 방식). 체력 수치, 상처, 감염, 죽인 쪽, 일어날 시각은 서버 밖으로 나가지 않는다(`NpcNetProtocol`이 허용 목록).
+- 좀비 이벤트(`zombie_detected`·`zombie_state_changed`·`zombie_attacked`)의 `target_id`가 NPC ID일 수 있다. NPC가 대상이면 비공개 값(`target_health_after`, `infection`)은 누구에게도 가지 않는다(받을 주인 피어가 없다).
+- 전투 이벤트 `melee_attack`의 `target_id`가 NPC ID일 수 있다. NPC를 맞힌 이벤트는 공격자와 그 NPC를 알고 있는 피어(`NpcNetModule.knows_npc`)에게 간다.
+- 화면: 다친 NPC는 이름표 뒤에 " (부상)", 죽은 NPC는 " (사망)"이 붙고 캡슐이 눕는다(자리 표시 그림이다. 미술 승인이 아니다).
+
+**비용**: 멀쩡한 NPC는 이 단계가 보지 않는다. 틱마다 드는 것은 다친 NPC와 시체뿐이다. 측정(`tests/unit/npc_health_test.gd`, 이 PC, 헤드리스): 다친 NPC 50명에 틱당 약 0.45 ms(대부분 셀 저장 표시). 실제 서버 부하에서의 측정은 하지 않았다.
+
+**테스트**: `tests/unit/npc_health_test.gd`(규칙·좀비·근접·치료·죽음·목격·저장·재시작·셀 해제·옛 문서·측정), `tests/integration/npc_health_net_test.gd`(실제 ENet: 상태 복제, 클라이언트의 근접 공격·붕대, 좀비 공격 이벤트), `tests/unit/npc_net_state_test.gd`(전선 형식·거울·이름표).

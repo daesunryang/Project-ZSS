@@ -24,6 +24,11 @@ extends ServerSystem
 ##       an NPC never enters a cell that is not in memory (false, counted in
 ##       blocked_move_count) and freezes in one that is not simulated.
 ##   set_simulation_tier(npc_id, tier) -> bool    (the scheduler, P4-3)
+##   refresh_simulation(world, npc_id)
+##       a component changed whether its NPC may be simulated
+##       (NpcComponent.blocks_simulation, F-25: it died): the NPC sleeps for
+##       good, or wakes when nothing blocks it and its cell is simulated.
+##   get_stage(stage_id)      the stage with this id, or null
 ##   mark_npc_dirty(npc_id)   something saved with the NPC changed
 ##   ensure_seeded(world)     places the roster, once per world
 ##   has_npc, get_npc (read-only), npc_ids, npc_count, npc_ids_in_cell,
@@ -330,6 +335,29 @@ func set_simulation_tier(npc_id: String, tier: String) -> bool:
 		return false
 	_npcs[npc_id].simulation_tier = tier
 	return true
+
+
+## Applies NpcComponent.blocks_simulation() after a component changed its
+## answer (F-25): a blocked NPC that is awake sleeps now and stays asleep;
+## one that is no longer blocked wakes when its cell is simulated. False
+## for an NPC that is not in memory.
+func refresh_simulation(world: ServerWorld, npc_id: String) -> bool:
+	var npc: NpcState = _npcs.get(npc_id, null)
+	if world == null or npc == null:
+		return false
+	if _is_blocked(npc):
+		_sleep(world, npc)
+	elif world.is_cell_simulated(world.cell_index.cell_of(npc_id)):
+		_wake(world, npc)
+	return true
+
+
+## The stage with this id (see add_stage), or null.
+func get_stage(stage_id: String) -> NpcStage:
+	for stage: NpcStage in _stages:
+		if stage.stage_id() == stage_id:
+			return stage
+	return null
 
 
 ## Something that is saved with this NPC changed (a component's document):
@@ -711,9 +739,17 @@ func _leave(world: ServerWorld, npc: NpcState, retired: bool) -> void:
 	npc_left.emit(npc.npc_id, retired)
 
 
-## The NPC is simulated from now on.
+## True when one of the NPC's components keeps it from being simulated.
+func _is_blocked(npc: NpcState) -> bool:
+	for component_id: String in npc.component_ids():
+		if npc.component(component_id).blocks_simulation():
+			return true
+	return false
+
+
+## The NPC is simulated from now on (never one a component blocks, F-25).
 func _wake(world: ServerWorld, npc: NpcState) -> void:
-	if _awake.has(npc.npc_id):
+	if _awake.has(npc.npc_id) or _is_blocked(npc):
 		return
 	_awake[npc.npc_id] = true
 	npc.simulation_tier = NpcState.TIER_NEAR
