@@ -1,0 +1,27 @@
+[gd_resource type="Resource" script_class="NpcRelocationSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/relocation/npc_relocation_settings.gd" id="1_npc_relocation"]
+
+[resource]
+script = ExtResource("1_npc_relocation")
+move_when_food_at_most = 3
+exhausted_tries = 2
+home_danger_threshold = 1.2
+hurt_health_fraction = 0.5
+hurt_at_home_radius_m = 15.0
+hurt_memory_min_strength = 0.5
+min_days_between_moves = 1
+retry_choice_after_world_sec = 21600.0
+give_up_days = 2
+min_distance_m = 30.0
+max_distance_m = 300.0
+danger_min_distance_m = 80.0
+prospect_bonus_m = 12.0
+prospect_cap = 8
+other_type_cost_m = 40.0
+scan_cells_per_tick = 1
+pack_duration_sec = 4.0
+settle_duration_sec = 5.0
+leg_length_m = 40.0
+leg_retry_pause_sec = 1.0
+max_leg_failures = 5

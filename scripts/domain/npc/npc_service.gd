@@ -75,6 +75,15 @@ extends ServerSystem
 ## lone homes are moved to their generated home once, the first time each
 ## is in memory (one per tick, in step(); a dead NPC stays where it is).
 ##
+## Moving (F-30, docs/09 §17.15): an NPC that lives alone may move to
+## another generated building by itself (NpcRelocation). While it is on its
+## way the building it moves to is claimed for it (`home_claims`, saved
+## with the world, so the claim holds while the NPC's cell is not in
+## memory); when it moves in, the roster record's `homes` names the new
+## building and the old one is free. is_seeded_home() is true for both
+## kinds, so nobody searches or takes a building somebody lives in or
+## moves to. Nothing here places or relocates an NPC that moved by itself.
+##
 ## Roster (docs/13 §16.3 D5): the NPCs of the configured NpcRoster are
 ## placed on their home spots exactly once per world. The world save
 ## records, per roster id, the NPC id every definition got and whether the
@@ -93,6 +102,9 @@ extends ServerSystem
 ##                          complete,
 ##                          homes: {definition_id: building_id}}},   (F-28;
 ##                          only definitions with a generated home)
+##    home_claims: {building_id: npc_id},       (F-30; left out when empty)
+##                     buildings an NPC is moving to, and the homes of
+##                     NPCs that are in no roster
 ##    npcs: [...],     only NPCs that are not saved with a cell document
 ##    stages: {stage_id: NpcStage.to_world_document()}}
 ## A world that never had an NPC, a roster or a stage document saves
@@ -111,6 +123,9 @@ const KEY_CONTENT_VERSION: String = "content_version"
 const KEY_COMPLETE: String = "complete"
 ## F-28: {definition_id: generated building id} of a roster record.
 const KEY_HOMES: String = "homes"
+## F-30: world document: {building_id: npc_id}.
+const KEY_HOME_CLAIMS: String = "home_claims"
+const MAX_HOME_CLAIMS: int = 4096
 ## Keys of the success events.
 const KEY_NPC_ID: String = "npc_id"
 const KEY_DEFINITION_ID: String = "definition_id"
@@ -167,6 +182,9 @@ var _grid: StructureGrid
 var _homes: NpcHomes = null
 ## NPCs in memory that wait to be moved to their generated home.
 var _pending_relocations: Dictionary[String, bool] = {}
+## F-30: building_id -> the NPC that moves there (or, for an NPC of no
+## roster, lives there).
+var _home_claims: Dictionary[String, String] = {}
 var _ids: EntityIdGenerator
 var _registry: EntityRegistry
 var _clock: WorldClock
@@ -499,17 +517,101 @@ func seeded_home(roster_id: String, definition_id: String) -> String:
 	return str(((_rosters.get(roster_id, {}) as Dictionary).get(KEY_HOMES, {}) as Dictionary).get(definition_id, ""))
 
 
-## True when this world chose the generated building as the home of an NPC
-## of a roster (F-29: nobody searches somebody else's home).
+## True when the generated building is taken: the home of an NPC of a
+## roster (as this world chose it, or as the NPC moved, F-30), or claimed
+## by an NPC that is moving there. Nobody searches or takes such a building
+## (F-29).
 func is_seeded_home(building_id: String) -> bool:
 	if building_id.is_empty():
 		return false
+	if _home_claims.has(building_id):
+		return true
 	for roster_id: String in _rosters:
 		var homes: Dictionary = (_rosters[roster_id] as Dictionary).get(KEY_HOMES, {})
 		for definition_id: Variant in homes:
 			if str(homes[definition_id]) == building_id:
 				return true
 	return false
+
+
+## Every taken building (see is_seeded_home): {building_id: true}.
+func taken_home_ids() -> Dictionary:
+	var taken: Dictionary = {}
+	for building_id: String in _home_claims:
+		taken[building_id] = true
+	for roster_id: String in _rosters:
+		var homes: Dictionary = (_rosters[roster_id] as Dictionary).get(KEY_HOMES, {})
+		for definition_id: Variant in homes:
+			taken[str(homes[definition_id])] = true
+	return taken
+
+
+## The NPC a building is claimed for ("" = nobody; see claim_home).
+func home_claim_holder(building_id: String) -> String:
+	return str(_home_claims.get(building_id, ""))
+
+
+## The buildings claimed for an NPC, sorted.
+func claimed_homes_of(npc_id: String) -> PackedStringArray:
+	var held: PackedStringArray = []
+	for building_id: String in _home_claims:
+		if _home_claims[building_id] == npc_id:
+			held.append(building_id)
+	held.sort()
+	return held
+
+
+## F-30: claims a generated building for an NPC that moves there: from now
+## on it is taken (is_seeded_home). False (nothing changes) when the
+## building is somebody's home or claimed for another NPC. True when the
+## NPC holds the claim already.
+func claim_home(npc_id: String, building_id: String) -> bool:
+	if npc_id.is_empty() or building_id.is_empty():
+		return false
+	if _home_claims.has(building_id):
+		return _home_claims[building_id] == npc_id
+	if is_seeded_home(building_id):
+		return false
+	_home_claims[building_id] = npc_id
+	return true
+
+
+## Gives the claim of an NPC on a building up (its move there was
+## abandoned). Nothing happens when the NPC does not hold it.
+func release_home_claim(npc_id: String, building_id: String) -> void:
+	if str(_home_claims.get(building_id, "")) == npc_id and not npc_id.is_empty():
+		_home_claims.erase(building_id)
+
+
+## Gives every claim of an NPC up, except the one on `except`.
+func release_home_claims(npc_id: String, except: String = "") -> void:
+	for building_id: String in claimed_homes_of(npc_id):
+		if building_id != except:
+			_home_claims.erase(building_id)
+
+
+## F-30: the NPC lives in `building_id` from now on. For an NPC of a
+## roster the roster record's `homes` names the building (so nothing
+## places or relocates the NPC again, and its old home is free) and its
+## claims are given up; for an NPC of no roster a claim on the building is
+## what keeps it taken (its other claims are given up). Calling it again
+## with the same building changes nothing.
+func settle_home(npc_id: String, building_id: String) -> void:
+	var npc: NpcState = _npcs.get(npc_id, null)
+	if npc == null or building_id.is_empty():
+		return
+	for roster_id: String in _rosters:
+		var record: Dictionary = _rosters[roster_id]
+		if str((record[KEY_NPCS] as Dictionary).get(npc.definition_id, "")) != npc_id:
+			continue
+		var homes: Dictionary = record.get(KEY_HOMES, {})
+		if str(homes.get(npc.definition_id, "")) != building_id:
+			homes[npc.definition_id] = building_id
+			record[KEY_HOMES] = homes
+		release_home_claims(npc_id)
+		return
+	release_home_claims(npc_id, building_id)
+	_home_claims[building_id] = npc_id
 
 
 ## Number of NPCs in memory that wait to be moved to their generated home.
@@ -632,7 +734,7 @@ func to_world_document() -> Dictionary:
 		var stage_document: Dictionary = stage.to_world_document()
 		if not stage_document.is_empty():
 			stage_documents[stage.stage_id()] = stage_document
-	if _population.is_empty() and _rosters.is_empty() and npcs.is_empty() and stage_documents.is_empty():
+	if _population.is_empty() and _rosters.is_empty() and npcs.is_empty() and stage_documents.is_empty() and _home_claims.is_empty():
 		return {}
 	var population: Dictionary = {}
 	for npc_id: String in population_ids():
@@ -648,6 +750,13 @@ func to_world_document() -> Dictionary:
 		if not homes.is_empty():
 			rosters[roster_id][KEY_HOMES] = homes.duplicate()
 	var document: Dictionary = {"schema_version": SCHEMA_VERSION, KEY_POPULATION: population, KEY_ROSTERS: rosters}
+	if not _home_claims.is_empty():
+		var claims: Dictionary = {}
+		var claimed: PackedStringArray = PackedStringArray(_home_claims.keys())
+		claimed.sort()
+		for building_id: String in claimed:
+			claims[building_id] = _home_claims[building_id]
+		document[KEY_HOME_CLAIMS] = claims
 	if not npcs.is_empty():
 		document[KEY_NPCS] = npcs
 	if not stage_documents.is_empty():
@@ -665,6 +774,7 @@ func restore_world_document(document: Dictionary) -> PackedStringArray:
 		return errors
 	var population: Dictionary[String, String] = _read_population(document.get(KEY_POPULATION, null), errors)
 	var rosters: Dictionary[String, Dictionary] = _read_rosters(document.get(KEY_ROSTERS, null), errors)
+	var claims: Dictionary[String, String] = _read_home_claims(document.get(KEY_HOME_CLAIMS, {}), errors)
 	var stage_documents: Variant = document.get(KEY_STAGES, {})
 	if typeof(stage_documents) != TYPE_DICTIONARY:
 		errors.append("npc: stages must be an object")
@@ -686,6 +796,7 @@ func restore_world_document(document: Dictionary) -> PackedStringArray:
 	_unclaimed_stage_documents = unclaimed
 	_population = population
 	_rosters = rosters
+	_home_claims = claims
 	_sealed = _sealed or not population.is_empty()
 	for npc: NpcState in restored:
 		_adopt(world, npc)
@@ -814,6 +925,9 @@ func _leave(world: ServerWorld, npc: NpcState, retired: bool) -> void:
 		npc.component(component_id).on_detached(world, npc, retired)
 	_npcs.erase(npc.npc_id)
 	_pending_relocations.erase(npc.npc_id)
+	if retired:
+		# Gone for good: what was claimed for it is free (F-30).
+		release_home_claims(npc.npc_id)
 	world.cell_index.remove(npc.npc_id)
 	npc_left.emit(npc.npc_id, retired)
 
@@ -944,6 +1058,21 @@ func _read_population(raw: Variant, errors: PackedStringArray) -> Dictionary[Str
 			continue
 		population[str(npc_id)] = str(definition_id)
 	return population
+
+
+## F-30: {building_id: npc_id}; absent in a save from before NPCs moved.
+func _read_home_claims(raw: Variant, errors: PackedStringArray) -> Dictionary[String, String]:
+	var claims: Dictionary[String, String] = {}
+	if typeof(raw) != TYPE_DICTIONARY or (raw as Dictionary).size() > MAX_HOME_CLAIMS:
+		errors.append("npc: home_claims must be an object")
+		return claims
+	for building_id: Variant in (raw as Dictionary):
+		var npc_id: Variant = (raw as Dictionary)[building_id]
+		if typeof(building_id) != TYPE_STRING or not ItemInstance.is_valid_definition_id(str(building_id)) or typeof(npc_id) != TYPE_STRING or not NpcState.is_valid_npc_id(str(npc_id)):
+			errors.append("npc: invalid home claim %s" % str(building_id))
+			continue
+		claims[str(building_id)] = str(npc_id)
+	return claims
 
 
 func _read_rosters(raw: Variant, errors: PackedStringArray) -> Dictionary[String, Dictionary]:

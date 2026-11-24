@@ -126,6 +126,10 @@ var npc_homes: NpcHomeSettings
 ## treatment by choice, fighting when cornered. null = none of it (the NPCs
 ## behave as before F-29). Needs `npc_behaviour`.
 var npc_scavenge: NpcScavengeSettings = null
+## F-30 (docs/09 §17.15): an NPC that lives alone moves to another shelter
+## when it has nothing left or its home is too dangerous. null = nobody
+## moves (the NPCs stay where F-28 put them). Needs `npc_scavenge`.
+var npc_relocation: NpcRelocationSettings = null
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -177,6 +181,7 @@ static func from_defaults() -> CompositionConfig:
 	config.npc_health = NpcHealthSettings.load_or_default()
 	config.npc_homes = NpcHomeSettings.load_or_default()
 	config.npc_scavenge = NpcScavengeSettings.load_or_default()
+	config.npc_relocation = NpcRelocationSettings.load_or_default()
 	return config
 
 
@@ -213,6 +218,9 @@ func _validate_npcs() -> PackedStringArray:
 	if npc_scavenge != null:
 		errors.append_array(npc_scavenge.validate())
 		errors.append_array(npc_scavenge.validate_against(navigation))
+	if npc_relocation != null:
+		errors.append_array(npc_relocation.validate())
+		errors.append_array(npc_relocation.validate_against(navigation))
 	if npc_roster != null:
 		errors.append_array(npc_roster.validate())
 		errors.append_array(npc_roster.validate_against(npc_definitions, map_content, StructureGrid.new(building.grid_module_m), npc.max_npcs))

@@ -58,7 +58,15 @@ extends NpcStage
 ##   drink   Farther than drink_carried_beyond_m from its home it drinks a
 ##           drink it carries, where it stands.
 ##   flee    It runs home instead of straight away when its home is far
-##           enough from the threat and not behind it.
+##           enough from the threat and not behind it (not while it is
+##           moving to another shelter, F-30).
+## F-30 (docs/09 §17.15; only with enable_relocation(), otherwise refused):
+##   relocate  An NPC that lives alone moves to another shelter: it
+##           chooses a building, packs what it can carry at home, walks
+##           there in legs and moves in (NpcRelocation). A move that was
+##           cut short goes on when the action begins again. While an NPC
+##           is in the middle of a move it rests and sleeps where it
+##           stands, not in the bed of the home it is leaving.
 ## Any other action id is refused (unsupported_action).
 ##
 ## Reports to the decision layer (the scheduler's interrupts, P4-4's
@@ -110,7 +118,8 @@ const ACTION_FLEE: String = "flee"
 const ACTION_SCAVENGE: String = "scavenge"
 const ACTION_TREAT: String = "treat"
 const ACTION_FIGHT: String = "fight"
-const ACTIONS: PackedStringArray = [ACTION_EAT, ACTION_DRINK, ACTION_REST, ACTION_SLEEP, ACTION_WORK, ACTION_WANDER, ACTION_FLEE, ACTION_SCAVENGE, ACTION_TREAT, ACTION_FIGHT]
+const ACTION_RELOCATE: String = "relocate"
+const ACTIONS: PackedStringArray = [ACTION_EAT, ACTION_DRINK, ACTION_REST, ACTION_SLEEP, ACTION_WORK, ACTION_WANDER, ACTION_FLEE, ACTION_SCAVENGE, ACTION_TREAT, ACTION_FIGHT, ACTION_RELOCATE]
 ## The actions of F-29: refused until enable_survival() was called.
 const SURVIVAL_ACTIONS: PackedStringArray = [ACTION_SCAVENGE, ACTION_TREAT, ACTION_FIGHT]
 ## Count of the swings of a fight that hit / that killed.
@@ -146,6 +155,8 @@ var _homes: NpcHomes = null
 var _sense: NpcSurvivalSense = null
 var _scavenging: NpcScavenging = null
 var _fighting: NpcFighting = null
+## F-30: null until enable_relocation().
+var _relocation: NpcRelocation = null
 var _adapter_ref: WeakRef = null
 var _world_ref: WeakRef = null
 var _npcs_ref: WeakRef = null
@@ -218,6 +229,21 @@ func fighting() -> NpcFighting:
 	return _fighting
 
 
+## F-30: turns on the action relocate (ServerComposition, after
+## enable_survival(), before the world runs). Returns the helper that knows
+## when and where an NPC moves, or null without the survival layer.
+func enable_relocation(settings: NpcRelocationSettings) -> NpcRelocation:
+	if _sense == null or _scavenging == null or settings == null:
+		return null
+	_relocation = NpcRelocation.new(settings, _sense, _scavenging, _grid, Callable(self, "_move"))
+	return _relocation
+
+
+## The moving helper (null without enable_relocation()).
+func relocation() -> NpcRelocation:
+	return _relocation
+
+
 # ------------------------------------------------------------ the contract
 
 ## NpcActionExecutor.begin: "" when the action runs now, or a failure code.
@@ -225,7 +251,7 @@ func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, action: NpcActio
 	var state: NpcBehaviourState = _state_of(npc)
 	if world == null or npcs == null or state == null or action == null:
 		return NpcActionExecutor.FAIL_UNSUPPORTED
-	if not ACTIONS.has(action.action_id) or (_sense == null and SURVIVAL_ACTIONS.has(action.action_id)):
+	if not ACTIONS.has(action.action_id) or (_sense == null and SURVIVAL_ACTIONS.has(action.action_id)) or (_relocation == null and action.action_id == ACTION_RELOCATE):
 		return NpcActionExecutor.FAIL_UNSUPPORTED
 	if not npcs.is_awake(npc.npc_id):
 		return FAIL_NOT_READY
@@ -265,6 +291,8 @@ func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, action: NpcActio
 			code = _begin_treat(npc, state)
 		ACTION_FIGHT:
 			code = _begin_fight(world, npc, state)
+		ACTION_RELOCATE:
+			code = _relocation.begin(world, npcs, npc, state)
 	if not code.is_empty():
 		state.clear_action()
 		return code
@@ -339,6 +367,8 @@ func on_npc_woke(world: ServerWorld, npc: NpcState) -> void:
 		_order_stale = true
 	if _scavenging != null:
 		_scavenging.queue_cells_of(world, npc)
+	if _relocation != null:
+		_relocation.on_npc_woke(world, _npcs(), npc)
 
 
 func on_npc_slept(_world_now: ServerWorld, npc: NpcState) -> void:
@@ -354,6 +384,8 @@ func step(world: ServerWorld, npcs: NpcService, action_delta: float, _world_delt
 		return
 	if _scavenging != null:
 		_scavenging.warm_one()
+	if _relocation != null:
+		_relocation.begin_tick()
 	if _running.is_empty():
 		return
 	var started_usec: int = Time.get_ticks_usec()
@@ -396,6 +428,8 @@ func step(world: ServerWorld, npcs: NpcService, action_delta: float, _world_delt
 				_finish_treating(world, npcs, npc, state)
 			ACTION_FIGHT:
 				_swing(world, npcs, npc, state)
+			ACTION_RELOCATE:
+				_step_relocate(world, npcs, npc, state)
 			ACTION_REST, ACTION_SLEEP:
 				var needs: NpcNeeds = _advanced_needs(world, npc)
 				if needs == null or needs.value(NpcNeedKind.FATIGUE) <= (_settings.sleep_until_fatigue if state.action_id == ACTION_SLEEP else _settings.rest_until_fatigue):
@@ -465,6 +499,11 @@ func _begin_eat(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, def
 ## Rest and sleep. `go_home` (the night sleep): without a bed the NPC walks
 ## to its home tile first.
 func _begin_rest(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, definition: NpcDefinition, go_home: bool) -> String:
+	if _relocation != null and _relocation.is_moving(npc):
+		# F-30: on its way to another shelter it lies down where it stands.
+		_start_resting(world, npc, state, go_home)
+		_report(npc.npc_id, NpcActionExecutor.REPORT_ARRIVED)
+		return ""
 	var picked: Dictionary = _pick_spot(npc, NpcSpotDefinition.KIND_BED, _homes.home_building_id(npc, definition), _place_of(npc, definition, true))
 	if str(picked["code"]).is_empty():
 		var code: String = _use_spot(npc.npc_id, state, str(picked["spot"]), NpcExecutor.HOLD)
@@ -511,7 +550,7 @@ func _begin_flee(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, ta
 		var angle: float = npc.rng.randf() * TAU
 		away = Vector3(cos(angle), 0.0, sin(angle))
 	var goal: Vector3 = world.clamp_to_world(npc.position + away.normalized() * _settings.flee_distance_m)
-	if threat_known and _sense != null and _sense.is_lone(npc):
+	if threat_known and _sense != null and _sense.is_lone(npc) and not (_relocation != null and _relocation.is_moving(npc)):
 		# F-29: home is the safe place, when it is far enough from the threat
 		# and the way there does not lead towards it.
 		var home: Vector3 = _place_of(npc, definition, true)
@@ -565,6 +604,17 @@ func _step_scavenge(world: ServerWorld, npcs: NpcService, npc: NpcState, state: 
 	if code == NpcScavenging.STEP_DONE:
 		_finish(world, npcs, npc, state, info)
 	elif code != NpcScavenging.STEP_CONTINUES:
+		_fail(world, npcs, npc, state, code)
+
+
+## F-30: the timer of a move ran out (choosing, packing, the pause before
+## a leg, settling).
+func _step_relocate(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBehaviourState) -> void:
+	var info: Dictionary = {}
+	var code: String = _relocation.on_timer(world, npcs, npc, state, info) if _relocation != null else NpcActionExecutor.FAIL_UNSUPPORTED
+	if code == NpcRelocation.STEP_DONE:
+		_finish(world, npcs, npc, state, info)
+	elif code != NpcRelocation.STEP_CONTINUES:
 		_fail(world, npcs, npc, state, code)
 
 
@@ -702,7 +752,13 @@ func _on_executor_report(npc_id: String, reason: String) -> void:
 	elif reason == NpcExecutor.INTERRUPT_DONE:
 		_on_done(world, npcs, npc, state)
 	elif not NpcExecutor.failure_code_of(reason).is_empty():
-		_fail(world, npcs, npc, state, _failure_code(NpcExecutor.failure_code_of(reason)))
+		var code: String = _failure_code(NpcExecutor.failure_code_of(reason))
+		if state.action_id == ACTION_RELOCATE and _relocation != null:
+			# F-30: a leg that found no way is not the end of a move.
+			code = _relocation.on_walk_failed(world, npcs, npc, state, code)
+			if code == NpcRelocation.STEP_CONTINUES:
+				return
+		_fail(world, npcs, npc, state, code)
 	else:
 		_executor.tell_scheduler(npc_id, reason)
 
@@ -762,6 +818,11 @@ func _on_done(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBeh
 				_report(npc.npc_id, NpcActionExecutor.REPORT_ARRIVED)
 			else:
 				_fail(world, npcs, npc, state, code)
+		ACTION_RELOCATE:
+			# A walk of the move is over: it packs, or goes on to the next leg.
+			var moved: String = _relocation.on_walk_done(world, npcs, npc, state) if _relocation != null else NpcActionExecutor.FAIL_UNSUPPORTED
+			if moved != NpcRelocation.STEP_CONTINUES:
+				_fail(world, npcs, npc, state, moved)
 		_:
 			_finish(world, npcs, npc, state, {})
 

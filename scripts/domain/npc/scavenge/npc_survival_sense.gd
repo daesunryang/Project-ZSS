@@ -318,6 +318,35 @@ func on_npc_damaged(npc_id: String, source_id: String) -> void:
 		emotions.apply_emotion(EMOTION_FEAR, settings.hurt_fear, world.clock.world_time_sec)
 
 
+## What the NPC remembers as dangerous now (F-30): [[Vector3 place, float
+## weight]] per danger memory, the weight being strength x importance. The
+## danger at a place is the sum of weight x nearness over these, which is
+## what danger_at() returns; whoever asks about many places asks this once.
+func danger_sources(npc: NpcState, world_time_sec: float) -> Array[Array]:
+	var sources: Array[Array] = []
+	var memories: NpcMemoryStore = npc.component(NpcMemoryStore.COMPONENT_ID) as NpcMemoryStore if npc != null else null
+	if memories == null or memories.count() == 0:
+		return sources
+	for memory_id: String in memories.memory_ids():
+		var memory: NpcMemory = memories.memory(memory_id)
+		if memory.interpretation_tags.has(TAG_DANGER):
+			sources.append([memory.location, memory.strength_at(world_time_sec) * memory.importance])
+	return sources
+
+
+## True when the NPC remembers a zombie's hit within `radius_m` of `place`
+## that is still at least `min_strength` strong (F-30: hurt at home).
+func remembers_hurt_near(npc: NpcState, place: Vector3, radius_m: float, min_strength: float, world_time_sec: float) -> bool:
+	var memories: NpcMemoryStore = npc.component(NpcMemoryStore.COMPONENT_ID) as NpcMemoryStore if npc != null else null
+	if memories == null or memories.count() == 0:
+		return false
+	for memory_id: String in memories.memory_ids():
+		var memory: NpcMemory = memories.memory(memory_id)
+		if memory.event_type == MEMORY_HURT and _flat_distance(memory.location, place) <= radius_m and memory.strength_at(world_time_sec) >= min_strength:
+			return true
+	return false
+
+
 ## How dangerous the NPC remembers a place to be (>= 0, see the header).
 func danger_at(npc: NpcState, position: Vector3, world_time_sec: float) -> float:
 	var memories: NpcMemoryStore = npc.component(NpcMemoryStore.COMPONENT_ID) as NpcMemoryStore if npc != null else null

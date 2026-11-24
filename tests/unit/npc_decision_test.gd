@@ -366,8 +366,8 @@ func test_the_shipped_actions_and_settings_are_valid_and_bad_data_is_refused() -
 	var actions: NpcActionCatalog = NpcActionCatalog.load_directory()
 	assert_eq(shipped.validate().size(), 0, ", ".join(shipped.validate()))
 	assert_eq(shipped.validate_against(actions).size(), 0, ", ".join(shipped.validate_against(actions)))
-	# F-29 added fight, scavenge and treat to the seven of Phase 4.
-	assert_eq(actions.action_ids(), PackedStringArray([DRINK, EAT, "fight", FLEE, REST, "scavenge", SLEEP, "treat", WANDER, WORK]), "the ten actions, sorted")
+	# F-29 added fight, scavenge and treat to the seven of Phase 4, F-30 relocate.
+	assert_eq(actions.action_ids(), PackedStringArray([DRINK, EAT, "fight", FLEE, "relocate", REST, "scavenge", SLEEP, "treat", WANDER, WORK]), "the eleven actions, sorted")
 	assert_false(actions.get_action(FLEE).selectable, "only the hard interrupt starts the flee action")
 	assert_false(actions.get_action("fight").selectable, "only the hard interrupt starts the fight action")
 	assert_eq(shipped.fallback_action_id, WANDER)
@@ -859,7 +859,7 @@ func test_an_action_that_runs_until_done_outlives_its_own_precondition() -> void
 	var shipped: NpcActionCatalog = NpcActionCatalog.load_directory()
 	for action_id: String in shipped.action_ids():
 		# (F-29: and a scavenging trip, which is not given up half way.)
-		assert_eq(shipped.get_action(action_id).runs_until_done, action_id == REST or action_id == SLEEP or action_id == "scavenge", "shipped %s" % action_id)
+		assert_eq(shipped.get_action(action_id).runs_until_done, action_id == REST or action_id == SLEEP or action_id == "scavenge" or action_id == "relocate", "shipped %s" % action_id)
 
 
 func test_an_npc_without_a_candidate_falls_back_or_stands_idle() -> void:

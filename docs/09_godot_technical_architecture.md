@@ -3393,3 +3393,83 @@ FD-11("NPC마다 정해진 시각", 피로 0까지 잠)의 구현이다. 잠 빨
 **조립** (`ServerComposition`): `npc_behaviour`와 `npc_scavenge`가 둘 다 있을 때 구성 요소 `scavenge`를 등록하고, `NpcSurvivalSense`를 만들어 `NpcBehaviours.enable_survival`과 `NpcUtilityDecider.set_survival`에 준다. `npc_health`가 있으면 `npc_damaged`를 위험 기억에 잇고 자동 자가 치료를 끈다.
 
 **다른 시스템에 더한 것**: `NpcHomes.building_center`·`container_position`, `NpcService.is_seeded_home`, `NpcBehaviourState.capacity`, `NpcHealth.self_treat_by_action`. 좀비·전투·보관함·생성 맵 코드는 고치지 않았다.
+
+### 17.15 거처 옮기기(F-30, 구성 요소 `relocation`, 행동 `relocate`)
+
+코드: `scripts/domain/npc/relocation/`(`NpcRelocation`, `NpcRelocationState`, `NpcRelocationPicker`, `NpcRelocationSettings`), 설정 `data/tuning/npc_relocation_settings.tres`, 행동 `resources/definitions/npc_actions/relocate.tres`. 임시 가정과 측정은 docs/15 §26, 작업 메모는 notes/f30-npc-relocation.md. 사용자 지시(2026-11-23): "npc는 자유의지가 있으며 생존을 최우선 시 함", "거처를 바꿔다닐 수도 있음".
+
+혼자 사는 NPC(§17.13)가 **스스로 정해서** 다른 생성 건물로 이사한다. `CompositionConfig.npc_relocation`이 null이면 아무도 이사하지 않는다(F-29까지의 모습). `npc_scavenge`(§17.14)가 있어야 켤 수 있다. 이사에는 난수를 쓰지 않는다.
+
+**언제** (`NpcRelocation.move_reason`, 급한 이유부터)
+
+| 이유 | 조건 | 성격 |
+|---|---|---|
+| `attacked` | 집에서 공격받았다는 표시(`NpcRelocationState.attacked`)가 있다. 표시는 F-32가 `NpcRelocation.note_attacked()`로 세운다. 지금은 세우는 곳이 없다(연결 자리만 있다) | — |
+| `hurt` | 체력이 최대의 `hurt_health_fraction`(0.5) 이하이고, 집 한가운데 `hurt_at_home_radius_m`(15m) 안에서 좀비에게 맞은 기억(`hurt_by_zombie`)이 강도 `hurt_memory_min_strength`(0.5) 이상으로 남아 있다 | 한도 × (1.5 − 용기): 용감하면 0.25, 겁이 많으면 0.75 |
+| `danger` | 집 한가운데의 위험(§17.14 위험 기억의 합)이 `home_danger_threshold`(1.2) 이상. 방금 본 좀비 한 번은 0.5라서 한 번으로는 누구도 떠나지 않는다 | 한도 × 2^(위험 감수 + 용기 − 신경증 − 0.5), 0.5배~2배 |
+| `no_supplies` | 자기 집을 뒤졌고, 최근 수색이 `exhausted_tries`(2)번 연속으로 "갈 건물 없음"이었고(주변 셀을 모두 들여다볼 수 있었는데 전부 비웠거나·막혔거나·위험하거나·남의 집), 음식(든 것 + 집)이 `move_when_food_at_most`(3)단위 이하 | 한도 × (1.5 − 위험 감수): 조심스러우면 5단위, 대담하면 2단위에서 떠난다 |
+
+- `danger`와 `no_supplies`는 이사 들어온 날부터 `min_days_between_moves`(달력 1일) 동안은 이유가 되지 않는다. 다만 음식이 0이면 `no_supplies`는 바로 이유가 된다. `hurt`·`attacked`는 기다리지 않는다.
+- 물은 집에서 마르지 않으므로(F28-006) 목마름만으로는 이사하지 않는다.
+- 그 밖의 이유는 없다. 심심해서 옮기지 않는다.
+- "갈 건물 없음"은 `NpcScavengeState.no_target_streak`으로 센다: 수색이 `no_target`으로 실패할 때, 반경 안의 셀을 모두 볼 수 있었던 경우에만 1 늘고(시뮬레이션되지 않거나 덜 지어진 셀이 있었으면 그대로), 수색이 시작되면 0이 된다.
+
+**결정 계층** (§17.6)
+
+- 행동 `relocate`: 기본 점수 0.74. 치료(1.0)와 위험 단계의 먹기·마시기(0.75~)보다 낮고 수색의 최대(0.73)보다 높다. 생존 순서는 도망 → (몰리면) 싸움 → 치료 → 위험 단계의 먹기·마시기 → **이사** → 수색 → 배회.
+- 후보 조건 `requires_move_reason`: 이사 중이거나 위의 이유가 있는 NPC만(아니면 거절 `no_move_reason`). 갈 곳을 못 찾은 NPC는 `retry_choice_after_world_sec`(달력 6시간) 동안 후보가 아니다.
+- "끝까지 가는 행동"(`runs_until_done`)이다. 좀비가 보이면 도망이 끊고, 다른 욕구가 위험 단계가 되거나 치료할 수 있게 되면 그것이 끊는다. 끊겨도 이사는 구성 요소에 남아 있어서, 다음에 `relocate`가 다시 시작되면 **하던 단계부터** 이어 간다.
+- 이사 중에는 옛 집으로 돌려보낼 행동이 후보가 아니다(`blocked_while_moving`: 수색·배회, 거절 `moving`). 쉬기·잠은 침대로 가지 않고 서 있는 자리에서 한다. 도망은 옛 집으로 뛰지 않고 위협 반대쪽으로 뛴다.
+- 새 행동이라 난수를 뽑지 않는다(`draws_jitter = false`, §17.14와 같은 이유).
+
+**이사 한 번** (`NpcRelocationState.phase`)
+
+1. `choosing` 고르기: 선 채로 기다리는 동안, 집 한가운데에서 `max_distance_m`(300m) 안의 셀(약 140개)의 건물 목록이 만들어진다(생성기 계획에서. **셀을 올리지 않는다**). 한 틱은 아직 목록이 없는 셀을 `scan_cells_per_tick`(1)개까지 만들거나(고르는 NPC 전부를 합쳐서. 이미 있는 셀은 그냥 지나간다), 셀이 다 준비된 NPC **한 명**이 고르게 한다(아래 "어디로"). 둘을 한 틱에 하지 않는다. 혼자 고르는 NPC는 약 140틱(60Hz에서 2.3초)이 걸린다. 고른 건물은 그 자리에서 **예약**한다(`NpcService.claim_home`). 후보가 없으면 이사는 끝나고(실패 `no_destination`) 6시간 뒤 다시 본다.
+2. `packing` 짐 싸기: 집 보관함(메모리에 있는 것)을 차례로 가서 `pack_duration_sec`(4초)씩 서 있다가 꺼낸다. 순서는 음식 → 음료 → 치료제 → 지금 든 것보다 좋은 무기(든 것은 두고 간다). 인벤토리 칸(4)이 차면 더 못 꺼낸다. 그 밖의 물건은 두고 간다. 보관함으로 가는 길을 못 찾으면 그냥 떠난다.
+3. `travelling` 가는 길: 새 집의 집 타일까지 `leg_length_m`(40m) 이하의 **구간**으로 나눠 걷는다(구간마다 길찾기 한 번, 길찾기 반경 60m의 0.8배 이하여야 한다: 설정 검사). 구간의 끝은 목적지 쪽 직선 위의 타일이고, 남은 거리가 40m 이하면 목적지다. 걷기·문은 실행 계층(§17.7) 그대로다.
+   - 구간은 그 직선이 지나는 셀이 **모두 메모리에 있고 다 지어졌을 때만** 시작한다. 아니면 행동이 `not_ready`로 실패하고 재시도 대기(10초부터 두 배, 최대 120초) 뒤 다시 본다. NPC는 셀을 올리지도 짓지도 않는다.
+   - 시뮬레이션되지 않는 셀로 걸어 들어가면 다른 NPC처럼 거기서 멈추고(D4), 그 셀이 다시 돌 때 이어 간다.
+   - 구간의 길을 못 찾으면 `leg_retry_pause_sec`(1초) 뒤 옆으로(±35°, ±70°, ±110°, 길이 0.6배) 다시 건다. `max_leg_failures`(5)번 연속 실패하면 목적지를 **포기**한다: 그 건물을 `blocked`로 기억하고(수색의 방문 기록), 예약을 풀고, **서 있는 자리에서 다시 고른다**. 이때는 옛 집도 후보다(다른 후보가 없으면 옛 집으로 돌아간다).
+   - 이사를 시작한 지 달력 `give_up_days`(2일)가 지나도 도착하지 못했으면 같은 방식으로 포기하고 다시 고른다.
+4. `settling` 들어가기: 집 타일에서 `settle_duration_sec`(5초) 뒤 그 건물이 집이 된다. 구성 요소 `home`이 새 건물과 집 타일을 가리키고, `NpcService.settle_home`이 명단 기록을 바꾼다. 새 집 보관함을 뒤진 것으로 만들고(`ContainerService.search_now`: 루팅은 플레이어가 처음 열 때와 같은 시드), 들고 온 음식·음료·남는 무기를 넣는다(수색의 "집에 넣기"와 같다). 치료제와 가장 좋은 무기는 지닌다. 침대·물·음식 자리는 새 건물에서 계산된다(§17.13).
+
+이사한 뒤에는 수색(§17.14)이 새 집 기준으로 돈다. 옛 동네에서 비운 건물의 기억은 남는다.
+
+**어디로** (`NpcRelocationPicker.choose`, 순수 함수)
+
+- 후보: NPC가 살 수 있는 생성 건물(`NpcHomePicker.is_home`: 집 타일·침대·물 자리·보관함) 중
+  - 자기 집이 아니고, **잡히지 않은 것**(다른 NPC의 집, 다른 NPC가 이사 가는 중인 건물: `NpcService.taken_home_ids`),
+  - `empty`로 기억하지 않고, `blocked`로 기억한 지 `blocked_forget_days`가 지난 것,
+  - 건물 한가운데의 위험이 수색의 위험 한도(§17.14) 미만인 것,
+  - 집 한가운데에서 `min_distance_m`(30m)~`max_distance_m`(300m). 위험을 피해 떠날 때(`danger`·`hurt`·`attacked`)는 `danger_min_distance_m`(80m)부터.
+- 비용(m)이 가장 작은 것, 같으면 건물 id가 작은 쪽:
+  거리(집 한가운데에서. 포기하고 다시 고를 때는 서 있는 자리에서) + 위험 × `danger_cost_m`(60) + 집이 아니면 `other_type_cost_m`(40) − `prospect_bonus_m`(12) × 주변에 뒤질 만한 건물 수(그 건물의 셀과 둘레 8셀에서, 잡히지 않았고 비웠다고 기억하지 않는 보관함 있는 건물. 자기는 빼고 최대 `prospect_cap` 8).
+- 닿을 수 있는지는 미리 알 수 없다(수백 m 길찾기를 하지 않는다). 가다가 못 가면 위의 "포기"가 처리한다.
+- 고른 결과는 캐시 상태·계획 순서와 무관하다. 고르는 데 걸리는 틱 수는 캐시 상태에 따라 다르다(재시작한 서버는 목록을 다시 만든다).
+
+**누가 어디 사는가** (`NpcService`)
+
+- 예약 `home_claims: {building_id: npc_id}`: 이사 가는 중인 건물. **월드 문서에 저장**한다(NPC의 셀이 메모리에 없는 동안에도 그 건물이 잡혀 있어야 한다). 명단에 없는 NPC는 사는 집도 이것으로 잡는다.
+- `is_seeded_home(building_id)`: 명단 기록의 집이거나 예약된 건물이면 참. 수색(§17.14)과 이사 후보가 이것으로 "남의 건물"을 뺀다. 그래서 **두 NPC가 같은 건물을 잡지 않는다**.
+- `claim_home(npc_id, building_id)`(이미 잡힌 건물이면 거절), `release_home_claim`, `settle_home(npc_id, building_id)`: 명단 NPC면 명단 기록 `homes[definition_id]`를 새 건물로 바꾸고 예약을 푼다. 옛 집은 그 순간 비어서 다른 NPC가 수색하거나 이사 올 수 있다.
+- 명단 기록이 새 집을 가리키므로 처음 배치(`_choose_homes`)와 옛 월드 한 번 옮기기(`_relocation_target`, §17.13)는 이 NPC를 다시 건드리지 않는다.
+- 깨어날 때 맞춤(`NpcRelocation.on_npc_woke`): 명단 기록·예약은 월드 문서에, NPC의 집·이사 상태는 셀 문서에 있어서 저장 사이에 죽은 서버는 둘이 어긋날 수 있다. NPC가 깨어날 때 **NPC 문서를 기준으로** 맞춘다: 집이 기록과 다르면 기록을 고치고, 이사 중인데 예약이 없으면 다시 잡고, 그 건물을 남이 잡았으면 다시 고른다.
+- 죽은 NPC: 이사 중이었으면 예약을 풀고 이사를 지운다(`NpcHealth.npc_died`). 든 것은 죽은 자리에 떨어진다(F-25 그대로: 길 위). 옛 집은 기록에 남는다(F-28과 같다). 월드에서 지워진 NPC는 예약을 모두 잃는다.
+
+**저장·재시작·셀 내리기** (프로토콜 변경 없음, `PROTOCOL_VERSION` 그대로, 스키마 번호 그대로)
+
+- NPC 문서의 구성 요소 `relocation`(스키마 1): `{phase: "" | "choosing" | "packing" | "travelling" | "settling", reason, target_building_id, target_tile: [x, z], scan_index, container_index, packed, packed_units, leg_failures, started_day, from_here, attacked, last_settled_day, moves, no_choice_until_world_sec}`. 정수·이름·참거짓뿐이다. 기본값인 키는 쓰지 않는다: 이사한 적 없는 NPC의 문서는 스키마 번호뿐이다. 이 구성 요소가 없는 옛 NPC 문서는 빈 것으로 읽는다.
+- 구성 요소 `scavenge`에 `no_target_streak`(0이면 쓰지 않음)이 늘었다. 스키마 1 그대로, 없는 저장은 0.
+- 월드 문서 `systems.npc.home_claims`(비어 있으면 쓰지 않음). 없는 저장은 빈 것. 명단 기록 `homes`의 값이 이사로 바뀐다(형식은 그대로).
+- 나머지는 기존 구성 요소: 행동과 타이머는 `behaviour`, 걷는 길은 `executor`, 든 짐은 `behaviour`의 인벤토리. 그래서 이사 도중 저장 → 재시작, 이사 도중 셀이 내려갔다 올라옴 둘 다 **같은 건물로 가던 길을 이어 간다**(D11). 무엇이 비트까지 같은지는 docs/15 §26.2.
+- 행동 세기(`behaviour.counts`)에 `relocate`가 생긴다. 화면 라벨은 늘리지 않았다: 이사 중인 NPC는 `walk`로 보인다(F30-010).
+
+**먼 NPC**: 기존 규칙 그대로다(D4, F28-012). 플레이어가 근처에 없으면 이유도 생기지 않고 이사도 멈춰 있다.
+
+**비용**: 고르는 동안 틱마다 셀 하나의 목록(0.1~1ms) 또는 고르기 한 번(건물 400채에 약 1.5ms), 짐 싸기 0.2ms, 구간 시작 0.06ms + 길찾기 한 번, 입주 0.4~0.9ms. 이사하지 않는 NPC는 결정 때 `move_reason` 한 번(기억 64개 이하를 훑는다)뿐이다. docs/15 §26.1.
+
+**조립** (`ServerComposition`): `npc_behaviour`·`npc_scavenge`·`npc_relocation`이 모두 있을 때 구성 요소 `relocation`을 등록하고, `NpcBehaviours.enable_relocation`이 `NpcRelocation`을 만들어 `NpcUtilityDecider.set_relocation`에 준다. `npc_health`가 있으면 `npc_died`를 잇는다.
+
+**다른 시스템에 더한 것**: `NpcService`(예약과 `settle_home`, `taken_home_ids`; `is_seeded_home`의 뜻이 "잡힌 건물"로 넓어짐), `NpcScavenging`(셀 목록 공개 `cells_around`·`buildings_of`(살 수 있는지 포함), 캐시 256 → 1024셀, `no_target_streak`, 짐 옮기기 공개 함수), `NpcSurvivalSense`(`danger_sources`, `remembers_hurt_near`), `NpcActionDefinition`(`requires_move_reason`, `blocked_while_moving`), `NpcUtilityDecider`(두 거절 코드), `NpcBehaviours`(행동 `relocate`, 이사 중 쉬기·도망). 좀비·전투·보관함·생성 맵·길찾기·네트워크 코드는 고치지 않았다.
+
+**테스트** `tests/unit/npc_relocation_test.gd`: 설정·구성 요소·고르기(손으로 만든 목록), 예약과 명단 기록, 이유와 성격 한도, 시골 NPC가 먹을 것이 떨어져 이사하고 거기서 사는 장면, 좀비를 거듭 본 집을 떠나는 장면, 두 NPC가 같은 건물을 잡지 않음, 이사 도중 저장 → 재시작, 셀 내리기, 좀비를 만나 도망쳤다가 이어 가기, 길 위에서 죽음, 길 없는 목적지 포기, 갈 곳 없음, 측정(고르기, 10·25명).

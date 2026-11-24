@@ -64,9 +64,15 @@ const INFO_BUILDING: String = "building_id"
 const INFO_TAKEN: String = "taken_units"
 const INFO_STOWED: String = "stowed_units"
 ## Cells whose building lists are kept (the cache is emptied when full).
-const MAX_CACHED_CELLS: int = 256
+## (F-30: an NPC that chooses where to move looks at well over a hundred.)
+const MAX_CACHED_CELLS: int = 1024
 const KEY_ID: String = "id"
 const KEY_CENTER: String = "center"
+## MapBuildingDefinition.building_type of the building (F-30).
+const KEY_TYPE: String = "type"
+## True when an NPC can live in the building (F-30; only in the entries of
+## a cell that was listed with it).
+const KEY_LIVABLE: String = "livable"
 
 ## Diagnostics (tests / profiling).
 var trip_count: int = 0
@@ -75,6 +81,9 @@ var taken_unit_count: int = 0
 var stowed_unit_count: int = 0
 var last_candidate_count: int = 0
 var last_avoided_count: int = 0
+## Cells within reach the last pick_target() could not look into: not
+## simulated, or not completely built yet.
+var last_unseen_cell_count: int = 0
 var last_pick_usec: int = 0
 var warmed_cell_count: int = 0
 
@@ -87,6 +96,8 @@ var _grid: StructureGrid
 var _mover: Callable
 ## cell -> [{id, center}] of its generated buildings that have a container.
 var _cells: Dictionary[Vector2i, Array] = {}
+## The cells of `_cells` whose entries say whether an NPC can live there.
+var _livable_cells: Dictionary[Vector2i, bool] = {}
 ## Cells that are planned ahead, one per tick.
 var _warm_queue: Array[Vector2i] = []
 
@@ -122,6 +133,11 @@ func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBehavi
 		var building_id: String = pick_target(world, npcs, npc, tried)
 		if building_id.is_empty():
 			trip.clear_trip()
+			if last_unseen_cell_count == 0:
+				# Everything around it that it could look into is emptied, blocked,
+				# too dangerous or somebody else's (F-30: a reason to move away).
+				trip.no_target_streak += 1
+				npcs.mark_npc_dirty(npc.npc_id)
 			return FAIL_NO_TARGET
 		tried[building_id] = true
 		trip.clear_trip()
@@ -130,6 +146,7 @@ func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBehavi
 		var code: String = _go_to_next_container(world, npc, state, trip, 0)
 		if code == STEP_CONTINUES:
 			trip_count += 1
+			trip.no_target_streak = 0
 			npcs.mark_npc_dirty(npc.npc_id)
 			return ""
 		# No container of it is in memory, or no walk could begin: the next.
@@ -223,6 +240,7 @@ func pick_target(world: ServerWorld, npcs: NpcService, npc: NpcState, without: D
 	var started_usec: int = Time.get_ticks_usec()
 	last_candidate_count = 0
 	last_avoided_count = 0
+	last_unseen_cell_count = 0
 	var trip: NpcScavengeState = NpcScavengeState.of(npc)
 	var home: NpcHome = NpcHome.of(npc)
 	var generator: ProceduralMapGenerator = _homes.generator() if _homes != null else null
@@ -240,11 +258,12 @@ func pick_target(world: ServerWorld, npcs: NpcService, npc: NpcState, without: D
 	var wants_more: bool = _sense.wanted_food(world, npc) > 0 or _sense.wanted_drinks(world, npc) > 0
 	var best_id: String = ""
 	var best_cost: float = INF
-	for cell: Vector2i in _cells_in_reach(world, home_center):
+	for cell: Vector2i in cells_around(world, home_center, _settings.radius_m):
 		var cell_id: String = WorldCellGrid.id_of(cell)
 		if not world.is_cell_simulated(cell_id) or not map.is_cell_complete(cell_id):
+			last_unseen_cell_count += 1
 			continue
-		for building: Dictionary in _buildings_of(generator, cell):
+		for building: Dictionary in buildings_of(generator, cell):
 			var building_id: String = str(building[KEY_ID])
 			var center: Vector3 = building[KEY_CENTER]
 			if building_id == home.building_id or without.has(building_id) or _flat_distance(center, home_center) > _settings.radius_m:
@@ -267,16 +286,16 @@ func pick_target(world: ServerWorld, npcs: NpcService, npc: NpcState, without: D
 	return best_id
 
 
-## The cells a building within radius_m of `home_center` can stand in
-## (sorted by x, then z). A building never crosses a cell border: a cell
-## whose nearest point is beyond the radius holds none that is near enough.
-func _cells_in_reach(world: ServerWorld, home_center: Vector3) -> Array[Vector2i]:
+## The cells a building within `radius_m` of `center` can stand in (sorted
+## by x, then z). A building never crosses a cell border: a cell whose
+## nearest point is beyond the radius holds none that is near enough.
+func cells_around(world: ServerWorld, center: Vector3, radius_m: float) -> Array[Vector2i]:
 	var cells: Array[Vector2i] = []
 	var cell_size: float = world.cell_grid.cell_size_m
-	for cell: Vector2i in world.cell_grid.cells_within(world.cell_grid.cell_of(home_center), ceili(_settings.radius_m / cell_size)):
+	for cell: Vector2i in world.cell_grid.cells_within(world.cell_grid.cell_of(center), ceili(radius_m / cell_size)):
 		var low: Vector3 = world.cell_grid.cell_min_corner(cell)
-		var nearest: Vector3 = Vector3(clampf(home_center.x, low.x, low.x + cell_size), 0.0, clampf(home_center.z, low.z, low.z + cell_size))
-		if _flat_distance(nearest, home_center) <= _settings.radius_m:
+		var nearest: Vector3 = Vector3(clampf(center.x, low.x, low.x + cell_size), 0.0, clampf(center.z, low.z, low.z + cell_size))
+		if _flat_distance(nearest, center) <= radius_m:
 			cells.append(cell)
 	return cells
 
@@ -288,7 +307,7 @@ func queue_cells_of(world: ServerWorld, npc: NpcState) -> void:
 	var raw_center: Variant = _homes.building_center(home.building_id) if home != null and home.is_generated() and _homes != null else null
 	if world == null or raw_center == null:
 		return
-	for cell: Vector2i in _cells_in_reach(world, raw_center as Vector3):
+	for cell: Vector2i in cells_around(world, raw_center as Vector3, _settings.radius_m):
 		if not _cells.has(cell) and not _warm_queue.has(cell):
 			_warm_queue.append(cell)
 
@@ -299,16 +318,25 @@ func warm_one() -> void:
 	while generator != null and not _warm_queue.is_empty():
 		var cell: Vector2i = _warm_queue.pop_front()
 		if not _cells.has(cell):
-			_buildings_of(generator, cell)
+			buildings_of(generator, cell)
 			warmed_cell_count += 1
 			return
 	_warm_queue.clear()
 
 
-## [{id, center}] of the generated buildings of a cell that have a
-## container (planned once per cell, then kept).
-func _buildings_of(generator: ProceduralMapGenerator, cell: Vector2i) -> Array:
-	if _cells.has(cell):
+## True when the buildings of a cell are listed (and, `with_livable`, the
+## list says where an NPC can live): buildings_of() then plans nothing.
+func is_listed(cell: Vector2i, with_livable: bool = false) -> bool:
+	return _cells.has(cell) and (not with_livable or _livable_cells.has(cell))
+
+
+## [{id, center, type}] of the generated buildings of a cell that have a
+## container (planned once per cell, then kept). `with_livable` (F-30):
+## every entry also says whether an NPC can live in the building
+## (`livable`, NpcHomePicker.is_home); a cell that was listed without it is
+## planned once more.
+func buildings_of(generator: ProceduralMapGenerator, cell: Vector2i, with_livable: bool = false) -> Array:
+	if _cells.has(cell) and (not with_livable or _livable_cells.has(cell)):
 		return _cells[cell]
 	var listed: Array = []
 	for building: ProceduralBuilding in generator.plan_cell(cell).buildings:
@@ -317,10 +345,16 @@ func _buildings_of(generator: ProceduralMapGenerator, cell: Vector2i) -> Array:
 			continue
 		var low: Vector3 = _grid.tile_center(definition.origin_tile)
 		var high: Vector3 = _grid.tile_center(definition.origin_tile + definition.size_tiles - Vector2i.ONE)
-		listed.append({KEY_ID: building.building_id(), KEY_CENTER: (low + high) * 0.5})
-	if _cells.size() >= MAX_CACHED_CELLS:
+		var entry: Dictionary = {KEY_ID: building.building_id(), KEY_CENTER: (low + high) * 0.5, KEY_TYPE: definition.building_type}
+		if with_livable:
+			entry[KEY_LIVABLE] = NpcHomePicker.is_home(building)
+		listed.append(entry)
+	if _cells.size() >= MAX_CACHED_CELLS and not _cells.has(cell):
 		_cells.clear()
+		_livable_cells.clear()
 	_cells[cell] = listed
+	if with_livable:
+		_livable_cells[cell] = true
 	return listed
 
 
@@ -408,6 +442,33 @@ func _make_room_for_weapon(world: ServerWorld, state: NpcBehaviourState, contain
 		return false
 	var units: int = carried.quantity
 	return _move_units(world, state.inventory_id, carried, container.inventory_id, container.slot_count) == units
+
+
+# ------------------------------------------------------------ for a move (F-30)
+
+## Queues cells to be planned ahead, one per tick (see warm_one).
+func queue_cells(cells: Array[Vector2i]) -> void:
+	for cell: Vector2i in cells:
+		if not _cells.has(cell) and not _warm_queue.has(cell):
+			_warm_queue.append(cell)
+
+
+## Moves as many units of `item` as fit (see _move_units).
+func carry_units(world: ServerWorld, from_inventory_id: String, item: ItemInstance, to_inventory_id: String, capacity: int, limit: int = -1) -> int:
+	return _move_units(world, from_inventory_id, item, to_inventory_id, capacity, limit)
+
+
+## True when the NPC should take the weapon `definition` out of
+## `container`: it is better than the one it carries, which was put into
+## the container to make room (see _make_room_for_weapon).
+func takes_weapon(world: ServerWorld, state: NpcBehaviourState, container: ContainerInstance, definition: ItemDefinition) -> bool:
+	return _make_room_for_weapon(world, state, container, definition)
+
+
+## Puts what the NPC carries and what belongs into a home into the
+## containers of its home (see _stow). Returns the units put away.
+func stow_at_home(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBehaviourState, home: NpcHome) -> int:
+	return _stow(world, npcs, npc, state, home)
 
 
 ## Puts food, drinks and spare weapons into the containers of the home

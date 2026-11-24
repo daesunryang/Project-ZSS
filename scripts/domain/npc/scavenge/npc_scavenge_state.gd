@@ -18,7 +18,9 @@ extends NpcComponent
 ##    visited: [{building_id, result: "empty" | "left" | "blocked", day}]
 ##             oldest first, at most NpcScavengeSettings.max_visited,
 ##    home_food_units, home_medical_units: what its home held when it last
-##             looked (used while the home's cell is not in memory)}
+##             looked (used while the home's cell is not in memory),
+##    no_target_streak: trips in a row that found no building to search
+##             although it could look into every cell around it (F-30)}
 ## A key whose value is the default (no trip, nothing visited, 0) is left
 ## out: the document of an NPC that never scavenged is empty, so NPCs that
 ## do not live alone cost a save nothing. An NPC saved before this
@@ -61,6 +63,7 @@ const KEY_RESULT: String = "result"
 const KEY_DAY: String = "day"
 const KEY_HOME_FOOD: String = "home_food_units"
 const KEY_HOME_MEDICAL: String = "home_medical_units"
+const KEY_NO_TARGET_STREAK: String = "no_target_streak"
 
 var phase: String = PHASE_NONE
 var building_id: String = ""
@@ -71,6 +74,7 @@ var left_useful: bool = false
 var visited: Array[Dictionary] = []
 var home_food_units: int = 0
 var home_medical_units: int = 0
+var no_target_streak: int = 0
 
 
 static func make() -> NpcComponent:
@@ -149,6 +153,8 @@ func to_document() -> Dictionary:
 		document[KEY_HOME_FOOD] = home_food_units
 	if home_medical_units != 0:
 		document[KEY_HOME_MEDICAL] = home_medical_units
+	if no_target_streak != 0:
+		document[KEY_NO_TARGET_STREAK] = no_target_streak
 	return document
 
 
@@ -166,7 +172,7 @@ func restore_document(document: Dictionary) -> PackedStringArray:
 		errors.append("building_id must be a snake_case id or empty")
 	if not _is_whole(document.get(KEY_CONTAINER_INDEX, NO_CONTAINER), NO_CONTAINER):
 		errors.append("container_index must be a whole number >= -1")
-	for key: String in [KEY_TAKEN_UNITS, KEY_HOME_FOOD, KEY_HOME_MEDICAL]:
+	for key: String in [KEY_TAKEN_UNITS, KEY_HOME_FOOD, KEY_HOME_MEDICAL, KEY_NO_TARGET_STREAK]:
 		if not _is_whole(document.get(key, 0), 0):
 			errors.append("%s must be a whole number >= 0" % key)
 	if typeof(document.get(KEY_LEFT_USEFUL, false)) != TYPE_BOOL:
@@ -201,6 +207,7 @@ func restore_document(document: Dictionary) -> PackedStringArray:
 	visited = restored
 	home_food_units = int(document.get(KEY_HOME_FOOD, 0))
 	home_medical_units = int(document.get(KEY_HOME_MEDICAL, 0))
+	no_target_streak = int(document.get(KEY_NO_TARGET_STREAK, 0))
 	return errors
 
 

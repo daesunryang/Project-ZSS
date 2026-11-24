@@ -100,6 +100,14 @@ const ID_MAX_LENGTH: int = 32
 ## adding one does not change what the NPCs of an older world draw.
 @export var draws_jitter: bool = true
 
+@export_group("Moving (F-30, docs/09 §17.15)")
+## Only an NPC that is in the middle of a move to another shelter, or has
+## a reason to begin one (NpcRelocation.wants_to_move), may choose it.
+@export var requires_move_reason: bool = false
+## No candidate while the NPC is in the middle of a move: what would send
+## it back to the home it is leaving (a scavenging trip, a stroll).
+@export var blocked_while_moving: bool = false
+
 @export_group("Keeping")
 ## True: once started, the utility choice neither replaces nor stops the
 ## action for as long as it runs: its preconditions (min_need_urgency) and

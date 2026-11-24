@@ -12,3 +12,4 @@ personality_traits = {
 }
 personality_weight = 0.05
 min_duration_sec = 3.0
+blocked_while_moving = true

@@ -145,6 +145,7 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 	# config.npc_behaviour (tests that want NPCs to stand still) nothing is
 	# installed and the decider chooses nothing.
 	var npc_survival: NpcSurvivalSense = null
+	var npc_relocation: NpcRelocation = null
 	if config.npc_behaviour != null:
 		var npc_behaviours: NpcBehaviours = NpcBehaviours.install(npcs, config.npc_behaviour, npc_executor, config.catalog, StructureGrid.new(config.building.grid_module_m), config.npc_spots, config.map_content, npc_homes)
 		if npc_behaviours == null:
@@ -166,6 +167,15 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 			npc_behaviours.enable_survival(npc_survival, NpcFighting.new(config.melee_weapons, config.combat))
 			if npc_decider is NpcUtilityDecider:
 				(npc_decider as NpcUtilityDecider).set_survival(npc_survival)
+			# F-30 (docs/09 §17.15): an NPC that lives alone moves to another
+			# shelter by itself. Without config.npc_relocation nobody moves.
+			if config.npc_relocation != null:
+				if npcs.register_component(NpcRelocationState.COMPONENT_ID, NpcRelocationState.make) != OK:
+					return null
+				npc_relocation = npc_behaviours.enable_relocation(config.npc_relocation)
+				npc_relocation.attach(world, npcs)
+				if npc_decider is NpcUtilityDecider:
+					(npc_decider as NpcUtilityDecider).set_relocation(npc_relocation)
 
 	# F-25 (docs/09 §17.12): the NPCs' bodies, LAST of the NPC stages: what a
 	# tick did to an NPC is in its vitals before the tick ends. Zombies and
@@ -180,6 +190,10 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 			# instead of the stage's own rule.
 			npc_health.npc_damaged.connect(npc_survival.on_npc_damaged)
 			npc_health.self_treat_by_action = npc_decider is NpcUtilityDecider and (npc_decider as NpcUtilityDecider).has_treat_action()
+		if npc_relocation != null:
+			# F-30: an NPC that dies on its way gives the building it was
+			# moving to back.
+			npc_health.npc_died.connect(npc_relocation.on_npc_died)
 		if zombies.add_target_source(NpcZombieTargets.new(npc_health)) != OK:
 			return null
 		var combat: CombatService = world.get_system(CombatService.SYSTEM_ID) as CombatService

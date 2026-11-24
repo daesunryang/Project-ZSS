@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="NpcActionDefinition" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/domain/npc/decision/npc_action_definition.gd" id="1_action"]
+
+[resource]
+script = ExtResource("1_action")
+action_id = "relocate"
+observable_label = "walk"
+fixed_priority = 60
+base_priority = 0.74
+requires_lone_home = true
+draws_jitter = false
+requires_move_reason = true
+runs_until_done = true
+min_duration_sec = 5.0
+retry_cooldown_sec = 10.0

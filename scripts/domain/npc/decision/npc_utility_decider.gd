@@ -28,6 +28,10 @@ extends NpcDecider
 ##      rest): only the executor's report, a hard interrupt, or another
 ##      need of the NPC in the DANGER category ends it (docs/15 P4-172);
 ##      since F-29 also a wound it could treat now (_treatment_calls).
+##      F-30: the action "relocate" is like that too, and while an NPC is
+##      in the middle of a move the actions with `blocked_while_moving`
+##      are no candidates ("moving"); "relocate" itself is one only for an
+##      NPC that moves or has a reason to ("no_move_reason" otherwise).
 ##      That is how a sleeper wakes on danger (F-6): a visible zombie is
 ##      step 3, a need in danger sends it to step 6, where an action with
 ##      `yields_to_danger_need` is no candidate while the NPC can eat or
@@ -71,6 +75,9 @@ const REJECT_BEDTIME_NOW: String = "bedtime_now"
 ## could treat itself with (or nothing to treat).
 const REJECT_NOT_LONE: String = "not_lone"
 const REJECT_NOTHING_TO_TREAT: String = "nothing_to_treat"
+## F-30: the NPC has no reason to move / it is in the middle of a move.
+const REJECT_NO_MOVE_REASON: String = "no_move_reason"
+const REJECT_MOVING: String = "moving"
 ## A failure code the executor returned that is not a snake_case id.
 const FAIL_BAD_CODE: String = "bad_failure_code"
 
@@ -154,6 +161,9 @@ var _told_no_executor: bool = false
 ## (null = the survival rules of F-29 are off: nobody scavenges, treats
 ## itself by choice, remembers zombies or fights).
 var _survival: NpcSurvivalSense = null
+## F-30: when an NPC that lives alone moves to another shelter (null =
+## nobody moves).
+var _relocation: NpcRelocation = null
 
 
 func _init(settings: NpcDecisionSettings, catalog: NpcActionCatalog, need_settings: NpcNeedSettings, action_executor: NpcActionExecutor = null) -> void:
@@ -207,6 +217,15 @@ func set_survival(sense: NpcSurvivalSense) -> void:
 
 func survival() -> NpcSurvivalSense:
 	return _survival
+
+
+## F-30: gives the decider the NPCs' moves (ServerComposition).
+func set_relocation(relocation: NpcRelocation) -> void:
+	_relocation = relocation
+
+
+func relocation() -> NpcRelocation:
+	return _relocation
 
 
 ## F-29: true when the catalog has a selectable action an NPC treats itself
@@ -493,6 +512,10 @@ func _precondition(npc: NpcState, action: NpcActionDefinition, state: NpcDecisio
 		return REJECT_NOT_LONE
 	if action.requires_treatment and (_survival == null or not _survival.can_treat(npc)):
 		return REJECT_NOTHING_TO_TREAT
+	if action.requires_move_reason and (_relocation == null or not _relocation.wants_to_move(npc)):
+		return REJECT_NO_MOVE_REASON
+	if action.blocked_while_moving and _relocation != null and _relocation.is_moving(npc):
+		return REJECT_MOVING
 	if action.min_need_urgency > 0.0 and _need_term(npc, needs, action) + URGENCY_EPSILON < action.min_need_urgency:
 		return REJECT_NEED_LOW
 	if action.blocked_by_danger_need and needs != null:
