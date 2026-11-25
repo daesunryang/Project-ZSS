@@ -33,6 +33,26 @@ const DEFAULT_PATH: String = "res://data/tuning/client_presentation_settings.tre
 ## F-25: what is written after an NPC's name while it is hurt / dead.
 @export var npc_hurt_tag_suffix: String = " (부상)"
 @export var npc_dead_tag_suffix: String = " (사망)"
+## F-31: how an NPC's reaction to the players is written after its name
+## (%s = the word, e.g. "경계"; nothing is written for "none").
+@export var npc_reaction_tag_format: String = " [%s]"
+
+## Talking to NPCs (F-31, docs/09 §17.16). PROVISIONAL keys. The talk key
+## asks the nearest living NPC within `npc_talk_candidate_range_m` (a
+## suggestion: the server has its own range and checks the line of sight).
+## While a conversation is open the number keys 1-9 choose an answer
+## (ClientInputActions.TALK_CHOICE_*; not while the build mode uses them)
+## and the end key ends it.
+@export_group("NPC talk")
+@export var npc_talk_key: Key = KEY_ENTER
+@export var npc_talk_end_key: Key = KEY_ESCAPE
+@export_range(0.1, 50.0) var npc_talk_candidate_range_m: float = 3.0
+## Local flood guard between two talk requests of any kind (the server has
+## its own).
+@export_range(0.01, 5.0) var npc_talk_min_interval_sec: float = 0.3
+## How long the last line of a conversation that ended (or of an NPC that
+## would not talk) stays in the panel.
+@export_range(0.1, 60.0) var npc_talk_closed_duration_sec: float = 4.0
 
 ## P4-8 development overlay. F4 does not overlap the existing letter F
 ## consume key or the F3 cell overlay.
@@ -373,6 +393,18 @@ func validate() -> PackedStringArray:
 		errors.append("container marker size and label pixel size must be > 0, label margin >= 0 and font size >= 1")
 	if container_label_distance_m < 0.0:
 		errors.append("container_label_distance_m must be >= 0")
+	if npc_talk_key == KEY_NONE or npc_talk_end_key == KEY_NONE:
+		errors.append("npc_talk_key and npc_talk_end_key must not be KEY_NONE")
+	if not is_finite(npc_talk_candidate_range_m) or npc_talk_candidate_range_m <= 0.0:
+		errors.append("npc_talk_candidate_range_m must be > 0")
+	if npc_talk_min_interval_sec <= 0.0 or npc_talk_closed_duration_sec <= 0.0:
+		errors.append("npc_talk_min_interval_sec and npc_talk_closed_duration_sec must be > 0")
+	if npc_reaction_tag_format.count("%s") != 1:
+		errors.append("npc_reaction_tag_format must contain %s exactly once")
+	for digit_key: Key in ClientInputActions.talk_choice_keys():
+		if digit_key == npc_talk_key or digit_key == npc_talk_end_key:
+			errors.append("npc_talk_key and npc_talk_end_key must not be number keys (they choose the answers)")
+			break
 	var build_keys: Dictionary[String, Key] = {"build_mode_key": build_mode_key, "build_floor_key": build_floor_key, "build_wall_key": build_wall_key, "build_door_key": build_door_key, "build_storage_box_key": build_storage_box_key, "build_rotate_key": build_rotate_key, "build_deliver_key": build_deliver_key, "build_work_key": build_work_key, "build_remove_key": build_remove_key}
 	for key_name: String in build_keys:
 		if build_keys[key_name] == KEY_NONE:
@@ -390,7 +422,7 @@ func validate() -> PackedStringArray:
 	if structure_label_distance_m < 0.0:
 		errors.append("structure_label_distance_m must be >= 0")
 	if not _are_distinct(assigned_keys().values()):
-		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier, the trade keys, the cell and NPC debug overlay keys, the container keys and the building keys must be different keys")
+		errors.append("use keys (consume, drink, bandage, cure), the rest key, the prone key, the treat-other modifier, the cursor keys, the drop key, the drop-stack modifier, the trade keys, the cell and NPC debug overlay keys, the container keys, the building keys and the NPC talk keys must be different keys")
 	return errors
 
 
@@ -429,6 +461,8 @@ func assigned_keys() -> Dictionary[String, Key]:
 		"build_deliver_key": build_deliver_key,
 		"build_work_key": build_work_key,
 		"build_remove_key": build_remove_key,
+		"npc_talk_key": npc_talk_key,
+		"npc_talk_end_key": npc_talk_end_key,
 	}
 
 

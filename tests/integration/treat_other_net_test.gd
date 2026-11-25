@@ -742,7 +742,7 @@ func test_use_on_request_before_join_is_rejected_and_floods_are_limited() -> voi
 # ------------------------------------------------------------ rules (no network)
 
 func test_rpc_table_request_validation_and_notice_validation() -> void:
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 20, "the use-on RPCs are part of protocol 8 (P2-T10..T12); 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15), 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a), 13 since the replication scope by cell (P3-2), 14 since the construction RPCs (P3-5), 15 since the container RPCs (P3-3)")
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 21, "the use-on RPCs are part of protocol 8 (P2-T10..T12); 9 since the hand-over RPCs (P2-T14), 10 since they were withdrawn and the drop intent got a quantity (P2-T15), 11 since the trade RPCs (P2-T16), 12 since the structure RPCs (P3-4a), 13 since the replication scope by cell (P3-2), 14 since the construction RPCs (P3-5), 15 since the container RPCs (P3-3)")
 	assert_eq(InventoryNetModule.validate_use_on_request(1, "item_000001", "player_000002"), "")
 	assert_eq(InventoryNetModule.validate_use_on_request(0, "item_000001", ""), "", "no target = myself")
 	assert_eq(InventoryNetModule.validate_use_on_request("1", "item_000001", ""), IntentValidator.REASON_BAD_TYPE)

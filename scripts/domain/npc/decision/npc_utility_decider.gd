@@ -21,6 +21,12 @@ extends NpcDecider
 ##      cooldown) or fails (it has fled for fight_after_fleeing_sec and the
 ##      zombie is still adjacent) it starts the fight action instead and
 ##      keeps it while the zombie stays adjacent ("cornered").
+##      F-31 (with an NpcSocial): when no zombie decided, the players do:
+##      what NpcSocial.directive() asks for is started whatever the NPC
+##      does: the flee action from a player it is afraid of
+##      ("player_feared"), or the action "meet" (it watches the player,
+##      comes over, backs off, or stands and talks; "player_met"). A
+##      running "meet" nobody asks for any more is stopped.
 ##   4. Recover: until its cooldown is over nothing is chosen.
 ##   5. Minimum duration: a running action that started less than its
 ##      min_duration ago is kept without looking at the candidates. So is,
@@ -164,6 +170,8 @@ var _survival: NpcSurvivalSense = null
 ## F-30: when an NPC that lives alone moves to another shelter (null =
 ## nobody moves).
 var _relocation: NpcRelocation = null
+## F-31: what the NPC does about the players it sees (null = nothing).
+var _social: NpcSocial = null
 
 
 func _init(settings: NpcDecisionSettings, catalog: NpcActionCatalog, need_settings: NpcNeedSettings, action_executor: NpcActionExecutor = null) -> void:
@@ -226,6 +234,16 @@ func set_relocation(relocation: NpcRelocation) -> void:
 
 func relocation() -> NpcRelocation:
 	return _relocation
+
+
+## F-31: the stage that says what an NPC does about the players it sees
+## (null = NPCs take no notice of players).
+func set_social(social: NpcSocial) -> void:
+	_social = social
+
+
+func social() -> NpcSocial:
+	return _social
 
 
 ## F-29: true when the catalog has a selectable action an NPC treats itself
@@ -344,8 +362,49 @@ func _take_reports(world: ServerWorld, npcs: NpcService, npc: NpcState, state: N
 		_fail_running(npc, state, NpcActionExecutor.FAIL_LOST, now, record, scheduler)
 
 
-## Step 3. True when the hard interrupt decided what the NPC does.
+## Step 3. True when a hard interrupt decided what the NPC does: the
+## zombies first, then the players (F-31).
 func _hard_interrupt(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcDecisionComponent, now: int, record: Dictionary, scheduler: NpcScheduler) -> bool:
+	if _zombie_interrupt(world, npcs, npc, state, now, record, scheduler):
+		return true
+	return _social_interrupt(world, npcs, npc, state, now, record, scheduler)
+
+
+## F-31: what the NPC does about the players it sees (NpcSocial.directive).
+## True when that decided what the NPC does.
+func _social_interrupt(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcDecisionComponent, now: int, record: Dictionary, scheduler: NpcScheduler) -> bool:
+	if _social == null:
+		return false
+	var meet: NpcActionDefinition = _catalog.get_action(NpcSocial.ACTION_MEET)
+	var meeting: bool = meet != null and state.is_running() and state.action_id == meet.action_id
+	var wanted: Dictionary = _social.directive(world, npc, now)
+	if wanted.is_empty():
+		if meeting:
+			# Nobody to stand for any more: it goes on with its day.
+			_stop(world, npcs, npc, state, record)
+		return false
+	var action: NpcActionDefinition = _flee_action() if str(wanted[NpcSocial.KEY_ACTION]) == NpcBehaviours.ACTION_FLEE else meet
+	if action == null:
+		return false
+	var running_it: bool = state.is_running() and state.action_id == action.action_id
+	if running_it and (action != meet or NpcSocial.is_same_meeting(state.target, wanted)):
+		record[KEY_HARD_INTERRUPT] = str(wanted[NpcSocial.KEY_CODE])
+		record[KEY_CHOSEN] = action.action_id
+		record[KEY_OUTCOME] = OUTCOME_KEPT
+		record[KEY_TARGET] = state.target.duplicate(true)
+		return true
+	if state.is_on_cooldown(action.action_id, now):
+		(record[KEY_REJECTED] as Array).append({KEY_ACTION_ID: action.action_id, KEY_CODE: REJECT_COOLDOWN})
+		if meeting:
+			_stop(world, npcs, npc, state, record)
+		return false
+	record[KEY_HARD_INTERRUPT] = str(wanted[NpcSocial.KEY_CODE])
+	_interrupt_with(world, npcs, npc, state, action, wanted[NpcSocial.KEY_TARGET] as Dictionary, now, record, scheduler)
+	return true
+
+
+## The zombies' part of step 3.
+func _zombie_interrupt(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcDecisionComponent, now: int, record: Dictionary, scheduler: NpcScheduler) -> bool:
 	var flee: NpcActionDefinition = _flee_action()
 	if flee == null:
 		return false

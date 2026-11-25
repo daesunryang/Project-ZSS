@@ -63,6 +63,14 @@ const BUILD_ROTATE: StringName = &"build_rotate"
 const BUILD_DELIVER: StringName = &"build_deliver"
 const BUILD_WORK: StringName = &"build_work"
 const BUILD_REMOVE: StringName = &"build_remove"
+## Talking to NPCs (F-31): ask the nearest NPC; end the conversation; the
+## number keys 1..TALK_CHOICE_COUNT choose the n-th answer of the open
+## conversation (fixed keys: they are the numbers shown in the panel).
+const NPC_TALK: StringName = &"npc_talk"
+const NPC_TALK_END: StringName = &"npc_talk_end"
+const TALK_CHOICE_PREFIX: String = "npc_talk_choice_"
+const TALK_CHOICE_FIRST_KEY: Key = KEY_1
+const TALK_CHOICE_COUNT: int = 9
 ## Use action -> the kind of item its key asks the server to use.
 const USE_ACTION_KINDS: Dictionary[StringName, ConsumeIntentPolicy.Kind] = {
 	CONSUME: ConsumeIntentPolicy.Kind.FOOD,
@@ -115,6 +123,24 @@ static func register(settings: CameraSettings, presentation: ClientPresentationS
 		_add_key_action(BUILD_DELIVER, presentation.build_deliver_key, settings.input_deadzone)
 		_add_key_action(BUILD_WORK, presentation.build_work_key, settings.input_deadzone)
 		_add_key_action(BUILD_REMOVE, presentation.build_remove_key, settings.input_deadzone)
+		_add_key_action(NPC_TALK, presentation.npc_talk_key, settings.input_deadzone)
+		_add_key_action(NPC_TALK_END, presentation.npc_talk_end_key, settings.input_deadzone)
+		var choice_keys: Array[Key] = talk_choice_keys()
+		for index: int in choice_keys.size():
+			_add_key_action(talk_choice_action(index + 1), choice_keys[index], settings.input_deadzone)
+
+
+## The action of the `number`-th answer key (1 = the first).
+static func talk_choice_action(number: int) -> StringName:
+	return StringName(TALK_CHOICE_PREFIX + str(number))
+
+
+## The keys that choose the answers 1..TALK_CHOICE_COUNT, in that order.
+static func talk_choice_keys() -> Array[Key]:
+	var keys: Array[Key] = []
+	for index: int in TALK_CHOICE_COUNT:
+		keys.append((TALK_CHOICE_FIRST_KEY + index) as Key)
+	return keys
 
 
 static func _add_key_action(action: StringName, key: Key, deadzone: float) -> void:

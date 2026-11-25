@@ -141,7 +141,7 @@ func test_interest_loss_reports_missing_without_querying_private_state() -> void
 
 
 func test_rpc_channels_are_reliable_channel_zero_and_protocol_is_seventeen() -> void:
-	assert_eq(BuildInfo.PROTOCOL_VERSION, 20)
+	assert_eq(BuildInfo.PROTOCOL_VERSION, 21)
 	var config: Dictionary = (NpcDebugNetModule as Script).get_rpc_config()
 	assert_eq(config.size(), 4)
 	for method: StringName in [&"_rpc_request_subscribe", &"_rpc_request_unsubscribe"]:

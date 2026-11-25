@@ -3473,3 +3473,88 @@ FD-11("NPC마다 정해진 시각", 피로 0까지 잠)의 구현이다. 잠 빨
 **다른 시스템에 더한 것**: `NpcService`(예약과 `settle_home`, `taken_home_ids`; `is_seeded_home`의 뜻이 "잡힌 건물"로 넓어짐), `NpcScavenging`(셀 목록 공개 `cells_around`·`buildings_of`(살 수 있는지 포함), 캐시 256 → 1024셀, `no_target_streak`, 짐 옮기기 공개 함수), `NpcSurvivalSense`(`danger_sources`, `remembers_hurt_near`), `NpcActionDefinition`(`requires_move_reason`, `blocked_while_moving`), `NpcUtilityDecider`(두 거절 코드), `NpcBehaviours`(행동 `relocate`, 이사 중 쉬기·도망). 좀비·전투·보관함·생성 맵·길찾기·네트워크 코드는 고치지 않았다.
 
 **테스트** `tests/unit/npc_relocation_test.gd`: 설정·구성 요소·고르기(손으로 만든 목록), 예약과 명단 기록, 이유와 성격 한도, 시골 NPC가 먹을 것이 떨어져 이사하고 거기서 사는 장면, 좀비를 거듭 본 집을 떠나는 장면, 두 NPC가 같은 건물을 잡지 않음, 이사 도중 저장 → 재시작, 셀 내리기, 좀비를 만나 도망쳤다가 이어 가기, 길 위에서 죽음, 길 없는 목적지 포기, 갈 곳 없음, 측정(고르기, 10·25명).
+
+### 17.16 발견과 대화(F-31, 단계 `social`, 구성 요소 `social`, 행동 `meet`, NetModule `NpcDialogueNet`)
+
+코드: `scripts/domain/npc/social/`(`NpcSocial`, `NpcDialogue`, `NpcReactionRules`, `NpcSocialState`, `NpcSocialSettings`, `NpcDialogueLines`), 네트워크 `scripts/services/multiplayer/npc_dialogue_net_module.gd`·`client_dialogue_state.gd`·`npc_dialogue_net_settings.gd`, 화면 `scripts/presentation/npc_talk_intent_policy.gd`·`npc_talk_presentation_formatter.gd`. 설정 `data/tuning/npc_social_settings.tres`·`npc_dialogue_net_settings.tres`, 대사 `resources/definitions/npc_dialogue/lines_ko.tres`, 행동 `resources/definitions/npc_actions/meet.tres`. 임시 가정과 측정은 docs/15 §27, 작업 메모는 notes/f31-npc-dialogue.md. 사용자 지시(2026-11-23): "유저가 발견했을 때 포섭을 할 지 죽일지는 유저 선택, 역으로 성격이 포악하거나 대화에서 트러블이 생길 시 유저를 공격할 수 있음", "npc는 자유의지가 있으며 생존을 최우선 시 함".
+
+NPC가 플레이어를 **보고, 반응하고, 말을 받는다.** `CompositionConfig.npc_social`이 null이면 NPC는 플레이어를 모른 척하고 아무도 말을 걸 수 없다(F-30까지의 모습). 게임 안에 LLM·외부 API는 없다: 대화는 정해진 선택지이고, NPC의 대답은 계산한 결과이며, 문장은 데이터 파일에서 고른다. 이 티켓의 어느 규칙도 난수를 뽑지 않는다.
+
+**범위 밖(F-32)**: 포섭 수락, NPC가 플레이어를 공격하는 것, 포섭된 NPC의 생활. 이 절은 그 티켓이 이을 자리 둘을 남긴다(아래 "F-32가 이을 자리").
+
+**발견.** 단계 `social`(행동 단계 뒤, 체력 단계 앞)이 `notice_check_period_sec`(0.5초)마다 깨어 있는 NPC를 묶음 열로 나눠 본다(위협 감지와 같은 방식: 저장된 스케줄러 시계에서 차례를 구하므로 자기 상태가 없다). 잠든 NPC는 보지 않는다. 보는 규칙은 좀비를 볼 때와 같다: `NpcDecisionSettings.threat_sight_range_m`(15m) 안, 방향 무관, `ServerWorld.is_line_blocked`로 가려지지 않음. 온라인이고 캐릭터가 있고 살아 있는 플레이어만 본다.
+
+**반응**(`NpcReactionRules`, 순수 함수). 보이는 플레이어마다:
+- 위협 = 낯선 사람 기본값 + 무기를 지님 + 이 NPC를 다치게 한 횟수 + NPC를 죽이는 것을 본 횟수(기억) + 관계의 두려움·원한 − 신뢰·호감. 0~1.
+- 두려움 = 위협 × (`fear_base` − 배짱). 배짱은 용기·위험 감수·차분함(1 − 신경성)이고, 다쳤거나 이미 겁먹은 NPC는 배짱이 줄어든다.
+- 따뜻함 = 외향성·친화성·신뢰·호감.
+- 두려움 ≥ `flee_fear` → `afraid`(도망), ≥ `hide_fear` → `hide`(거리 둠), 따뜻함 − 위협 ≥ `greet_warmth` → `greet`(다가와 인사), 그 밖 → `wary`(서서 지켜봄).
+
+NPC마다 **공개 반응 하나**가 있다(`NpcSocialState.reaction`: `none`·`wary`·`hide`·`greet`·`afraid`·`talk`). 보이는 플레이어 중 가장 두려운 상대에 대한 반응이고, 대화 중이면 `talk`다. 누구에 대한 반응인지와 점수는 서버 밖으로 나가지 않는다. 이 값은 저장하지 않는다.
+
+**몸의 반응**은 결정 계층이 정한다. `NpcUtilityDecider`의 하드 인터럽트 단계가 좀비 다음으로 `NpcSocial.directive()`를 묻는다(좀비가 항상 먼저다).
+- `afraid`: 그 플레이어를 위협으로 삼아 기존 `flee` 행동. 보이는 동안 계속(기록 `player_feared`).
+- 대화 중: 새 행동 `meet`(선택 불가·난수 없음, 싸움처럼 인터럽트로만 시작), 방식 `talk`: 서서 플레이어를 본다.
+- 플레이어를 **새로 알아챈 뒤 `attention_sec`(8초) 동안만**(시야에서 `renotice_after_sec` 60초 이상 벗어났다 돌아오면 다시): `hide` → `meet`/`back_off`(10m 안이면 8m 물러남), `greet` → `meet`/`approach`(2.5m까지 걸어옴), `wary` → `meet`/`watch`(기록 `player_met`). 그 뒤에는 하던 생활로 돌아간다(라벨은 보이는 동안 남는다).
+- 길이 없어 걷지 못하면 실패가 아니라 그 자리에 선다. 요구가 사라졌는데 `meet`가 돌고 있으면 멈춘다.
+- 단계 `social`은 아무것도 정하지 않는다: `directive()`의 답이 바뀌면 스케줄러에 결정을 요청할 뿐이다(`player_noticed`). 서 있는 NPC를 플레이어 쪽으로 돌리는 것만 직접 한다.
+- 끝까지 가는 행동(수색·이사·잠)도 이 인터럽트에 끊긴다. 이사는 이어 가고, 수색은 그 나들이를 버린다(좀비를 봤을 때와 같다).
+
+**플레이어가 NPC를 때리면**(`NpcHealth.npc_damaged`, 출처가 플레이어 id): 기록의 `harmed` +1, 관계(두려움 +, 신뢰 −, 원한 +), 감정(공포·분노), 기억 `attacked_by_player`, 진행 중인 대화 종료(`npc_hurt`), 즉시 다시 봄. NPC는 여기서 반격하지 않는다(F-32).
+
+**대화**(`NpcDialogue`, 서버만). 플레이어 하나와 NPC 하나 사이, NPC는 한 번에 한 명과만. 요청 셋: `start`·`choose`·`end`. 실패는 요청 자체를 볼 수 없었다는 뜻이고(`unknown_npc`·`npc_dead`·`npc_unavailable`·`too_far`(3m)·`no_line_of_sight`·`npc_talking`·`npc_busy`(도망·싸움 중)·`not_talking`·`stale_turn`·`bad_choice`, 그리고 `player_dead` 같은 플레이어 행동 차단 사유), 성공은 **화면**을 돌려준다: `{npc_id, npc_name, open, turn, line, choices: [[choice_id, text], ...], end_reason}`. `turn`은 화면 번호이고, 선택은 자기가 답하는 화면 번호를 같이 보낸다(옛 화면에 대한 선택은 `stale_turn`).
+
+NPC가 **말하기를 거부**하면 성공이되 `open` false다(`end_reason` `refused`, `line`이 거절하는 말): 두려움 ≥ `refuse_fear`, 원한 ≥ `refuse_resentment`, 방금 거절했거나 NPC가 먼저 끝낸 뒤 `refuse_cooldown_sec`(20초) 안.
+
+| 마디 | 선택지 | 하는 일 |
+|---|---|---|
+| `asleep`(자는 NPC) | `wake`, `leave` | 깨우면 신뢰 −, 분노 +. 두려움 ≥ `wake_startle_fear`면 놀라 깨서 대화 없이 끝(틀어진 대화 `woken`), 아니면 투덜대며 `root`로. 조용히 물러나면 아무 일 없음. 서 있기만 해서는 깨지 않는다 |
+| `root` | `greet`(대화당 한 번), `who`, `give`, `news`, `trade`, `join`, `threaten`, `leave` | 아래 |
+| `give` | `give:<n>`, `back` | 플레이어가 가진 음식·음료·치료제 목록(종류별 첫 묶음, 5개까지) |
+| `trade` | `trade:<n>`, `back` | NPC가 받아들일 1대1 교환 목록(4개까지) |
+
+- `greet`: 하루 한 번만 신뢰·호감 +. 말투는 따뜻함·중립·차가움 셋.
+- `who`: 신뢰가 낮으면 안 알려 줌, 외향적이면 길게, 아니면 이름만.
+- `give:<n>`: **실제로 1단위가 플레이어 인벤토리에서 NPC 인벤토리로 옮겨진다**(`InventoryService.transfer_item`). NPC 가방이 꽉 차면 거절(아무것도 안 바뀜), 너무 무서우면 안 받음. 신뢰·호감 +, 두려움 −, 의존 +. 필요한 것(배고플 때 음식, 목마를 때 음료, 다쳤을 때 치료제)이면 최대 2배, 같은 날 같은 플레이어의 선물은 받을 때마다 절반.
+- `news`: 신뢰 ≥ `news_min_trust`일 때 NPC가 **기억하는 것**을 말한다: 가장 강한 위험 기억의 자리, 그다음 자기가 비운 가장 가까운 건물(방향 8방위·거리 10m 단위; −Z가 북, +X가 동). 한 대화에서 같은 것을 두 번 말하지 않는다.
+- `trade:<n>`: 1단위와 1단위를 한 거래로 바꾼다(`InventoryService.exchange_items`, 전부 아니면 전무). NPC는 종류별 값(음식 2, 음료 2, 치료제 4, 무기 5, 그 밖 1; 필요한 것은 1.5배)으로 따져 받는 쪽이 주는 쪽 × (1 + 욕심 − 신뢰 할인) 이상일 때만 내놓고, 마지막 음식·음료 1단위와 하나뿐인 무기는 내놓지 않는다. 성사되면 신뢰 +.
+- `join`: **요청을 적어 두기만 한다**(기록 `join_requests`·`join_last_at`·`join_last_lean`, 신호 `join_requested`). NPC는 기울기(`NpcReactionRules.join_lean`: 성격 60%, 관계 40%, FD-10)에 따라 "생각해 볼게요/아직은/됐어요" 중 하나를 말할 뿐, 관계·거처·행동은 바뀌지 않는다.
+- `threaten`: 두려움 +(소심할수록 크게), 신뢰 −, 원한 +(대담할수록 크게). 배짱 ≥ `defiant_boldness`면 맞받아치고 아니면 겁먹는다. 대화는 끝나고 틀어진 대화 `threatened`로 적힌다.
+- `leave`: 작별 인사와 함께 끝.
+- 한 대화의 선택 수가 한도(12 + 외향성 × 8)를 넘으면 NPC가 끝낸다.
+
+**서버가 끝내는 경우**(매 틱 확인, 플레이어에게 알림): 5m 넘게 멀어짐 `too_far`, 60초 동안 선택 없음 `timeout`, NPC가 도망·싸움 `npc_busy`, 다침 `npc_hurt`, 죽거나 메모리에서 나감 `npc_gone`, 플레이어가 나가거나 죽음·잠 `player_gone`·`player_unable`.
+
+**대사**(`NpcDialogueLines`): 상황 열쇠 → 문장 몇 개. 어느 변형을 말할지는 NPC마다 세는 번호(`line_counter`, 저장됨)로 돌려 가며 고른다. 빈 열쇠는 빈 문장이고 한 번 경고한다(대화는 깨지지 않는다). `{name}`·`{item}`·`{dir}`·`{dist}`·`{give}`·`{take}`만 채운다.
+
+**저장.**
+- 구성 요소 `social`(스키마 1): 플레이어별 기록(처음 말을 걸었거나 때린 때, 대화·거절·조름 횟수, 틀어진 대화 횟수·마지막 이유·때, 선물(날·그날 수·총수), 인사한 날, 다치게 한 횟수·때, 동행 요청 횟수·때·기울기, 깨운 횟수)과 `line_counter`. 기록은 플레이어가 말을 걸거나 때릴 때 생긴다(보이기만 해서는 NPC 문서가 바뀌지 않는다). 플레이어 32명까지(가장 오래 대화하지 않은 기록부터 잊는다).
+- 점수(신뢰·두려움·호감·원한·의존)는 기존 `relationships` 구성 요소의 NPC → 플레이어 기록에 그대로 둔다. 처음 점수가 바뀔 때 기록이 생기고, 낯선 사람의 처음 신뢰는 0.15 + 0.2 × 친화성이다. 보이기만 해서는 관계 기록이 생기지 않는다.
+- 단계 `social`의 월드 문서: 지금 누가 누구를 보고 있는지(마지막으로 본 시각, 관심이 끝나는 시각, 반응)와 마지막으로 요구한 것. 그래서 **재시작한 서버는 계속 돈 서버와 같은 결정을 한다**(재시작 때문에 "새로 알아채는" 일이 없다; `phase4_acceptance_test`·`npc_behaviour_day_test`의 재시작 비교가 사회 계층을 켠 채 통과한다).
+- **대화는 저장하지 않는다.** 재시작하면 대화는 없고(클라이언트 거울도 접속 때 비운다), 그때까지 바뀐 관계·기록·물건은 남는다.
+- 기존 저장: 구성 요소가 없는 NPC는 빈 기록으로 시작한다. 세이브 스키마 번호는 그대로다.
+
+**네트워크**(`PROTOCOL_VERSION` 20 → 21).
+- NPC 공개 행(접속 조각·`npc_entered`)에 9번째 값 `PUBLIC_REACTION`(`NpcNetProtocol.REACTIONS`의 번호)이 붙고, 바뀌면 신뢰 채널 0의 이벤트 `npc_reaction_changed {event_type, npc_id, world_time, reaction}`가 간다. 조건(F-25)과 같은 방식이고, 라벨 말고는 아무것도 나가지 않는다.
+- `NpcDialogueNet`(전부 reliable, 채널 0):
+
+| 방향 | RPC |
+|---|---|
+| 클라이언트 → 서버 | `_rpc_request_talk(request_id, npc_id)` |
+| 클라이언트 → 서버 | `_rpc_request_choose(request_id, npc_id, turn, choice_id)` |
+| 클라이언트 → 서버 | `_rpc_request_end(request_id)` |
+| 서버 → 말하는 사람 | `_rpc_dialogue_result(request_id, ok, reason, view)` |
+| 서버 → 말하는 사람 | `_rpc_dialogue_ended(view)`(서버가 끝낸 대화) |
+
+- 행위자는 항상 보낸 피어의 플레이어다. 서버 검사 순서: `not_joined` → `bad_type` → `bad_sequence` → `bad_npc_id`·`bad_turn`·`bad_choice_id` → `rate_limited`(세 요청이 한 통, 초당 4·몰아서 6) → `dialogue_unavailable` → `unknown_npc`(그 피어에게 알려 준 NPC가 아님: 관심 밖의 NPC가 있는지 새지 않는다) → `NpcDialogue`의 사유 그대로.
+- **대사와 선택지는 말하는 사람에게만 간다.** 다른 사람은 그 NPC의 반응이 `talk`로 바뀐 것만 본다.
+- 선물·거래의 인벤토리 변화는 기존 `InventoryNet`이 주인에게 보내고, 요청이 성공할 때마다 `flush_pending_save`로 저장을 건다(거래 모듈과 같은 호출).
+
+**클라이언트**(자리 표시 수준, 실제 게임 창에서 본 적 없음): Enter로 3m 안 가장 가까운 살아 있는 NPC에게 말 걸기, 화면 아래 가운데의 대화 패널(이름·대사·번호 붙은 선택지), 숫자 1~9로 선택, Esc로 끝내기, 끝난 뒤 4초 동안 마지막 말과 이유 표시. NPC 이름표 뒤에 반응 꼬리표(`[경계]`·`[거리 둠]`·`[인사]`·`[겁먹음]`·`[대화 중]`).
+
+**F-32가 이을 자리.**
+1. **대화가 틀어짐**: `NpcDialogue.conversation_went_badly(npc_id, player_id, reason)`(이유 `threatened`·`woken`·`pestered`)와 저장되는 기록 `bad_talks`·`last_bad_reason`·`last_bad_at`. 적대 판정은 이것과 관계의 두려움·원한, 성격으로 하면 된다.
+2. **동행 요청**: `NpcDialogue.join_requested(npc_id, player_id, lean)`와 기록 `join_requests`·`join_last_at`·`join_last_lean`. 수락 규칙은 F-32가 정한다(`NpcReactionRules.join_lean`은 대사를 고르는 데만 쓴다).
+그 밖: `NpcSocial.npc_harmed_by_player`, `player_noticed`, `NpcDialogue.gift_given`·`trade_made`. 공격받은 NPC의 이사(`NpcRelocation.note_attacked`, §17.15)는 아직 잇지 않았다.
+
+**비용.** 플레이어가 아무도 안 보이면 비교 몇 번이다. 측정은 docs/15 §27.1.

@@ -67,6 +67,14 @@ extends NpcStage
 ##           cut short goes on when the action begins again. While an NPC
 ##           is in the middle of a move it rests and sleeps where it
 ##           stands, not in the bed of the home it is leaving.
+## F-31 (docs/09 §17.16; only with enable_social(), otherwise refused):
+##   meet    What an NPC does about a player it noticed (the decision
+##           layer starts it, NpcSocial says how: target.mode). "watch" and
+##           "talk": it stands where it is for target.hold_sec. "approach":
+##           it walks up to greet_distance_m from the player, then stands.
+##           "back_off": it walks back_off_distance_m away from the player,
+##           then stands. A walk that cannot begin is no failure: it
+##           stands instead. NpcSocial turns a standing NPC to the player.
 ## Any other action id is refused (unsupported_action).
 ##
 ## Reports to the decision layer (the scheduler's interrupts, P4-4's
@@ -119,7 +127,8 @@ const ACTION_SCAVENGE: String = "scavenge"
 const ACTION_TREAT: String = "treat"
 const ACTION_FIGHT: String = "fight"
 const ACTION_RELOCATE: String = "relocate"
-const ACTIONS: PackedStringArray = [ACTION_EAT, ACTION_DRINK, ACTION_REST, ACTION_SLEEP, ACTION_WORK, ACTION_WANDER, ACTION_FLEE, ACTION_SCAVENGE, ACTION_TREAT, ACTION_FIGHT, ACTION_RELOCATE]
+const ACTION_MEET: String = NpcSocial.ACTION_MEET
+const ACTIONS: PackedStringArray = [ACTION_EAT, ACTION_DRINK, ACTION_REST, ACTION_SLEEP, ACTION_WORK, ACTION_WANDER, ACTION_FLEE, ACTION_SCAVENGE, ACTION_TREAT, ACTION_FIGHT, ACTION_RELOCATE, ACTION_MEET]
 ## The actions of F-29: refused until enable_survival() was called.
 const SURVIVAL_ACTIONS: PackedStringArray = [ACTION_SCAVENGE, ACTION_TREAT, ACTION_FIGHT]
 ## Count of the swings of a fight that hit / that killed.
@@ -157,6 +166,8 @@ var _scavenging: NpcScavenging = null
 var _fighting: NpcFighting = null
 ## F-30: null until enable_relocation().
 var _relocation: NpcRelocation = null
+## F-31: null until enable_social().
+var _social_settings: NpcSocialSettings = null
 var _adapter_ref: WeakRef = null
 var _world_ref: WeakRef = null
 var _npcs_ref: WeakRef = null
@@ -244,6 +255,12 @@ func relocation() -> NpcRelocation:
 	return _relocation
 
 
+## F-31: turns the action "meet" on (how an NPC stands for, comes to or
+## backs off from a player it noticed).
+func enable_social(settings: NpcSocialSettings) -> void:
+	_social_settings = settings
+
+
 # ------------------------------------------------------------ the contract
 
 ## NpcActionExecutor.begin: "" when the action runs now, or a failure code.
@@ -251,7 +268,7 @@ func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, action: NpcActio
 	var state: NpcBehaviourState = _state_of(npc)
 	if world == null or npcs == null or state == null or action == null:
 		return NpcActionExecutor.FAIL_UNSUPPORTED
-	if not ACTIONS.has(action.action_id) or (_sense == null and SURVIVAL_ACTIONS.has(action.action_id)) or (_relocation == null and action.action_id == ACTION_RELOCATE):
+	if not ACTIONS.has(action.action_id) or (_sense == null and SURVIVAL_ACTIONS.has(action.action_id)) or (_relocation == null and action.action_id == ACTION_RELOCATE) or (_social_settings == null and action.action_id == ACTION_MEET):
 		return NpcActionExecutor.FAIL_UNSUPPORTED
 	if not npcs.is_awake(npc.npc_id):
 		return FAIL_NOT_READY
@@ -293,6 +310,8 @@ func begin(world: ServerWorld, npcs: NpcService, npc: NpcState, action: NpcActio
 			code = _begin_fight(world, npc, state)
 		ACTION_RELOCATE:
 			code = _relocation.begin(world, npcs, npc, state)
+		ACTION_MEET:
+			code = _begin_meet(world, npc, state, target)
 	if not code.is_empty():
 		state.clear_action()
 		return code
@@ -561,6 +580,36 @@ func _begin_flee(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, ta
 	return _move(npc.npc_id, state, goal, true)
 
 
+# ------------------------------------------------------------ F-31: players
+
+## The NPC stands for a player, comes over or backs off (see the header).
+func _begin_meet(world: ServerWorld, npc: NpcState, state: NpcBehaviourState, target: Dictionary) -> String:
+	var mode: String = str(target.get(NpcSocial.TARGET_MODE, ""))
+	if not NpcSocial.MODES.has(mode):
+		return NpcActionExecutor.FAIL_TARGET_GONE
+	var raw: Variant = target.get(NpcSocial.TARGET_PLAYER_POSITION, null)
+	var hold: Variant = target.get(NpcSocial.TARGET_HOLD_SEC, 0.0)
+	var hold_sec: float = float(hold) if (typeof(hold) == TYPE_FLOAT or typeof(hold) == TYPE_INT) and is_finite(float(hold)) else 0.0
+	state.meet_hold_usec = maxi(NpcBehaviourSettings.to_usec(hold_sec), 1)
+	if (mode == NpcSocial.MODE_APPROACH or mode == NpcSocial.MODE_BACK_OFF) and typeof(raw) == TYPE_ARRAY and (raw as Array).size() == 3:
+		var away: Vector3 = Vector3(npc.position.x - float(raw[0]), 0.0, npc.position.z - float(raw[2]))
+		if away.is_finite() and away.length() >= 0.001:
+			var goal: Vector3 = npc.position + away.normalized() * _social_settings.back_off_distance_m
+			if mode == NpcSocial.MODE_APPROACH:
+				goal = Vector3(float(raw[0]), npc.position.y, float(raw[2])) + away.normalized() * _social_settings.greet_distance_m
+			if _move(npc.npc_id, state, world.clamp_to_world(goal), false).is_empty():
+				return ""
+	_stand_meeting(npc.npc_id, state)
+	return ""
+
+
+## The NPC of a "meet" stands where it is for the rest of its time.
+func _stand_meeting(npc_id: String, state: NpcBehaviourState) -> void:
+	state.step = NpcBehaviourState.STEP_PERFORMING
+	state.timer_usec = maxi(state.meet_hold_usec, 1)
+	_report(npc_id, NpcActionExecutor.REPORT_ARRIVED)
+
+
 # ------------------------------------------------------------ F-29: survival
 
 ## True when the NPC drinks a drink it carries where it stands: it lives
@@ -753,6 +802,11 @@ func _on_executor_report(npc_id: String, reason: String) -> void:
 		_on_done(world, npcs, npc, state)
 	elif not NpcExecutor.failure_code_of(reason).is_empty():
 		var code: String = _failure_code(NpcExecutor.failure_code_of(reason))
+		if state.action_id == ACTION_MEET:
+			# F-31: no way to the player (or away from it) is no failure.
+			_stand_meeting(npc_id, state)
+			npcs.mark_npc_dirty(npc_id)
+			return
 		if state.action_id == ACTION_RELOCATE and _relocation != null:
 			# F-30: a leg that found no way is not the end of a move.
 			code = _relocation.on_walk_failed(world, npcs, npc, state, code)
@@ -818,6 +872,10 @@ func _on_done(world: ServerWorld, npcs: NpcService, npc: NpcState, state: NpcBeh
 				_report(npc.npc_id, NpcActionExecutor.REPORT_ARRIVED)
 			else:
 				_fail(world, npcs, npc, state, code)
+		ACTION_MEET:
+			# It came over (or backed off): it stands and looks at the player.
+			_stand_meeting(npc.npc_id, state)
+			npcs.mark_npc_dirty(npc.npc_id)
 		ACTION_RELOCATE:
 			# A walk of the move is over: it packs, or goes on to the next leg.
 			var moved: String = _relocation.on_walk_done(world, npcs, npc, state) if _relocation != null else NpcActionExecutor.FAIL_UNSUPPORTED

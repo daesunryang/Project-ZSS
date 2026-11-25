@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="NpcDialogueNetSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/services/multiplayer/npc_dialogue_net_settings.gd" id="1_npc_dialogue_net"]
+
+[resource]
+script = ExtResource("1_npc_dialogue_net")
+dialogue_intent_rate_per_sec = 4.0
+dialogue_intent_burst = 6

@@ -53,6 +53,10 @@ var spot_id: String = ""
 var counts: Dictionary[String, int] = {}
 var worked_usec: int = 0
 var inventory_id: String = ""
+## F-31, runtime only (not saved): how long the NPC of a "meet" stands once
+## its walk is over. An NPC that was restored in the middle of one stands
+## for a moment and goes on with its day.
+var meet_hold_usec: int = 0
 
 var _slots: int = 4
 ## Slots of the inventory while the NPC is in memory (see on_attached).
@@ -96,6 +100,7 @@ func clear_action() -> void:
 	step = STEP_NONE
 	timer_usec = NO_TIMER
 	spot_id = ""
+	meet_hold_usec = 0
 
 
 ## The NPC is in memory: its inventory comes into the world's

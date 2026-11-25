@@ -65,6 +65,11 @@ func is_dead(npc_id: String) -> bool:
 	return condition_of(npc_id) == NpcNetProtocol.CONDITION_DEAD
 
 
+## The public reaction of a mirrored NPC (F-31), "" for an unknown one.
+func reaction_of(npc_id: String) -> String:
+	return str((npcs.get(npc_id, {}) as Dictionary).get(NpcNetProtocol.KEY_REACTION, ""))
+
+
 func recent_events() -> Array[Dictionary]:
 	return _recent_events.duplicate(true)
 
@@ -215,6 +220,15 @@ func _apply_event(event: Dictionary) -> bool:
 			if str(row[NpcNetProtocol.KEY_CONDITION]) == condition:
 				return false
 			row[NpcNetProtocol.KEY_CONDITION] = condition
+			return true
+		NpcNetProtocol.EVENT_REACTION_CHANGED:
+			if not npcs.has(npc_id):
+				return false
+			var shown: Dictionary = npcs[npc_id]
+			var reaction: String = str(event[NpcNetProtocol.KEY_REACTION])
+			if str(shown[NpcNetProtocol.KEY_REACTION]) == reaction:
+				return false
+			shown[NpcNetProtocol.KEY_REACTION] = reaction
 			return true
 	return false
 

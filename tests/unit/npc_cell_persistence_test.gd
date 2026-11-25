@@ -92,6 +92,9 @@ func _definition(definition_id: String, display_name: String) -> NpcDefinition:
 ## moves by itself.
 func _config() -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# F-31: no social layer here, so the NPCs take no notice of the players
+	# (noticing and talking are tested in the F-31 tests).
+	config.npc_social = null
 	# P4-5b: no behaviour layer here, so the NPCs decide nothing and stand
 	# still (what NPCs do is tested in npc_behaviour_test.gd).
 	config.npc_behaviour = null
@@ -118,6 +121,9 @@ func _config() -> CompositionConfig:
 ## dev roster) and nothing that moves by itself.
 func _shipped_config(with_roster: bool = true) -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# F-31: no social layer here, so the NPCs take no notice of the players
+	# (noticing and talking are tested in the F-31 tests).
+	config.npc_social = null
 	# P4-5b: no behaviour layer here, so the NPCs decide nothing and stand
 	# still (what NPCs do is tested in npc_behaviour_test.gd).
 	config.npc_behaviour = null

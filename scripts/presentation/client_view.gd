@@ -27,6 +27,8 @@ extends Node3D
 @onready var _right_hud_stack: VBoxContainer = %RightHudStack
 @onready var _npc_debug_panel: PanelContainer = %NpcDebugPanel
 @onready var _npc_debug_label: Label = %NpcDebugLabel
+@onready var _dialogue_panel: PanelContainer = %DialoguePanel
+@onready var _dialogue_label: Label = %DialogueLabel
 @onready var _creation_screen: CharacterCreationScreen = %CharacterCreationScreen
 
 ## Children of a player's visual.
@@ -140,6 +142,18 @@ var _container_hud_key: String = ""
 var _build_presentation: BuildPresentation = null
 ## F-9: the local player's skill levels (owner-only mirror).
 var _skill_state: ClientSkillState = null
+## F-31: talk requests and the mirror of the local player's conversation.
+var _dialogue_module: NpcDialogueNetModule = null
+var _dialogue_state: ClientDialogueState = null
+## Flood guard of the talk keys (same rule as the attack guard).
+var _talk_policy: AttackIntentPolicy = null
+## The NPC the talk key would name now, as last shown in the panel ("" =
+## nobody in reach).
+var _talk_candidate: String = NpcTalkIntentPolicy.NO_NPC
+## Until when the last line of a conversation that ended stays in the panel.
+var _dialogue_closed_until_sec: float = 0.0
+## What the dialogue panel was last built from.
+var _dialogue_hud_key: String = ""
 
 
 func _ready() -> void:
@@ -175,6 +189,7 @@ func _ready() -> void:
 	_world_map = WorldMapVisuals.new(_world_map_root, _presentation)
 	_npc_visuals = NpcVisuals.new(_npcs_root, _presentation)
 	_container_policy = AttackIntentPolicy.new(_presentation.container_min_interval_sec)
+	_talk_policy = AttackIntentPolicy.new(_presentation.npc_talk_min_interval_sec)
 	_container_catalog = ContainerCatalog.load_directory()
 	_container_markers = ContainerMarkers.new(_containers_root, _container_catalog, _presentation)
 	var shared_keys: PackedStringArray = _presentation.keys_shared_with(_settings)
@@ -204,7 +219,7 @@ func _apply_hud_style() -> void:
 	panel_style.corner_radius_top_right = _presentation.hud_panel_corner_radius_px
 	panel_style.corner_radius_bottom_left = _presentation.hud_panel_corner_radius_px
 	panel_style.corner_radius_bottom_right = _presentation.hud_panel_corner_radius_px
-	for panel: PanelContainer in [_left_hud_panel, _right_hud_panel, _npc_debug_panel]:
+	for panel: PanelContainer in [_left_hud_panel, _right_hud_panel, _npc_debug_panel, _dialogue_panel]:
 		panel.add_theme_stylebox_override(&"panel", panel_style.duplicate() as StyleBox)
 	for stack: VBoxContainer in [_left_hud_stack, _right_hud_stack]:
 		stack.add_theme_constant_override(&"separation", _presentation.hud_stack_separation_px)
@@ -216,6 +231,7 @@ func _apply_hud_style() -> void:
 		_container_label,
 		_build_label,
 		_npc_debug_label,
+		_dialogue_label,
 	]
 	for label: Label in column_labels:
 		label.add_theme_color_override(&"font_outline_color", _presentation.hud_text_outline_color)
@@ -266,6 +282,9 @@ func _process(_delta: float) -> void:
 		_attack_result_label.visible = false
 	if _consume_result_label.visible and _now_sec() >= _consume_result_until_sec:
 		_consume_result_label.visible = false
+	if _dialogue_closed_until_sec > 0.0 and _now_sec() >= _dialogue_closed_until_sec:
+		_dialogue_closed_until_sec = 0.0
+		_refresh_dialogue_hud()
 
 
 func _physics_process(_delta: float) -> void:
@@ -279,6 +298,7 @@ func _physics_process(_delta: float) -> void:
 	_update_treat_target()
 	_update_pickup_candidate()
 	_update_container_candidate()
+	_update_talk_candidate()
 	_update_map_hud()
 	# No game input while the character creation screen is open (P2-T9).
 	if not is_game_input_enabled():
@@ -300,12 +320,21 @@ func _physics_process(_delta: float) -> void:
 		_request_container_take()
 	if Input.is_action_just_pressed(ClientInputActions.CONTAINER_PUT):
 		_request_container_put()
+	# F-31: the talk keys. Only ids are sent; the server decides.
+	if Input.is_action_just_pressed(ClientInputActions.NPC_TALK):
+		_press_talk()
+	if Input.is_action_just_pressed(ClientInputActions.NPC_TALK_END):
+		_press_talk_end()
+	for number: int in range(1, ClientInputActions.TALK_CHOICE_COUNT + 1):
+		if Input.is_action_just_pressed(ClientInputActions.talk_choice_action(number)):
+			_press_talk_choice(number)
 	var was_build_mode: bool = _build_presentation != null and _build_presentation.is_build_mode()
 	var build_input: Dictionary = _build_presentation.tick(_camera, _map) if _build_presentation != null else {"attack": false, "pickup": false}
 	if _build_presentation != null and was_build_mode != _build_presentation.is_build_mode():
 		# Rebuild only the local look key so its private material override and
 		# name tag gain/lose the build-mode opacity immediately.
 		_sync_player_visuals()
+		_refresh_dialogue_hud()
 	# P3-2: the cell overlay, a testing aid (local only).
 	if Input.is_action_just_pressed(ClientInputActions.CELL_OVERLAY):
 		set_cell_overlay_visible(not is_cell_overlay_visible())
@@ -455,6 +484,17 @@ func _bind_network() -> void:
 	var structure_module: StructureNetModule = _network.get_module(StructureNetModule.MODULE_NAME) as StructureNetModule
 	if structure_module != null:
 		_build_presentation = BuildPresentation.new(_structures_root, _build_label, _presentation, BuildingSettings.load_or_default(), StructureCatalog.load_directory(), _item_catalog, structure_module, _state)
+	_dialogue_module = _network.get_module(NpcDialogueNetModule.MODULE_NAME) as NpcDialogueNetModule
+	if _dialogue_module != null:
+		_dialogue_state = _dialogue_module.client_state
+		if not _dialogue_state.changed.is_connected(_refresh_dialogue_hud):
+			_dialogue_state.changed.connect(_refresh_dialogue_hud)
+		if not _dialogue_state.view_shown.is_connected(_on_dialogue_view_shown):
+			_dialogue_state.view_shown.connect(_on_dialogue_view_shown)
+		if not _dialogue_state.conversation_closed.is_connected(_on_dialogue_closed):
+			_dialogue_state.conversation_closed.connect(_on_dialogue_closed)
+		if not _dialogue_module.dialogue_result.is_connected(_on_dialogue_result):
+			_dialogue_module.dialogue_result.connect(_on_dialogue_result)
 	var skill_module: SkillNetModule = _network.get_module(SkillNetModule.MODULE_NAME) as SkillNetModule
 	if skill_module != null:
 		_skill_state = skill_module.client_state
@@ -1357,6 +1397,122 @@ func _on_container_closed(_container_id: String, reason: String) -> void:
 	_container_selected_id = ContainerIntentPolicy.NO_SELECTION
 	_container_selected_index = 0
 	var text: String = ClientPresentationFormatter.format_container_closed(reason)
+	if not text.is_empty():
+		_show_consume_text(text)
+
+
+# ------------------------------------------------------------ talking to NPCs (F-31)
+
+## The NPC the talk key would name now ("" = nobody in reach).
+func talk_candidate_id() -> String:
+	_update_talk_candidate()
+	return _talk_candidate
+
+
+## The text of the dialogue panel ("" while it is hidden).
+func dialogue_panel_text() -> String:
+	return _dialogue_label.text if _dialogue_panel.visible else ""
+
+
+## Keeps the panel's "talk to" line current: the candidate changes when the
+## local player or an NPC moves, without any signal of its own.
+func _update_talk_candidate() -> void:
+	var candidate: String = NpcTalkIntentPolicy.NO_NPC
+	if _npc_state != null and _state != null and not _state.local_player_id.is_empty() and _state.players.has(_state.local_player_id):
+		candidate = NpcTalkIntentPolicy.nearest_npc_id(_state.position_of(_state.local_player_id), _npc_state.npcs, _presentation.npc_talk_candidate_range_m)
+	if candidate == _talk_candidate:
+		return
+	_talk_candidate = candidate
+	_refresh_dialogue_hud()
+
+
+## Rebuilds the dialogue panel: the open conversation, the last line of one
+## that just ended, or whom the talk key would ask. Hidden while not joined
+## and when there is nothing to say.
+func _refresh_dialogue_hud() -> void:
+	if _dialogue_state == null or _state == null or _state.local_player_id.is_empty():
+		_dialogue_panel.visible = false
+		return
+	var alive: bool = _survival_state == null or not _survival_state.has_player(_state.local_player_id) or _survival_state.is_alive(_state.local_player_id)
+	var candidate_name: String = str(_npc_state.get_npc(_talk_candidate).get(NpcNetProtocol.KEY_NAME, "")) if _npc_state != null and not _talk_candidate.is_empty() else ""
+	var number_keys_free: bool = _build_presentation == null or not _build_presentation.is_build_mode()
+	var lines: PackedStringArray = NpcTalkPresentationFormatter.build_lines(_dialogue_state.snapshot(), _dialogue_closed_until_sec > 0.0, candidate_name, alive, number_keys_free, _presentation)
+	var key: String = "\n".join(lines)
+	if key == _dialogue_hud_key and _dialogue_panel.visible == not lines.is_empty():
+		return
+	_dialogue_hud_key = key
+	_dialogue_label.text = key
+	_dialogue_panel.visible = not lines.is_empty()
+
+
+## True when a talk key may send something now (joined, and the local flood
+## guard of the talk keys allows it).
+func _talk_key_allowed() -> bool:
+	var connected: bool = (
+		_dialogue_module != null
+		and _dialogue_state != null
+		and _network != null
+		and _network.is_client()
+		and _state != null
+		and not _state.local_player_id.is_empty()
+	)
+	return _talk_policy.should_send(connected, _now_sec())
+
+
+## Talk key: asks the server to talk to the nearest living NPC in reach.
+## Only that NPC's id is sent; the server decides.
+func _press_talk() -> void:
+	if _dialogue_state == null or _dialogue_state.open:
+		return
+	if not _talk_key_allowed():
+		return
+	_update_talk_candidate()
+	if not NpcTalkIntentPolicy.can_start(_dialogue_state.open, _talk_candidate):
+		_show_consume_text(NpcTalkPresentationFormatter.nobody_to_talk_to_text())
+		return
+	_dialogue_module.request_start(_talk_candidate)
+
+
+## A number key: the n-th answer of the view the mirror shows. Only the
+## choice id (with the NPC and the turn of that view) is sent.
+func _press_talk_choice(number: int) -> void:
+	if _dialogue_state == null or not _dialogue_state.open:
+		return
+	# In the build mode the number keys choose what to build.
+	if _build_presentation != null and _build_presentation.is_build_mode():
+		return
+	var choice_id: String = NpcTalkIntentPolicy.choice_id_for_number(_dialogue_state.open, _dialogue_state.choices, number)
+	if choice_id == NpcTalkIntentPolicy.NO_CHOICE:
+		_show_consume_text(NpcTalkPresentationFormatter.no_such_choice_text())
+		return
+	if _talk_key_allowed():
+		_dialogue_module.request_choose(choice_id)
+
+
+## End key: ends the open conversation.
+func _press_talk_end() -> void:
+	if _dialogue_state == null or not _dialogue_state.open or not _talk_key_allowed():
+		return
+	_dialogue_module.request_end()
+
+
+## A conversation began or went on: an older "it ended" text makes way.
+func _on_dialogue_view_shown(_view: Dictionary) -> void:
+	_dialogue_closed_until_sec = 0.0
+	_refresh_dialogue_hud()
+
+
+## The conversation ended, or the NPC would not talk: its last line and why
+## stay in the panel for a moment.
+func _on_dialogue_closed(_view: Dictionary) -> void:
+	_dialogue_closed_until_sec = _now_sec() + _presentation.npc_talk_closed_duration_sec
+	_refresh_dialogue_hud()
+
+
+## The answer to a talk request of any kind: a refusal is shown where the
+## use results are shown (an accepted one shows in the panel).
+func _on_dialogue_result(_request_id: int, ok: bool, reason: String) -> void:
+	var text: String = NpcTalkPresentationFormatter.format_result(ok, reason)
 	if not text.is_empty():
 		_show_consume_text(text)
 

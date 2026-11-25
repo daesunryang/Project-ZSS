@@ -137,6 +137,9 @@ func _definition(definition_id: String, display_name: String) -> NpcDefinition:
 
 func _config() -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# F-31: no social layer here, so the NPCs take no notice of the players
+	# (noticing and talking are tested in the F-31 tests).
+	config.npc_social = null
 	# P4-5b: no behaviour layer here, so the NPCs decide nothing and stand
 	# still (what NPCs do is tested in npc_behaviour_test.gd).
 	config.npc_behaviour = null

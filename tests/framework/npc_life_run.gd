@@ -55,10 +55,24 @@ var _last_decision_tick: Dictionary = {}
 var _day_start: Dictionary = {}
 
 
+## F-31: false = the worlds made here have no social layer (NPCs take no
+## notice of players). For a test file about what NPCs do by themselves,
+## whose player stands next to them only to keep their cells simulated:
+## set it in before_each() and back to true in after_each().
+static var with_social: bool = true
+
+
 ## The composition of a dedicated server with the differences above.
 ## `new_decider` is the world's decider (one per world). `procedural`: the
 ## generated map of the world (null = none, see the header).
 static func config(new_decider: NpcUtilityDecider, procedural: ProceduralMapSettings = null, survival: bool = true) -> CompositionConfig:
+	var result: CompositionConfig = _config(new_decider, procedural, survival)
+	if not with_social:
+		result.npc_social = null
+	return result
+
+
+static func _config(new_decider: NpcUtilityDecider, procedural: ProceduralMapSettings, survival: bool) -> CompositionConfig:
 	var result: CompositionConfig = CompositionConfig.from_defaults()
 	# from_defaults() returns cached, shared resources: replace, never edit.
 	result.survival = SurvivalSettings.load_or_default().duplicate() as SurvivalSettings

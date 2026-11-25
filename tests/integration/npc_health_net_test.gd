@@ -140,7 +140,7 @@ func test_clients_see_ok_hurt_and_dead_and_nothing_else_of_the_body() -> void:
 		assert_eq(_mirror(client).rejected_payload_count, 0)
 	assert_eq(server_module.invalid_condition_count, 0)
 	var keys: Array = _mirror(a).get_npc(npc_id).keys()
-	assert_eq(keys.size(), 8, "seven public values and the condition")
+	assert_eq(keys.size(), 9, "seven public values, the condition and the reaction (F-31)")
 
 
 func test_a_clients_swing_hits_an_npc_and_both_clients_are_told() -> void:

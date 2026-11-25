@@ -136,7 +136,17 @@ const REQUIRED_ENGINE_STATUS: String = "stable"
 ##    can now be an NPC id; a hit on an NPC goes to the attacker and to the
 ##    peers that know that NPC. The use-on request accepts an NPC id as its
 ##    target (a bandage or a cure). No new RPC.
-const PROTOCOL_VERSION: int = 20
+## 21: F-31 NPCs notice players and talk (docs/09 §17.16). The public NPC
+##    row has a ninth field, the reaction index (none / wary / hide / greet
+##    / afraid / talk), and NpcNet has the new event npc_reaction_changed.
+##    New module NpcDialogueNet: three intents (_rpc_request_talk,
+##    _rpc_request_choose, _rpc_request_end) with one result
+##    (_rpc_dialogue_result, which carries the conversation view) and
+##    _rpc_dialogue_ended for a conversation the server ended, all to the
+##    talker only. The join snapshot has an empty "NpcDialogueNet" fragment.
+##    A gift or a swap in a conversation reaches the talker through the
+##    existing owner-only InventoryNet messages.
+const PROTOCOL_VERSION: int = 21
 
 const _VERSION_SETTING: String = "application/config/version"
 const _NAME_SETTING: String = "application/config/name"

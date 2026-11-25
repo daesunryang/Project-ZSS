@@ -11,6 +11,12 @@ extends NetModule
 ## row and changes with npc_condition_changed, exactly like the action
 ## label. It comes from one injected read-only function; without one every
 ## NPC is "ok".
+##
+## F-31: an NPC's public reaction to the players it sees (none / wary /
+## hide / greet / afraid / talk) is the last value of its full row and
+## changes with npc_reaction_changed, the same way. It comes from a third
+## injected read-only function; without one every NPC shows "none". Only
+## the label leaves the server: not whom the NPC reacts to, not a number.
 
 const MODULE_NAME: String = "NpcNet"
 
@@ -21,6 +27,7 @@ var sent_event_count: int = 0
 var unsendable_row_count: int = 0
 var invalid_action_label_count: int = 0
 var invalid_condition_count: int = 0
+var invalid_reaction_count: int = 0
 var ignored_sender_count: int = 0
 
 var _settings: NpcNetSettings
@@ -33,21 +40,25 @@ var _streams: Dictionary[int, PeerStream] = {}
 var _action_label_source: Callable = Callable()
 ## F-25: `(NpcState) -> one of NpcNetProtocol.CONDITIONS`.
 var _condition_source: Callable = Callable()
+## F-31: `(NpcState) -> one of NpcNetProtocol.REACTIONS`.
+var _reaction_source: Callable = Callable()
 
 
 class PeerStream extends RefCounted:
 	var known: Dictionary[String, bool] = {}
 	var action_labels: Dictionary[String, String] = {}
 	var conditions: Dictionary[String, String] = {}
+	var reactions: Dictionary[String, String] = {}
 	var sequence: int = 0
 	var pending: Array[Dictionary] = []
 
 
-func _init(settings: NpcNetSettings = null, action_label_source: Callable = Callable(), condition_source: Callable = Callable()) -> void:
+func _init(settings: NpcNetSettings = null, action_label_source: Callable = Callable(), condition_source: Callable = Callable(), reaction_source: Callable = Callable()) -> void:
 	name = MODULE_NAME
 	_settings = settings if settings != null else NpcNetSettings.new()
 	_action_label_source = action_label_source
 	_condition_source = condition_source
+	_reaction_source = reaction_source
 	client_state = ClientNpcState.new(_settings)
 
 
@@ -110,6 +121,7 @@ func build_join_fragment(player_id: String) -> Dictionary:
 			stream.known[npc_id] = true
 			stream.action_labels[npc_id] = str(source[NpcNetProtocol.KEY_ACTION_LABEL])
 			stream.conditions[npc_id] = str(source[NpcNetProtocol.KEY_CONDITION])
+			stream.reactions[npc_id] = str(source[NpcNetProtocol.KEY_REACTION])
 	return {
 		NpcNetProtocol.KEY_TICK: _tick,
 		NpcNetProtocol.KEY_EVENT_SEQUENCE: stream.sequence,
@@ -148,6 +160,7 @@ func _reconcile() -> Dictionary[int, Array]:
 			continue
 		var action_label: String = str(source[NpcNetProtocol.KEY_ACTION_LABEL])
 		var condition: String = str(source[NpcNetProtocol.KEY_CONDITION])
+		var reaction: String = str(source[NpcNetProtocol.KEY_REACTION])
 		for peer_id: int in peers:
 			var stream: PeerStream = _streams.get(peer_id, null)
 			if stream == null:
@@ -161,6 +174,9 @@ func _reconcile() -> Dictionary[int, Array]:
 				if str(stream.conditions.get(npc_id, NpcNetProtocol.CONDITION_OK)) != condition:
 					stream.conditions[npc_id] = condition
 					_queue(stream, NpcNetProtocol.condition_changed_event(npc_id, condition, _world.clock.world_time_sec))
+				if str(stream.reactions.get(npc_id, NpcNetProtocol.REACTION_NONE)) != reaction:
+					stream.reactions[npc_id] = reaction
+					_queue(stream, NpcNetProtocol.reaction_changed_event(npc_id, reaction, _world.clock.world_time_sec))
 			seen_by_peer[peer_id][npc_id] = true
 			rows_by_peer[peer_id].append(snapshot_row)
 	var world_time: float = _world.clock.world_time_sec
@@ -173,6 +189,7 @@ func _reconcile() -> Dictionary[int, Array]:
 			stream.known.erase(npc_id)
 			stream.action_labels.erase(npc_id)
 			stream.conditions.erase(npc_id)
+			stream.reactions.erase(npc_id)
 			_queue(stream, NpcNetProtocol.left_event(npc_id, world_time))
 	return rows_by_peer
 
@@ -203,6 +220,19 @@ func _condition(npc: NpcState) -> String:
 	return NpcNetProtocol.CONDITION_OK
 
 
+## The sole server-side seam for the public reaction (F-31). An invalid
+## result is logged and sent as "none": nothing private can take its place.
+func _reaction(npc: NpcState) -> String:
+	if not _reaction_source.is_valid():
+		return NpcNetProtocol.REACTION_NONE
+	var value: Variant = _reaction_source.call(npc)
+	if typeof(value) == TYPE_STRING and NpcNetProtocol.REACTIONS.has(str(value)):
+		return str(value)
+	invalid_reaction_count += 1
+	GameLogger.warning("net", "invalid public NPC reaction; none sent", {"entity_id": npc.npc_id, "reaction": str(value), "operation": "npc_reaction"})
+	return NpcNetProtocol.REACTION_NONE
+
+
 ## Builds only the explicit public source. Definition id, traits, skills,
 ## components, RNG, needs, mind and goals have no path into this Dictionary.
 func _public_source(npc_id: String) -> Dictionary:
@@ -219,6 +249,7 @@ func _public_source(npc_id: String) -> Dictionary:
 		NpcNetProtocol.KEY_ACTION_LABEL: _action_label(npc),
 		NpcNetProtocol.KEY_POSTURE: NpcNetProtocol.POSTURE_STANDING,
 		NpcNetProtocol.KEY_CONDITION: _condition(npc),
+		NpcNetProtocol.KEY_REACTION: _reaction(npc),
 	}
 
 
@@ -227,6 +258,7 @@ func _queue_entered(stream: PeerStream, public_row: Array) -> void:
 	stream.known[npc_id] = true
 	stream.action_labels[npc_id] = NpcNetProtocol.ACTION_LABELS[int(public_row[NpcNetProtocol.PUBLIC_ACTION])]
 	stream.conditions[npc_id] = NpcNetProtocol.CONDITIONS[int(public_row[NpcNetProtocol.PUBLIC_CONDITION])]
+	stream.reactions[npc_id] = NpcNetProtocol.REACTIONS[int(public_row[NpcNetProtocol.PUBLIC_REACTION])]
 	_queue(stream, NpcNetProtocol.entered_event(public_row, _world.clock.world_time_sec))
 
 

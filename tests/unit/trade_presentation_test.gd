@@ -90,8 +90,9 @@ func test_trade_keys_are_actions_driven_by_settings_and_clash_with_no_other_key(
 	# 17 since the cell overlay key (P3-2, world_map_presentation_test.gd), 22
 	# since the five container keys (P3-3, container_presentation_test.gd), 30
 	# since the nine building keys (P3-3b/P3-4b, build_presentation_test.gd),
-	# 32 since the NPC debug overlay key (P4-8, F4).
-	assert_eq(own.size(), 32, "every key of the presentation settings is in the list: %s" % ", ".join(PackedStringArray(own.keys())))
+	# 32 since the NPC debug overlay key (P4-8, F4); 34 since the NPC talk and
+	# talk end keys (F-31, Enter and Escape).
+	assert_eq(own.size(), 34, "every key of the presentation settings is in the list: %s" % ", ".join(PackedStringArray(own.keys())))
 	for changed: String in trade_keys:
 		assert_true(own.has(changed), changed)
 		for other: String in own:

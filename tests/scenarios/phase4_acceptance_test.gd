@@ -419,7 +419,7 @@ func test_two_clients_see_the_same_npcs_and_nothing_private_is_sent() -> void:
 	var same: Callable = func() -> bool: return _rows(a) == _rows(b) and _rows(a).size() == 10
 	assert_true(await _cluster.wait_ticks_until(same, NET_WAIT_TICKS), "both clients hold the same NPC rows")
 	var rows: Dictionary = _rows(a)
-	var public_keys: Array = [NpcNetProtocol.KEY_NPC_ID, NpcNetProtocol.KEY_NAME, NpcNetProtocol.KEY_APPEARANCE, NpcNetProtocol.KEY_POSITION, NpcNetProtocol.KEY_YAW, NpcNetProtocol.KEY_ACTION_LABEL, NpcNetProtocol.KEY_POSTURE, NpcNetProtocol.KEY_CONDITION]
+	var public_keys: Array = [NpcNetProtocol.KEY_NPC_ID, NpcNetProtocol.KEY_NAME, NpcNetProtocol.KEY_APPEARANCE, NpcNetProtocol.KEY_POSITION, NpcNetProtocol.KEY_YAW, NpcNetProtocol.KEY_ACTION_LABEL, NpcNetProtocol.KEY_POSTURE, NpcNetProtocol.KEY_CONDITION, NpcNetProtocol.KEY_REACTION]
 	public_keys.sort()
 	var labels_seen: PackedStringArray = []
 	for npc_id: String in npcs.npc_ids():

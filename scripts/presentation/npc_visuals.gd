@@ -108,18 +108,19 @@ func _sync_labels() -> void:
 			_root.add_child(anchor)
 			_labels[npc_id] = anchor
 		anchor.position = entry[NpcNetProtocol.KEY_POSITION]
-		(anchor.get_node(LABEL_NODE) as Label3D).text = tag_text(str(entry[NpcNetProtocol.KEY_NAME]), str(entry.get(NpcNetProtocol.KEY_CONDITION, NpcNetProtocol.CONDITION_OK)), _settings)
+		(anchor.get_node(LABEL_NODE) as Label3D).text = tag_text(str(entry[NpcNetProtocol.KEY_NAME]), str(entry.get(NpcNetProtocol.KEY_CONDITION, NpcNetProtocol.CONDITION_OK)), _settings, str(entry.get(NpcNetProtocol.KEY_REACTION, NpcNetProtocol.REACTION_NONE)))
 
 
-## The name tag of an NPC: its name, and what can be seen of its body
-## (F-25: hurt or dead) after it.
-static func tag_text(display_name: String, condition: String, settings: ClientPresentationSettings) -> String:
+## The name tag of an NPC: its name, what can be seen of its body (F-25:
+## hurt or dead) after it, and how it takes the players it sees (F-31: its
+## public reaction; nothing for "none" and nothing for a body).
+static func tag_text(display_name: String, condition: String, settings: ClientPresentationSettings, reaction: String = NpcNetProtocol.REACTION_NONE) -> String:
 	match condition:
 		NpcVitals.CONDITION_HURT:
-			return display_name + settings.npc_hurt_tag_suffix
+			return display_name + settings.npc_hurt_tag_suffix + NpcTalkPresentationFormatter.reaction_tag(reaction, settings)
 		NpcVitals.CONDITION_DEAD:
 			return display_name + settings.npc_dead_tag_suffix
-	return display_name
+	return display_name + NpcTalkPresentationFormatter.reaction_tag(reaction, settings)
 
 
 func _is_drawable(value: Variant) -> bool:

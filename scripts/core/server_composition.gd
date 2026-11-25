@@ -177,6 +177,22 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 				if npc_decider is NpcUtilityDecider:
 					(npc_decider as NpcUtilityDecider).set_relocation(npc_relocation)
 
+	# F-31 (docs/09 §17.16): NPCs notice players, react to them and talk
+	# with them. After the behaviours, whose action "meet" it asks the
+	# decision layer for. Without config.npc_social nobody takes notice of
+	# players. It works without the behaviour layer too (the NPCs stand
+	# still, but react and talk).
+	var npc_social: NpcSocial = null
+	if config.npc_social != null:
+		npc_social = NpcSocial.install(npcs, config.npc_social, config.npc_dialogue_lines, npc_scheduler, config.npc_decision.threat_sight_range_m if config.npc_decision != null else NpcDecisionSettings.new().threat_sight_range_m, config.npc_decision.day_length_world_sec if config.npc_decision != null else NpcDecisionSettings.new().day_length_world_sec, config.melee_weapons, npc_homes)
+		if npc_social == null:
+			return null
+		var social_behaviours: NpcBehaviours = npcs.get_stage(NpcBehaviours.STAGE_ID) as NpcBehaviours
+		if social_behaviours != null:
+			social_behaviours.enable_social(config.npc_social)
+		if npc_decider is NpcUtilityDecider:
+			(npc_decider as NpcUtilityDecider).set_social(npc_social)
+
 	# F-25 (docs/09 §17.12): the NPCs' bodies, LAST of the NPC stages: what a
 	# tick did to an NPC is in its vitals before the tick ends. Zombies and
 	# melee swings reach the NPCs only through these two narrow sources.
@@ -194,6 +210,12 @@ static func create_world(world_id: String, config: CompositionConfig) -> ServerW
 			# F-30: an NPC that dies on its way gives the building it was
 			# moving to back.
 			npc_health.npc_died.connect(npc_relocation.on_npc_died)
+		if npc_social != null:
+			# F-31: a player's hit is remembered (the record, the
+			# relationship, a memory), and whoever saw a player kill counts
+			# it again.
+			npc_health.npc_damaged.connect(npc_social.on_npc_damaged)
+			npc_health.npc_died.connect(npc_social.on_npc_died)
 		if zombies.add_target_source(NpcZombieTargets.new(npc_health)) != OK:
 			return null
 		var combat: CombatService = world.get_system(CombatService.SYSTEM_ID) as CombatService
@@ -236,10 +258,20 @@ static func install_net_modules(service: NetworkService, config: CompositionConf
 	# 5 Hz position snapshots. The action label is what the NPC's decision
 	# component says it does (P4-4, docs/09 §17.6).
 	# F-25: the condition (ok / hurt / dead) is what the NPC's vitals say.
-	var npc_net: NpcNetModule = NpcNetModule.new(config.npc_net, NpcDecisionComponent.label_of, NpcVitals.condition_of)
+	# F-31: the reaction (none / wary / ... / talk) is what its social
+	# component shows.
+	var npc_net: NpcNetModule = NpcNetModule.new(config.npc_net, NpcDecisionComponent.label_of, NpcVitals.condition_of, NpcSocialState.reaction_of)
 	error = service.register_module(npc_net)
 	if error != OK:
 		npc_net.free()
+		return error
+	# F-31 (docs/09 §17.16): talk intents and conversation views, to the
+	# talker only. After the NPC module, which knows the NPCs a peer was told
+	# about; it flushes the inventory module's pending save for a gift.
+	var npc_dialogue_net: NpcDialogueNetModule = NpcDialogueNetModule.new(config.npc_dialogue_net)
+	error = service.register_module(npc_dialogue_net)
+	if error != OK:
+		npc_dialogue_net.free()
 		return error
 	# P4-8: private, development-only debug subscription on reliable ch0.
 	var npc_debug_net: NpcDebugNetModule = NpcDebugNetModule.new(config.npc_debug)

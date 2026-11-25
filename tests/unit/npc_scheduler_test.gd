@@ -117,6 +117,9 @@ func after_each() -> void:
 
 func _config(recorder: Recorder) -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# F-31: no social layer here, so the NPCs take no notice of the players
+	# (noticing and talking are tested in the F-31 tests).
+	config.npc_social = null
 	# from_defaults() returns cached, shared resources: replace, never edit.
 	config.gameplay = GameplaySettings.new()
 	config.gameplay.world_half_extent_m = 50.0

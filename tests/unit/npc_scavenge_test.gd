@@ -41,10 +41,15 @@ var _root: String = ""
 
 func before_each() -> void:
 	GameLogger.set_capture(true)
+	# F-31: what NPCs do about a player is tests/unit/npc_social_test.gd. Here
+	# the player only keeps the cells simulated; an NPC that stopped to look
+	# at it would not finish the trips these tests follow.
+	NpcLifeRun.with_social = false
 	_root = "user://test_saves/npc_scavenge_%d" % Time.get_ticks_usec()
 
 
 func after_each() -> void:
+	NpcLifeRun.with_social = true
 	SaveService.remove_tree(_root)
 	SaveService.remove_tree(_root + "_copy")
 	GameLogger.set_capture(false)

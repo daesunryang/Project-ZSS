@@ -201,6 +201,9 @@ func _add(action: NpcActionDefinition) -> NpcActionDefinition:
 
 func _config(decider: NpcDecider) -> CompositionConfig:
 	var config: CompositionConfig = CompositionConfig.from_defaults()
+	# F-31: no social layer here, so the NPCs take no notice of the players
+	# (noticing and talking are tested in the F-31 tests).
+	config.npc_social = null
 	# from_defaults() returns cached, shared resources: replace, never edit.
 	config.gameplay = GameplaySettings.new()
 	config.gameplay.world_half_extent_m = 50.0
@@ -366,8 +369,9 @@ func test_the_shipped_actions_and_settings_are_valid_and_bad_data_is_refused() -
 	var actions: NpcActionCatalog = NpcActionCatalog.load_directory()
 	assert_eq(shipped.validate().size(), 0, ", ".join(shipped.validate()))
 	assert_eq(shipped.validate_against(actions).size(), 0, ", ".join(shipped.validate_against(actions)))
-	# F-29 added fight, scavenge and treat to the seven of Phase 4, F-30 relocate.
-	assert_eq(actions.action_ids(), PackedStringArray([DRINK, EAT, "fight", FLEE, "relocate", REST, "scavenge", SLEEP, "treat", WANDER, WORK]), "the eleven actions, sorted")
+	# F-29 added fight, scavenge and treat to the seven of Phase 4, F-30
+	# relocate, F-31 meet.
+	assert_eq(actions.action_ids(), PackedStringArray([DRINK, EAT, "fight", FLEE, "meet", "relocate", REST, "scavenge", SLEEP, "treat", WANDER, WORK]), "the twelve actions, sorted")
 	assert_false(actions.get_action(FLEE).selectable, "only the hard interrupt starts the flee action")
 	assert_false(actions.get_action("fight").selectable, "only the hard interrupt starts the fight action")
 	assert_eq(shipped.fallback_action_id, WANDER)

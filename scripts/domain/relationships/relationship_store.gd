@@ -84,6 +84,13 @@ func relationship(target_entity_id: String) -> RelationshipState:
 	return state.copy() if state != null else null
 
 
+## F-31: the stored record itself, for a caller that only READS it many
+## times a second (how an NPC takes a player it sees). Never change what
+## this returns: a change must go through put_relationship().
+func peek_relationship(target_entity_id: String) -> RelationshipState:
+	return _relationships.get(target_entity_id, null)
+
+
 func relationship_ids() -> PackedStringArray:
 	var ids: PackedStringArray = PackedStringArray(_relationships.keys())
 	ids.sort()

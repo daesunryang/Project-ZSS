@@ -40,6 +40,12 @@ func _source(npc_id: String = NPC_A, position: Vector3 = Vector3(3.0, 0.0, 4.0),
 		NpcNetProtocol.KEY_ACTION_LABEL: action_label,
 		NpcNetProtocol.KEY_POSTURE: "standing",
 		NpcNetProtocol.KEY_CONDITION: "ok",
+		NpcNetProtocol.KEY_REACTION: "none",
+		# F-31: what the reaction is made from stays on the server.
+		"reaction_player_id": "player_000001",
+		"trust": 0.25,
+		"fear": 0.75,
+		"records": {"player_000001": {"talks": 3}},
 		# F-25: what the condition is made from stays on the server.
 		"health": 41.5,
 		"injuries": [{"wound_type": "bite"}],
@@ -94,11 +100,12 @@ func test_public_rows_are_an_exact_whitelist_and_round_trip() -> void:
 		NpcNetProtocol.KEY_ACTION_LABEL: "walk",
 		NpcNetProtocol.KEY_POSTURE: "standing",
 		NpcNetProtocol.KEY_CONDITION: "ok",
+		NpcNetProtocol.KEY_REACTION: "none",
 	})
-	assert_eq(row.size(), 8, "seven fields of P4-7 and the condition index of F-25")
+	assert_eq(row.size(), 9, "seven fields of P4-7, the condition index of F-25 and the reaction index of F-31")
 	assert_eq(NpcNetProtocol.CONDITIONS, PackedStringArray(["ok", "hurt", "dead"]))
 	var wire_text: String = var_to_str(row)
-	for forbidden: String in ["health", "injuries", "infection", "bite", "latent", "41.5", "hunger", "emotions", "memory", "relationships", "personality", "skills", "goal", "rng_state", "components", PRIVATE_SENTINEL, "private_goal", "private_rng"]:
+	for forbidden: String in ["reaction_player_id", "player_000001", "trust", "fear", "records", "talks", "health", "injuries", "infection", "bite", "latent", "41.5", "hunger", "emotions", "memory", "relationships", "personality", "skills", "goal", "rng_state", "components", PRIVATE_SENTINEL, "private_goal", "private_rng"]:
 		assert_not_contains(wire_text, forbidden, "private NPC data is absent: " + forbidden)
 	assert_eq(NpcNetProtocol.ACTION_LABELS, PackedStringArray(["idle", "walk", "eat", "sleep", "work", "flee"]))
 	assert_eq(NpcNetProtocol.POSTURES, PlayerPosture.NAMES)
@@ -178,14 +185,22 @@ func test_malformed_rows_are_rejected_without_mutating_the_mirror() -> void:
 	var before: Dictionary = _state.get_npc(NPC_A).duplicate(true)
 	var bad_rows: Array = [
 		[],
-		[NPC_A, "name", {}, Vector3.ZERO, 0.0, 99, 0, 0],
-		[NPC_A, "name", {"slot": PRIVATE_SENTINEL}, Vector3.ZERO, 0.0, 0, 0, 0],
-		[NPC_A, "name", {}, Vector3(INF, 0.0, 0.0), 0.0, 0, 0, 0],
+		[NPC_A, "name", {}, Vector3.ZERO, 0.0, 99, 0, 0, 0],
+		[NPC_A, "name", {"slot": PRIVATE_SENTINEL}, Vector3.ZERO, 0.0, 0, 0, 0, 0],
+		[NPC_A, "name", {}, Vector3(INF, 0.0, 0.0), 0.0, 0, 0, 0, 0],
 		# F-25: a row of the old seven fields, and a condition nobody knows.
 		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0],
-		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, 3],
-		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, "dead"],
+		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, 3, 0],
+		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, "dead", 0],
+		# F-31: a row of the old eight fields, a reaction nobody knows, a
+		# reaction as a word, and a row with one value more.
+		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, 0],
+		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, 0, 6],
+		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, 0, -1],
+		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, 0, "talk"],
+		[NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, 0, 0, "player_000001"],
 	]
+	assert_eq(NpcNetProtocol.public_row_error([NPC_A, "한서윤", {"body_scale": "average"}, Vector3.ZERO, 0.0, 0, 0, 0, 5]), "", "the rows above are bad for the reason named, not for another")
 	for bad: Array in bad_rows:
 		assert_ne(_state.apply_join({NpcNetProtocol.KEY_TICK: 1, NpcNetProtocol.KEY_EVENT_SEQUENCE: 0, NpcNetProtocol.KEY_ROWS: [bad]}), "")
 	assert_eq(_state.npc_count(), 0, "an invalid join is cleared rather than partly applied")
@@ -256,3 +271,106 @@ func test_the_mirror_follows_the_condition_and_the_body_lies_with_a_tag() -> voi
 	assert_ne(lying.basis, standing.basis)
 	assert_eq(NpcVisuals.tag_text("이름", "ok", presentation), "이름")
 	root.free()
+
+
+# ------------------------------------------------------------ F-31
+
+func test_the_reaction_is_one_of_six_words_and_changes_by_its_own_event() -> void:
+	assert_eq(NpcNetProtocol.REACTIONS, PackedStringArray(["none", "wary", "hide", "greet", "afraid", "talk"]))
+	assert_eq(NpcNetProtocol.REACTIONS, NpcReactionRules.REACTIONS, "the wire list is the rule's list, in its order")
+	for index: int in NpcNetProtocol.REACTIONS.size():
+		var source: Dictionary = _source()
+		source[NpcNetProtocol.KEY_REACTION] = NpcNetProtocol.REACTIONS[index]
+		var row: Array = NpcNetProtocol.encode_public_row(source)
+		assert_eq(row[NpcNetProtocol.PUBLIC_REACTION], index, "the reaction is sent as its index, last in the row")
+		assert_eq(NpcNetProtocol.decode_public_row(row)[NpcNetProtocol.KEY_REACTION], NpcNetProtocol.REACTIONS[index])
+	var unknown_source: Dictionary = _source()
+	unknown_source[NpcNetProtocol.KEY_REACTION] = "hates_player_000001"
+	assert_eq(NpcNetProtocol.encode_public_row(unknown_source), [], "an unknown reaction makes no row")
+	var missing_source: Dictionary = _source()
+	missing_source.erase(NpcNetProtocol.KEY_REACTION)
+	assert_eq(NpcNetProtocol.encode_public_row(missing_source), [], "a source without a reaction makes no row")
+	var event: Dictionary = NpcNetProtocol.reaction_changed_event(NPC_A, "talk", 20.0)
+	assert_eq(event, {
+		NpcNetProtocol.KEY_EVENT_TYPE: NpcNetProtocol.EVENT_REACTION_CHANGED,
+		NpcNetProtocol.KEY_NPC_ID: NPC_A,
+		NpcNetProtocol.KEY_WORLD_TIME: 20.0,
+		NpcNetProtocol.KEY_REACTION: "talk",
+	})
+	assert_eq(NpcNetProtocol.EVENT_REACTION_CHANGED, "npc_reaction_changed")
+	assert_eq(NpcNetProtocol.event_error(event), "")
+	assert_eq(NpcNetProtocol.reaction_changed_event(NPC_A, "fear_0.8", 20.0), {}, "nothing but the six words")
+	assert_eq(NpcNetProtocol.reaction_changed_event("not an id", "talk", 20.0), {})
+	# Whom it reacts to, and how strongly, has no place in the event.
+	for extra_key: String in ["player_id", "reaction_player_id", "fear", "trust"]:
+		var with_extra: Dictionary = event.duplicate()
+		with_extra[extra_key] = "player_000001"
+		assert_eq(NpcNetProtocol.event_error(with_extra), NpcNetProtocol.REASON_UNKNOWN_EVENT_FIELD, extra_key)
+	var as_index: Dictionary = event.duplicate()
+	as_index[NpcNetProtocol.KEY_REACTION] = 5
+	assert_eq(NpcNetProtocol.event_error(as_index), NpcNetProtocol.REASON_BAD_EVENT_FIELD)
+	var without: Dictionary = event.duplicate()
+	without.erase(NpcNetProtocol.KEY_REACTION)
+	assert_eq(NpcNetProtocol.event_error(without), NpcNetProtocol.REASON_BAD_EVENT_FIELD)
+	# A reaction has no place in the events of something else.
+	var condition_event: Dictionary = NpcNetProtocol.condition_changed_event(NPC_A, "hurt", 20.0)
+	condition_event[NpcNetProtocol.KEY_REACTION] = "talk"
+	assert_eq(NpcNetProtocol.event_error(condition_event), NpcNetProtocol.REASON_UNKNOWN_EVENT_FIELD)
+
+
+func test_the_mirror_follows_the_reaction_and_bad_reactions_change_nothing() -> void:
+	assert_eq(_join(), "")
+	assert_eq(_state.reaction_of(NPC_A), "none")
+	assert_eq(_state.reaction_of(NPC_B), "", "an unknown NPC has none")
+	var changes: Array = [0]
+	_state.changed.connect(func() -> void: changes[0] += 1)
+	assert_eq(_state.apply_events(2, 1, [NpcNetProtocol.reaction_changed_event(NPC_A, "wary", 3.0), NpcNetProtocol.reaction_changed_event(NPC_B, "talk", 3.0)]), "")
+	assert_eq(_state.reaction_of(NPC_A), "wary")
+	assert_false(_state.has_npc(NPC_B), "a reaction does not make an NPC known")
+	assert_eq(changes[0], 1)
+	# The same reaction again is no change.
+	assert_eq(_state.apply_events(3, 3, [NpcNetProtocol.reaction_changed_event(NPC_A, "wary", 4.0)]), "")
+	assert_eq(changes[0], 1)
+	var bad: Dictionary = NpcNetProtocol.reaction_changed_event(NPC_A, "talk", 5.0)
+	bad[NpcNetProtocol.KEY_REACTION] = "talks_to_player_000001"
+	assert_eq(_state.apply_events(4, 4, [bad]), "")
+	assert_eq(_state.reaction_of(NPC_A), "wary")
+	assert_eq(_state.rejected_payload_count, 1)
+	assert_eq(_state.apply_events(5, 5, [NpcNetProtocol.reaction_changed_event(NPC_A, "talk", 6.0)]), "")
+	assert_eq(_state.reaction_of(NPC_A), "talk")
+	# The other public values are untouched by a reaction.
+	assert_eq(_state.condition_of(NPC_A), "ok")
+	assert_eq(_state.get_npc(NPC_A)[NpcNetProtocol.KEY_ACTION_LABEL], "idle")
+	# An NPC that enters brings its reaction in its row.
+	var talking: Dictionary = _source(NPC_B)
+	talking[NpcNetProtocol.KEY_REACTION] = "talk"
+	assert_eq(_state.apply_events(6, 6, [NpcNetProtocol.entered_event(NpcNetProtocol.encode_public_row(talking), 7.0)]), "")
+	assert_eq(_state.reaction_of(NPC_B), "talk")
+	# A rejoin starts from the join rows again.
+	assert_eq(_join(), "")
+	assert_eq(_state.reaction_of(NPC_A), "none")
+
+
+func test_the_server_sends_none_when_the_reaction_source_answers_anything_else() -> void:
+	var answers: Array = ["talk"]
+	var module: NpcNetModule = NpcNetModule.new(_settings, Callable(), Callable(), func(_npc: NpcState) -> Variant: return answers[0])
+	var npc: NpcState = NpcState.new()
+	npc.npc_id = NPC_A
+	assert_eq(module._reaction(npc), "talk", "a word of the list is passed on")
+	assert_eq(module.invalid_reaction_count, 0)
+	# Anything else (a number, a private note, a player id) is logged and
+	# "none" is sent in its place.
+	var bad_answers: Array = ["fear_0.9", "player_000001", 4, 0.8, null, ["talk"], {"reaction": "talk"}, &"talk"]
+	for bad: Variant in bad_answers:
+		answers[0] = bad
+		assert_eq(module._reaction(npc), "none", var_to_str(bad))
+	assert_eq(module.invalid_reaction_count, bad_answers.size())
+	module.free()
+	# Without a source every NPC shows "none".
+	var plain: NpcNetModule = NpcNetModule.new(_settings)
+	assert_eq(plain._reaction(npc), "none")
+	assert_eq(plain.invalid_reaction_count, 0)
+	plain.free()
+	# The real source: an NPC without the social component shows "none".
+	assert_eq(NpcSocialState.reaction_of(npc), "none")
+	assert_eq(NpcSocialState.reaction_of(null), "none")

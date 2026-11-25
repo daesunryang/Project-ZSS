@@ -7,7 +7,7 @@ extends RefCounted
 ##
 ## Full public row (join fragment and npc_entered):
 ##   [npc_id, Korean/display name, appearance selection, position, yaw,
-##    action-label index, posture index, condition index]
+##    action-label index, posture index, condition index, reaction index]
 ## Position snapshot row (5 Hz, channel 2): [npc_id, position, yaw]. Static
 ## identity is not repeated. Observable action-label changes use channel 0.
 ##
@@ -15,6 +15,13 @@ extends RefCounted
 ## body is one of CONDITIONS - "ok", "hurt" (it bleeds or is badly hurt) or
 ## "dead" (the entity is the body). Health numbers, wounds and infection
 ## never leave the server. A change is the npc_condition_changed event.
+##
+## Reaction (F-31, docs/09 §17.16): how an NPC takes the players it sees is
+## one of REACTIONS - "none", "wary", "hide", "greet", "afraid" or "talk"
+## (it is in a conversation). Everybody is told the same label. Whom it
+## reacts to or talks with, its trust and its fear never leave the server,
+## and what is said in a conversation goes to the talker only
+## (NpcDialogueNetModule). A change is the npc_reaction_changed event.
 
 const MAX_ROWS_PER_MESSAGE: int = 64
 const MAX_EVENTS_PER_MESSAGE: int = 64
@@ -31,6 +38,11 @@ const POSTURE_STANDING: String = "standing"
 const CONDITIONS: PackedStringArray = [NpcVitals.CONDITION_OK, NpcVitals.CONDITION_HURT, NpcVitals.CONDITION_DEAD]
 const CONDITION_OK: String = NpcVitals.CONDITION_OK
 const CONDITION_DEAD: String = NpcVitals.CONDITION_DEAD
+## Same names and order as NpcReactionRules.REACTIONS (a unit test holds
+## the two together); the index is what is sent in a full row.
+const REACTIONS: PackedStringArray = [NpcReactionRules.NONE, NpcReactionRules.WARY, NpcReactionRules.HIDE, NpcReactionRules.GREET, NpcReactionRules.AFRAID, NpcReactionRules.TALK]
+const REACTION_NONE: String = NpcReactionRules.NONE
+const REACTION_TALK: String = NpcReactionRules.TALK
 
 const KEY_TICK: String = "tick"
 const KEY_EVENT_SEQUENCE: String = "event_sequence"
@@ -46,11 +58,13 @@ const KEY_YAW: String = "yaw"
 const KEY_ACTION_LABEL: String = "action_label"
 const KEY_POSTURE: String = "posture"
 const KEY_CONDITION: String = "condition"
+const KEY_REACTION: String = "reaction"
 
 const EVENT_ENTERED: String = "npc_entered"
 const EVENT_LEFT: String = "npc_left"
 const EVENT_ACTION_CHANGED: String = "npc_action_changed"
 const EVENT_CONDITION_CHANGED: String = "npc_condition_changed"
+const EVENT_REACTION_CHANGED: String = "npc_reaction_changed"
 
 const REASON_BAD_ROW: String = "bad_row"
 const REASON_BAD_EVENT: String = "bad_event"
@@ -66,7 +80,8 @@ const PUBLIC_YAW: int = 4
 const PUBLIC_ACTION: int = 5
 const PUBLIC_POSTURE: int = 6
 const PUBLIC_CONDITION: int = 7
-const PUBLIC_ROW_SIZE: int = 8
+const PUBLIC_REACTION: int = 8
+const PUBLIC_ROW_SIZE: int = 9
 
 const SNAPSHOT_ID: int = 0
 const SNAPSHOT_POSITION: int = 1
@@ -80,6 +95,7 @@ static func encode_public_row(source: Dictionary) -> Array:
 	var action_index: int = ACTION_LABELS.find(str(source.get(KEY_ACTION_LABEL, "")))
 	var posture_index: int = POSTURES.find(str(source.get(KEY_POSTURE, "")))
 	var condition_index: int = CONDITIONS.find(str(source.get(KEY_CONDITION, "")))
+	var reaction_index: int = REACTIONS.find(str(source.get(KEY_REACTION, "")))
 	var row: Array = [
 		source.get(KEY_NPC_ID, null),
 		source.get(KEY_NAME, null),
@@ -89,6 +105,7 @@ static func encode_public_row(source: Dictionary) -> Array:
 		action_index,
 		posture_index,
 		condition_index,
+		reaction_index,
 	]
 	return row if public_row_error(row).is_empty() else []
 
@@ -109,6 +126,8 @@ static func public_row_error(value: Variant) -> String:
 		return REASON_BAD_ROW
 	if typeof(row[PUBLIC_CONDITION]) != TYPE_INT or int(row[PUBLIC_CONDITION]) < 0 or int(row[PUBLIC_CONDITION]) >= CONDITIONS.size():
 		return REASON_BAD_ROW
+	if typeof(row[PUBLIC_REACTION]) != TYPE_INT or int(row[PUBLIC_REACTION]) < 0 or int(row[PUBLIC_REACTION]) >= REACTIONS.size():
+		return REASON_BAD_ROW
 	return ""
 
 
@@ -122,6 +141,7 @@ static func decode_public_row(row: Array) -> Dictionary:
 		KEY_ACTION_LABEL: ACTION_LABELS[int(row[PUBLIC_ACTION])],
 		KEY_POSTURE: POSTURES[int(row[PUBLIC_POSTURE])],
 		KEY_CONDITION: CONDITIONS[int(row[PUBLIC_CONDITION])],
+		KEY_REACTION: REACTIONS[int(row[PUBLIC_REACTION])],
 	}
 
 
@@ -184,6 +204,16 @@ static func condition_changed_event(npc_id: String, condition: String, world_tim
 	return event if event_error(event).is_empty() else {}
 
 
+static func reaction_changed_event(npc_id: String, reaction: String, world_time: float) -> Dictionary:
+	var event: Dictionary = {
+		KEY_EVENT_TYPE: EVENT_REACTION_CHANGED,
+		KEY_NPC_ID: npc_id,
+		KEY_WORLD_TIME: world_time,
+		KEY_REACTION: reaction,
+	}
+	return event if event_error(event).is_empty() else {}
+
+
 ## Client: exact event validation. Unknown fields are rejected so a server
 ## bug cannot silently expose a new NPC detail.
 static func event_error(value: Variant) -> String:
@@ -191,7 +221,7 @@ static func event_error(value: Variant) -> String:
 		return REASON_BAD_EVENT
 	var event: Dictionary = value
 	var event_type: Variant = event.get(KEY_EVENT_TYPE, null)
-	if typeof(event_type) != TYPE_STRING or not [EVENT_ENTERED, EVENT_LEFT, EVENT_ACTION_CHANGED, EVENT_CONDITION_CHANGED].has(str(event_type)):
+	if typeof(event_type) != TYPE_STRING or not [EVENT_ENTERED, EVENT_LEFT, EVENT_ACTION_CHANGED, EVENT_CONDITION_CHANGED, EVENT_REACTION_CHANGED].has(str(event_type)):
 		return REASON_BAD_EVENT_TYPE
 	if not _valid_npc_id(event.get(KEY_NPC_ID, null)) or not _valid_number(event.get(KEY_WORLD_TIME, null)):
 		return REASON_BAD_EVENT_FIELD
@@ -210,6 +240,10 @@ static func event_error(value: Variant) -> String:
 		EVENT_CONDITION_CHANGED:
 			expected.append(KEY_CONDITION)
 			if typeof(event.get(KEY_CONDITION, null)) != TYPE_STRING or not CONDITIONS.has(str(event[KEY_CONDITION])):
+				return REASON_BAD_EVENT_FIELD
+		EVENT_REACTION_CHANGED:
+			expected.append(KEY_REACTION)
+			if typeof(event.get(KEY_REACTION, null)) != TYPE_STRING or not REACTIONS.has(str(event[KEY_REACTION])):
 				return REASON_BAD_EVENT_FIELD
 	if not _has_exact_keys(event, expected):
 		return REASON_UNKNOWN_EVENT_FIELD

@@ -156,6 +156,27 @@ layout_mode = 2
 autowrap_mode = 3
 text = "NPC AI 디버그 [F4]"
 
+[node name="DialoguePanel" type="PanelContainer" parent="Hud"]
+unique_name_in_owner = true
+visible = false
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -360.0
+offset_top = -160.0
+offset_right = 360.0
+offset_bottom = -160.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="DialogueLabel" type="Label" parent="Hud/DialoguePanel"]
+unique_name_in_owner = true
+layout_mode = 2
+autowrap_mode = 3
+text = "대화"
+
 [node name="AttackResultLabel" type="Label" parent="Hud"]
 unique_name_in_owner = true
 visible = false

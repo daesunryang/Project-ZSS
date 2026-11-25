@@ -130,6 +130,15 @@ var npc_scavenge: NpcScavengeSettings = null
 ## when it has nothing left or its home is too dangerous. null = nobody
 ## moves (the NPCs stay where F-28 put them). Needs `npc_scavenge`.
 var npc_relocation: NpcRelocationSettings = null
+## F-31 (docs/09 §17.16): NPCs notice players, react to them and talk with
+## them. null = NPCs take no notice of players and nobody can talk to them
+## (the NPCs behave as before F-31). The words of the conversations are
+## `npc_dialogue_lines` (null = no text).
+var npc_social: NpcSocialSettings = null
+var npc_dialogue_lines: NpcDialogueLines = null
+## F-31: the network module of the conversations (request rate; servers
+## and clients).
+var npc_dialogue_net: NpcDialogueNetSettings
 
 
 ## Loads every settings resource from res://data/tuning and the item catalog.
@@ -182,6 +191,9 @@ static func from_defaults() -> CompositionConfig:
 	config.npc_homes = NpcHomeSettings.load_or_default()
 	config.npc_scavenge = NpcScavengeSettings.load_or_default()
 	config.npc_relocation = NpcRelocationSettings.load_or_default()
+	config.npc_social = NpcSocialSettings.load_or_default()
+	config.npc_dialogue_lines = NpcDialogueLines.load_or_default()
+	config.npc_dialogue_net = NpcDialogueNetSettings.load_or_default()
 	return config
 
 
@@ -221,6 +233,11 @@ func _validate_npcs() -> PackedStringArray:
 	if npc_relocation != null:
 		errors.append_array(npc_relocation.validate())
 		errors.append_array(npc_relocation.validate_against(navigation))
+	if npc_social != null:
+		errors.append_array(npc_social.validate())
+		if npc_dialogue_lines != null:
+			errors.append_array(npc_dialogue_lines.validate())
+	errors.append_array(npc_dialogue_net.validate() if npc_dialogue_net != null else PackedStringArray(["composition config is incomplete (npc_dialogue_net)"]))
 	if npc_roster != null:
 		errors.append_array(npc_roster.validate())
 		errors.append_array(npc_roster.validate_against(npc_definitions, map_content, StructureGrid.new(building.grid_module_m), npc.max_npcs))
